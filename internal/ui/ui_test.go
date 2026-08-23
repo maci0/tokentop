@@ -108,14 +108,58 @@ func TestFmtRateAndCount(t *testing.T) {
 	}
 }
 
-func TestAggHistTailAligned(t *testing.T) {
+func TestAggHistTimeAligned(t *testing.T) {
+	// Provider B joins 3 cadences after A: tail-index alignment would smear
+	// the window; absolute-time alignment must not.
+	t0 := time.Now()
 	s := core.Snapshot{Providers: []core.ProviderSnapshot{
-		{OutHist: []float64{1, 2, 3}},
-		{OutHist: []float64{10, 20}},
+		{OutT0: t0, OutHist: []float64{1, 1, 1, 1, 1, 1}},             // samples at t0..t0+5
+		{OutT0: t0.Add(3 * time.Second), OutHist: []float64{2, 2, 2}}, // t0+3..t0+5
 	}}
-	got := aggHist(s, true) // tails align: [12, 23]
-	if len(got) != 2 || got[0] != 12 || got[1] != 23 {
-		t.Fatalf("aggHist = %v", got)
+	got := aggHist(s, true, 6, time.Second)
+	want := []float64{1, 1, 1, 3, 3, 3}
+	if len(got) != len(want) {
+		t.Fatalf("aggHist len = %d", len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("aggHist[%d] = %v, want %v (full: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+// An engine that stopped reporting must leave its buckets empty rather than
+// dragging the whole window leftward.
+func TestAggHistIgnoresStaleEngine(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-30 * time.Second)
+	s := core.Snapshot{Providers: []core.ProviderSnapshot{
+		{OutT0: old, OutHist: []float64{9, 9}},
+		{OutT0: now.Add(-2 * time.Second), OutHist: []float64{4, 4}},
+	}}
+	got := aggHist(s, true, 4, time.Second)
+	// window = [now-3s .. now]; the stale engine's last sample is 29s old
+	want := []float64{0, 0, 4, 4}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestProbeSeriesStepHold(t *testing.T) {
+	base := time.Now()
+	s := core.Snapshot{Probes: []core.ProbeSample{
+		{At: base.Add(-4 * time.Second), TokPS: 100},
+		{At: base.Add(-1 * time.Second), TokPS: 300},
+	}}
+	got := probeSeries(s, 6, time.Second)
+	// grid ends at the newest probe: buckets [-6..-1s]; probes hold forward
+	want := []float64{0, 0, 100, 100, 100, 300}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("probeSeries = %v, want %v", got, want)
+		}
 	}
 }
 

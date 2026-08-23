@@ -41,8 +41,8 @@ type Collector struct {
 	procCache []procs.Info
 
 	mu         sync.Mutex
-	histOut    map[string][]float64
-	histIn     map[string][]float64
+	histOut    map[string]*timedRing
+	histIn     map[string]*timedRing
 	prev       map[string]prevSample
 	lastModel  map[string]string // label -> model to probe
 	ttftEngine map[string]float64
@@ -61,8 +61,8 @@ func New(providers []provider.Provider, interval time.Duration) *Collector {
 		interval:   interval,
 		sysFn:      sysmon.Sample,
 		procFn:     func() []procs.Info { return procSampler.Snapshot() },
-		histOut:    map[string][]float64{},
-		histIn:     map[string][]float64{},
+		histOut:    map[string]*timedRing{},
+		histIn:     map[string]*timedRing{},
 		prev:       map[string]prevSample{},
 		lastModel:  map[string]string{},
 		ttftEngine: map[string]float64{},
@@ -209,11 +209,13 @@ func (c *Collector) emit(out chan<- core.Snapshot) {
 			outPS, inPS := c.rates(ps.Label, r.m, now)
 			ps.OutTokPS = outPS
 			ps.InTokPS = inPS
-			c.histOut[ps.Label] = appendRing(c.histOut[ps.Label], outPS)
-			c.histIn[ps.Label] = appendRing(c.histIn[ps.Label], inPS)
+			c.ring(c.histOut, ps.Label).push(outPS, now, c.interval)
+			c.ring(c.histIn, ps.Label).push(inPS, now, c.interval)
 		}
-		ps.OutHist = append([]float64(nil), c.histOut[ps.Label]...)
-		ps.InHist = append([]float64(nil), c.histIn[ps.Label]...)
+		ps.OutHist = c.histOut[ps.Label].copy()
+		ps.InHist = c.histIn[ps.Label].copy()
+		ps.OutT0 = c.histOut[ps.Label].t0
+		ps.InT0 = c.histIn[ps.Label].t0
 		snap.Providers = append(snap.Providers, ps)
 	}
 	out <- snap
@@ -250,11 +252,37 @@ func maxF(a, b float64) float64 {
 
 func ema(prev, raw float64) float64 { return prev*(1-emaAlpha) + raw*emaAlpha }
 
-func appendRing(h []float64, v float64) []float64 {
-	if len(h) >= core.HistoryLen {
-		h = h[1:]
+// timedRing is a value history carrying the wall-clock time of its oldest
+// sample so charts can place every point on an absolute time axis.
+type timedRing struct {
+	vals []float64
+	t0   time.Time
+}
+
+func (r *timedRing) push(v float64, now time.Time, interval time.Duration) {
+	if len(r.vals) >= core.HistoryLen {
+		r.vals = r.vals[1:]
+		if !r.t0.IsZero() {
+			r.t0 = r.t0.Add(interval) // oldest sample slid off
+		}
 	}
-	return append(h, v)
+	if r.t0.IsZero() {
+		r.t0 = now
+	}
+	r.vals = append(r.vals, v)
+}
+
+func (r *timedRing) copy() []float64 {
+	return append([]float64(nil), r.vals...)
+}
+
+func (c *Collector) ring(m map[string]*timedRing, label string) *timedRing {
+	r, ok := m[label]
+	if !ok {
+		r = &timedRing{}
+		m[label] = r
+	}
+	return r
 }
 
 // RecordAgent stores an agent event (called from the ingest server).
