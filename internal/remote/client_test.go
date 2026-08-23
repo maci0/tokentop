@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -299,6 +300,26 @@ func TestClientConnectRunForward(t *testing.T) {
 	case <-done:
 	default:
 		t.Error("Done should be closed after Close")
+	}
+}
+
+// The keepalive goroutine must exit promptly when the client is torn down,
+// not keep ticking on a dead connection for its full miss window.
+func TestKeepaliveStopsOnClose(t *testing.T) {
+	withKnownHosts(t)
+	srv := newTestSSHServer(t, "", 0)
+	defer srv.Close()
+
+	cli, err := Connect(t.Context(), testTarget(srv.Port()))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	done := cli.keepaliveDone
+	cli.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("keepalive goroutine still running 2s after Close")
 	}
 }
 

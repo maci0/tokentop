@@ -39,6 +39,8 @@ type Client struct {
 
 	mu        sync.Mutex
 	listeners []net.Listener
+
+	keepaliveDone chan struct{} // closed when the keepalive goroutine exits
 }
 
 // Done fires when the connection drops for any reason, including Close.
@@ -103,7 +105,8 @@ func Connect(ctx context.Context, t Target) (*Client, error) {
 		nc.Close()
 		return nil, fmt.Errorf("ssh %s: %w", t.userHost(), authHint(err))
 	}
-	c := &Client{Target: t, conn: ssh.NewClient(cc, chans, reqs), closed: make(chan struct{})}
+	c := &Client{Target: t, conn: ssh.NewClient(cc, chans, reqs), closed: make(chan struct{}),
+		keepaliveDone: make(chan struct{})}
 	go c.watchClose()
 	go c.keepalive()
 	return c, nil
@@ -130,12 +133,19 @@ func authHint(err error) error {
 }
 
 // keepalive keeps NAT/firewall state alive and turns silent network death
-// into a closed connection within ~45s instead of a hung session.
+// into a closed connection within ~45s instead of a hung session. It exits
+// as soon as the client is torn down instead of ticking on a dead session.
 func (c *Client) keepalive() {
+	defer close(c.keepaliveDone)
 	t := time.NewTicker(15 * time.Second)
 	defer t.Stop()
 	misses := 0
-	for range t.C {
+	for {
+		select {
+		case <-c.closed:
+			return
+		case <-t.C:
+		}
 		_, _, err := c.conn.SendRequest("keepalive@tokentop", true, nil)
 		if err != nil {
 			misses++

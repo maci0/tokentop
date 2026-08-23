@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -187,4 +188,71 @@ func TestEmitSurvivesFirstPollError(t *testing.T) {
 		t.Fatal("emit did not produce a snapshot")
 	}
 	<-done
+}
+
+// The ingest handlers, the UI prober and the emit loop all touch the
+// collector's shared maps concurrently in production; hammer them together so
+// -race can prove the locking holds.
+func TestConcurrentRecordProbeEmit(t *testing.T) {
+	fp := &fakeProvider{label: "c", m: &provider.Metrics{
+		OutTotal: 5, Models: []core.ModelInfo{{Name: "m"}},
+	}}
+	ch := make(chan core.Snapshot, 1)
+	c := New([]provider.Provider{fp}, time.Hour)
+	c.SetSysFn(func() core.SysSample { return core.SysSample{MemTotal: 1} })
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(3)
+
+	go func() { // ingest server handlers appending events and probes
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				c.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "a"})
+				c.RecordProbe(core.ProbeSample{At: time.Now(), OK: true})
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+	go func() { // UI 'p' keypresses; ProbeAll reads lastModel under mu
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				c.ProbeAll()
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+
+	emitDone := make(chan struct{})
+	go func() { // poll loop emitting snapshots
+		defer wg.Done()
+		defer close(emitDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				c.emit(ch)
+			}
+		}
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	close(stop)
+	for { // drain until the emit goroutine has exited its final send
+		select {
+		case <-ch:
+		case <-emitDone:
+			wg.Wait()
+			return
+		}
+	}
 }
