@@ -18,7 +18,7 @@ jobs:
           cache: true
 
       - name: test before shipping
-        run: go test ./...
+        run: go test -race ./...
 
       - name: build all platforms
         id: build

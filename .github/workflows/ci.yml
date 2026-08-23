@@ -20,12 +20,12 @@ jobs:
         with:
           go-version: stable
           cache: true
-      - name: gofmt (linux only; formatting is platform-independent)
+      - name: gofmt -s (linux only; formatting is platform-independent)
         if: runner.os == 'Linux'
         run: |
-          unformatted=$(gofmt -l .)
+          unformatted=$(gofmt -s -l .)
           if [ -n "$unformatted" ]; then
-            echo "needs gofmt:"; echo "$unformatted"; exit 1
+            echo "needs gofmt -s:"; echo "$unformatted"; exit 1
           fi
       - name: vet
         run: go vet ./...
