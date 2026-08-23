@@ -1,0 +1,92 @@
+//go:build windows
+
+package procs
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+)
+
+func init() {
+	platformList = listWindows
+	osGetpid = os.Getpid
+}
+
+type cimProc struct {
+	ProcessID      int    `json:"ProcessId"`
+	Name           string `json:"Name"`
+	CommandLine    string `json:"CommandLine"`
+	WorkingSetSize uint64 `json:"WorkingSetSize"`
+}
+
+// listWindows queries Win32_Process via PowerShell CIM once per poll.
+// There is no unprivileged pure-Go window into the NT process table with
+// command lines; CIM is the documented interface and needs no vendor libs.
+func listWindows() ([]raw, error) {
+	out, err := exec.Command("powershell", "-NoProfile", "-Command",
+		`Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine,WorkingSetSize | ConvertTo-Json -Compress`).Output()
+	if err != nil {
+		return nil, err
+	}
+	var procs []cimProc
+	if json.Unmarshal(out, &procs) != nil {
+		var single cimProc
+		if json.Unmarshal(out, &single) != nil {
+			return nil, errBadJSON
+		}
+		procs = []cimProc{single}
+	}
+	list := make([]raw, 0, len(procs))
+	for _, p := range procs {
+		if p.ProcessID <= 0 {
+			continue
+		}
+		args := splitWindowsArgs(p.CommandLine)
+		name := p.Name
+		list = append(list, raw{
+			pid:  p.ProcessID,
+			name: name,
+			args: append([]string{name}, args...),
+			rss:  p.WorkingSetSize,
+		})
+	}
+	return list, nil
+}
+
+// splitWindowsArgs does a light quote-aware split of a Windows command line.
+func splitWindowsArgs(cmd string) []string {
+	var (
+		args []string
+		cur  strings.Builder
+		inQ  bool
+	)
+	flush := func() {
+		if cur.Len() > 0 {
+			args = append(args, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, r := range cmd {
+		switch {
+		case r == '"':
+			inQ = !inQ
+		case r == ' ' && !inQ:
+			flush()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	flush()
+	return args
+}
+
+var errBadJSON = jsonError{}
+
+type jsonError struct{}
+
+func (jsonError) Error() string { return "unexpected powershell output" }
+
+var _ = strconv.Itoa
