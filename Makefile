@@ -44,12 +44,12 @@ vet: ## run go vet
 	$(GO) vet ./...
 
 .PHONY: fmt
-fmt: ## rewrite all Go files with gofmt
-	gofmt -w .
+fmt: ## rewrite all Go files with gofmt (including simplifications)
+	gofmt -s -w .
 
 .PHONY: check
-check: ## verify formatting and vet (CI parity)
-	@unformatted=$$(gofmt -l .); \
+check: ## verify gofmt -s formatting and vet (CI parity)
+	@unformatted=$$(gofmt -s -l .); \
 		if [ -n "$$unformatted" ]; then \
 			echo "needs gofmt:"; echo "$$unformatted"; exit 1; \
 		fi
