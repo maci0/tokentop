@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -171,7 +172,7 @@ func (s *testSSHServer) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 			status := uint32(0)
 			if err != nil {
 				var ee *exec.ExitError
-				if asExit(err, &ee) {
+				if errors.As(err, &ee) {
 					status = uint32(ee.ExitCode())
 				} else {
 					status = 127
@@ -186,14 +187,6 @@ func (s *testSSHServer) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 			}
 		}
 	}
-}
-
-func asExit(err error, target **exec.ExitError) bool {
-	e, ok := err.(*exec.ExitError)
-	if ok {
-		*target = e
-	}
-	return ok
 }
 
 func (s *testSSHServer) serveDirect(nch ssh.NewChannel) {
@@ -256,7 +249,7 @@ func TestClientConnectRunForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if got := trimSpace(out); got != "hello-remote" {
+	if got := strings.TrimSpace(out); got != "hello-remote" {
 		t.Errorf("run output = %q", got)
 	}
 
@@ -280,7 +273,7 @@ func TestClientConnectRunForward(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forward: %v", err)
 	}
-	lc, err := net.Dial("tcp", "127.0.0.1:"+itoa(fwd[rport]))
+	lc, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(fwd[rport]))
 	if err != nil {
 		t.Fatalf("relay dial: %v", err)
 	}
@@ -469,16 +462,3 @@ func TestClientHostKeyChangeRefused(t *testing.T) {
 		t.Fatalf("changed host key must be refused, got: %v", err)
 	}
 }
-
-func trimSpace(s string) string {
-	start, end := 0, len(s)
-	for start < end && (s[start] == '\n' || s[start] == ' ' || s[start] == '\r' || s[start] == '\t') {
-		start++
-	}
-	for end > start && (s[end-1] == '\n' || s[end-1] == ' ' || s[end-1] == '\r' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
-}
-
-func itoa(i int) string { return strconv.Itoa(i) }

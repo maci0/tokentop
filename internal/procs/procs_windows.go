@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -92,8 +91,6 @@ var errBadJSON = jsonError{}
 type jsonError struct{}
 
 func (jsonError) Error() string { return "unexpected powershell output" }
-
-var _ = strconv.Itoa
 
 func init() {
 	// CIM enumeration costs seconds; serve a cached list between refreshes.
