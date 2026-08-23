@@ -2,9 +2,11 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"tokentop/internal/bearer"
@@ -277,5 +279,40 @@ func TestExtractVersionField(t *testing.T) {
 		if got := extractVersionField(body); got != want {
 			t.Errorf("extractVersionField(%q) = %q, want %q", body, got, want)
 		}
+	}
+}
+
+// A version probe fired while the engine is still starting must not be
+// cached as a permanent miss: later polls retry, and the first success is
+// memoized so healthy engines are asked only once.
+func TestVersionCacheRetriesUntilResolved(t *testing.T) {
+	var failing, reqs int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&reqs, 1)
+		if atomic.LoadInt32(&failing) == 1 { // every version endpoint dark: engine starting up
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		fmt.Fprint(w, `{"version":"2.7.1"}`)
+	}))
+	defer srv.Close()
+
+	var vc versionCache
+	ctx := context.Background()
+	atomic.StoreInt32(&failing, 1)
+	if got := vc.fetch(ctx, srv.URL); got != "" {
+		t.Fatalf("first fetch during outage = %q, want empty", got)
+	}
+	atomic.StoreInt32(&failing, 0)
+	if got := vc.fetch(ctx, srv.URL); got != "2.7.1" {
+		t.Fatalf("fetch after recovery = %q, want 2.7.1", got)
+	}
+	for i := 0; i < 3; i++ { // resolved: no further traffic
+		if got := vc.fetch(ctx, srv.URL); got != "2.7.1" {
+			t.Fatalf("cached fetch = %q, want 2.7.1", got)
+		}
+	}
+	if n := atomic.LoadInt32(&reqs); n != 4 { // outage sweep of 3 paths, then one resolving request, then cache silence
+		t.Errorf("server hit %d times, want 4", n)
 	}
 }

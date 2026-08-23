@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"strings"
-	"sync"
 
 	"tokentop/internal/core"
 )
@@ -15,7 +14,7 @@ type OpenAICompat struct {
 	base    string
 	label   string
 	kind    string
-	version sync.Once
+	version versionCache
 }
 
 func NewOpenAICompat(base, label, kind string) *OpenAICompat {
@@ -75,7 +74,7 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 		enrichLemonade(ctx, o.base, m)
 	}
 	if m.Version == "" {
-		m.Version = fetchVersion(ctx, &o.version, o.base)
+		m.Version = o.version.fetch(ctx, o.base)
 	}
 	return m, nil
 }

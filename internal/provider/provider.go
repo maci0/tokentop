@@ -88,24 +88,36 @@ func getText(ctx context.Context, c *http.Client, url string) (string, error) {
 	return string(b), nil
 }
 
-// fetchVersion probes common engine version endpoints once and caches the
-// result. Engines differ wildly here: /api/version (Ollama-style),
-// /version (vLLM, llama.cpp), /get_server_info (SGLang embeds one).
-func fetchVersion(ctx context.Context, cache *sync.Once, base string) string {
-	var v string
-	cache.Do(func() {
-		for _, path := range []string{"/api/version", "/version", "/get_server_info"} {
-			text, err := getText(ctx, httpClient, base+path)
-			if err != nil {
-				continue
-			}
-			if val := extractVersionField(text); val != "" {
-				v = val
-				return
-			}
+// versionCache memoizes engine version discovery across polls. Deliberately
+// not a sync.Once: an engine polled while still starting answers nothing,
+// and caching that miss would blank the version readout for the whole
+// session. Unresolved caches retry on later polls.
+type versionCache struct {
+	mu       sync.Mutex
+	resolved bool
+	val      string
+}
+
+// fetch probes common engine version endpoints and caches the first success.
+// Engines differ wildly here: /api/version (Ollama-style), /version (vLLM,
+// llama.cpp), /get_server_info (SGLang embeds one).
+func (c *versionCache) fetch(ctx context.Context, base string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.resolved {
+		return c.val
+	}
+	for _, path := range []string{"/api/version", "/version", "/get_server_info"} {
+		text, err := getText(ctx, httpClient, base+path)
+		if err != nil {
+			continue
 		}
-	})
-	return v
+		if val := extractVersionField(text); val != "" {
+			c.val, c.resolved = val, true
+			break
+		}
+	}
+	return c.val
 }
 
 // extractVersionField pulls a "version" member out of JSON-ish bodies.

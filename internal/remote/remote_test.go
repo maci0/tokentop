@@ -177,8 +177,11 @@ func TestDefaultKeyPathsAndAuthChain(t *testing.T) {
 	t.Setenv("USERPROFILE", home) // os.UserHomeDir on windows
 
 	tgt := Target{}
-	methods, cleanup := tgt.authMethods()
+	methods, cleanup, err := tgt.authMethods()
 	cleanup()
+	if err != nil {
+		t.Fatalf("empty home: %v", err)
+	}
 	if len(methods) != 0 {
 		t.Fatalf("empty home yielded %d methods, want 0", len(methods))
 	}
@@ -206,9 +209,36 @@ func TestDefaultKeyPathsAndAuthChain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	methods, cleanup = tgt.authMethods()
+	methods, cleanup, err = tgt.authMethods()
 	defer cleanup()
+	if err != nil {
+		t.Fatalf("one valid default key: %v", err)
+	}
 	if len(methods) != 1 {
 		t.Fatalf("authMethods = %d methods with one valid key present, want 1", len(methods))
+	}
+}
+
+// An explicitly configured key (--ssh-key) that cannot be loaded must abort
+// authentication with the offending path, not silently fall through to a
+// generic credentials-rejected failure later.
+func TestExplicitKeyFileFailureAborts(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	bogus := filepath.Join(home, "nope", "missing_key")
+	tgt := Target{KeyFile: bogus}
+	methods, cleanup, err := tgt.authMethods()
+	cleanup()
+	if err == nil {
+		t.Fatal("explicit unloadable key must fail authMethods")
+	}
+	if len(methods) != 0 {
+		t.Fatalf("failed chain yielded %d methods, want 0", len(methods))
+	}
+	if !strings.Contains(err.Error(), bogus) {
+		t.Errorf("error should name the key path: %v", err)
 	}
 }
