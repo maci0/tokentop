@@ -38,8 +38,15 @@ func init() {
 	}
 }
 
+// identityTimeout bounds the one-shot system_profiler call. Generous on
+// purpose: the result is cached forever, so a too-tight cap would leave the
+// Mac with no GPU row for the whole process lifetime.
+const identityTimeout = 10 * time.Second
+
 func appleGPUs() []core.GPUDevice {
-	out, err := exec.Command("system_profiler", "SPDisplaysDataType", "-json").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), identityTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "system_profiler", "SPDisplaysDataType", "-json").Output()
 	if err != nil {
 		return nil
 	}
@@ -98,8 +105,10 @@ func applyIOAccelStats(devs []core.GPUDevice) {
 		devs[0].UtilPct = ioAccelUtil
 		return
 	}
-	out, err := exec.Command("ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator").Output()
-	if err != nil {
+	// run() caps the spawn so a hung ioreg cannot pin ioAccelMu and stall
+	// every later Sample.
+	out, ok := run(context.Background(), "ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator")
+	if !ok {
 		ioAccelMemUsed, ioAccelUtil = 0, 0
 	} else {
 		ioAccelMemUsed, ioAccelUtil = parseIOAccelerator(string(out))

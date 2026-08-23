@@ -40,6 +40,11 @@ var osGetpid func() int
 // clkTck is the jiffies-per-second constant on the linux path.
 var clkTck = func() float64 { return 100 }
 
+// listTimeout bounds OS-tooling process listings (darwin ps, windows
+// PowerShell CIM). A hung tool must not pin the Sampler lock and stall every
+// snapshot; the linux path reads procfs directly and never approaches it.
+const listTimeout = 15 * time.Second
+
 // Sampler turns raw process listings into Infos, deriving CPU percentage on
 // linux from tick deltas between samples.
 type Sampler struct {

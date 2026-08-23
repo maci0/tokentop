@@ -90,7 +90,12 @@ func (s *Source) Run(ctx context.Context, ch chan<- core.Snapshot) {
 	now := s.start
 	for {
 		s.frame(now)
-		ch <- s.snapshot(now)
+		snap := s.snapshot(now)
+		select { // a stalled consumer must not pin the goroutine past cancel
+		case ch <- snap:
+		case <-ctx.Done():
+			return
+		}
 		select {
 		case <-ctx.Done():
 			return

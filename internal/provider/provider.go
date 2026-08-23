@@ -48,18 +48,21 @@ var httpClient = &http.Client{Timeout: PollTimeout}
 func getJSON(ctx context.Context, url string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", url, err)
 	}
 	bearer.Apply(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http %s", resp.Status)
+		return fmt.Errorf("%s: http %s", url, resp.Status)
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out); err != nil {
+		return fmt.Errorf("%s: %w", url, err)
+	}
+	return nil
 }
 
 // getText fetches a URL with the given client; the caller's context bounds
@@ -67,19 +70,22 @@ func getJSON(ctx context.Context, url string, out any) error {
 func getText(ctx context.Context, c *http.Client, url string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", url, err)
 	}
 	bearer.Apply(req)
 	resp, err := c.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("http %s", resp.Status)
+		return "", fmt.Errorf("%s: http %s", url, resp.Status)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	return string(b), err
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", url, err)
+	}
+	return string(b), nil
 }
 
 // fetchVersion probes common engine version endpoints once and caches the

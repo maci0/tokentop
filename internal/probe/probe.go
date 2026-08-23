@@ -112,7 +112,13 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 			evalDur = time.Duration(chunk.EvalDuration) * time.Nanosecond
 		}
 	}
-	return tokens, evalDur, ttft, sc.Err()
+	if err := sc.Err(); err != nil {
+		return 0, 0, ttft, err
+	}
+	if tokens == 0 { // stream closed without a single token: engine is broken
+		return 0, 0, ttft, fmt.Errorf("empty stream")
+	}
+	return tokens, evalDur, ttft, nil
 }
 
 func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens int, ttft time.Duration, err error) {
@@ -167,26 +173,29 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 			}
 		}
 	}
+	if err := sc.Err(); err != nil {
+		return 0, ttft, err
+	}
 	if tokens == 0 {
 		return 0, ttft, fmt.Errorf("empty stream")
 	}
-	return tokens, ttft, sc.Err()
+	return tokens, ttft, nil
 }
 
 func postJSON(ctx context.Context, url string, body []byte) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", url, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	bearer.Apply(req)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", url, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		return nil, fmt.Errorf("http %s", resp.Status)
+		return nil, fmt.Errorf("%s: http %s", url, resp.Status)
 	}
 	return resp, nil
 }

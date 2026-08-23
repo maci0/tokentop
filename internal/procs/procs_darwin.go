@@ -3,6 +3,7 @@
 package procs
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strconv"
@@ -17,7 +18,9 @@ func init() {
 // listDarwin shells out to ps(1): there is no pure-Go API for the BSD process
 // table without cgo. One call yields pid, %cpu, RSS(kB) and full command.
 func listDarwin() ([]raw, error) {
-	out, err := exec.Command("ps", "-axo", "pid=,%cpu=,rss=,command=").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "-axo", "pid=,%cpu=,rss=,command=").Output()
 	if err != nil {
 		return nil, err
 	}

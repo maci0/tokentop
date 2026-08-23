@@ -92,7 +92,7 @@ func TestEmitSnapshotShape(t *testing.T) {
 			Temps: []core.TempReading{{Label: "package", MilliC: 45000}}}
 	}
 	done := make(chan struct{})
-	go func() { c.emit(ch); close(done) }()
+	go func() { c.emit(context.Background(), ch); close(done) }()
 
 	select {
 	case snap := <-ch:
@@ -130,7 +130,7 @@ func TestEmitUsesCachedSysSample(t *testing.T) {
 
 	ch := make(chan core.Snapshot, 1)
 	done := make(chan struct{})
-	go func() { defer close(done); c.emit(ch) }()
+	go func() { defer close(done); c.emit(context.Background(), ch) }()
 	var snap core.Snapshot
 	select {
 	case snap = <-ch:
@@ -174,7 +174,7 @@ func TestEmitSurvivesFirstPollError(t *testing.T) {
 	ch := make(chan core.Snapshot, 1)
 	c := New([]provider.Provider{fp}, time.Hour)
 	done := make(chan struct{})
-	go func() { defer close(done); c.emit(ch) }()
+	go func() { defer close(done); c.emit(context.Background(), ch) }()
 	select {
 	case snap := <-ch:
 		if len(snap.Providers) != 1 {
@@ -240,7 +240,7 @@ func TestConcurrentRecordProbeEmit(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				c.emit(ch)
+				c.emit(context.Background(), ch)
 			}
 		}
 	}()

@@ -179,18 +179,18 @@ func (c *Collector) Run(ctx context.Context, out chan<- core.Snapshot) {
 	c.startSysPoller(ctx)
 	t := time.NewTicker(c.interval)
 	defer t.Stop()
-	c.emit(out) // immediate first frame
+	c.emit(ctx, out) // immediate first frame
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			c.emit(out)
+			c.emit(ctx, out)
 		}
 	}
 }
 
-func (c *Collector) emit(out chan<- core.Snapshot) {
+func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	snap := core.Snapshot{At: time.Now(), Uptime: time.Since(c.started)}
 
 	type result struct {
@@ -276,7 +276,10 @@ func (c *Collector) emit(out chan<- core.Snapshot) {
 		ps.InHist, ps.InT0 = inR.copy(), inR.t0
 		snap.Providers = append(snap.Providers, ps)
 	}
-	out <- snap
+	select { // a stalled consumer must not pin the emit past cancellation
+	case out <- snap:
+	case <-ctx.Done():
+	}
 }
 
 // rates derives smoothed tok/s deltas since the previous sample.

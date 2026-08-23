@@ -3,6 +3,7 @@
 package procs
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -27,7 +28,9 @@ type cimProc struct {
 // There is no unprivileged pure-Go window into the NT process table with
 // command lines; CIM is the documented interface and needs no vendor libs.
 func listWindows() ([]raw, error) {
-	out, err := exec.Command("powershell", "-NoProfile", "-Command",
+	ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command",
 		`Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine,WorkingSetSize | ConvertTo-Json -Compress`).Output()
 	if err != nil {
 		return nil, err
