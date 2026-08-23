@@ -46,10 +46,15 @@ type Sampler struct {
 	mu   sync.Mutex
 	prev map[int]uint64
 	last time.Time
+
+	// minRefresh throttles expensive OS tooling (PowerShell CIM on Windows
+	// takes seconds); within the window the previous snapshot is returned.
+	minRefresh time.Duration
+	cached     []Info
 }
 
 func NewSampler() *Sampler {
-	return &Sampler{prev: map[int]uint64{}}
+	return &Sampler{prev: map[int]uint64{}, minRefresh: defaultSamplerRefresh}
 }
 
 // Snapshot lists processes, best effort. Returns nil on unsupported/erroring
@@ -58,18 +63,18 @@ func (s *Sampler) Snapshot() []Info {
 	if platformList == nil {
 		return nil
 	}
-	list, err := platformList()
-	if err != nil {
-		return nil
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now()
-	dt := now.Sub(s.last).Seconds()
-	if s.last.IsZero() {
-		dt = 0
+	if s.minRefresh > 0 && !s.last.IsZero() && now.Sub(s.last) < s.minRefresh {
+		return s.cached
 	}
+	list, err := platformList()
+	if err != nil {
+		return nil
+	}
+	dt := now.Sub(s.last).Seconds() // wall time since previous successful poll
 	s.last = now
 
 	self := pidSelf()
@@ -115,6 +120,7 @@ func (s *Sampler) Snapshot() []Info {
 			delete(s.prev, pid)
 		}
 	}
+	s.cached = out
 	return out
 }
 
@@ -249,3 +255,7 @@ func matchEngine(i Info) (engine string, defPort int, ok bool) {
 	}
 	return "", 0, false
 }
+
+// defaultSamplerRefresh is set by platform files when OS tooling needs
+// throttling (windows). Zero means every Snapshot call re-lists.
+var defaultSamplerRefresh time.Duration
