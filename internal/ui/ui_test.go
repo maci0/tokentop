@@ -32,7 +32,7 @@ func TestAreaChartShape(t *testing.T) {
 		}
 	}
 	// bottom row must be the fullest
-	if stripANSI(rows[2]) == "" {
+	if strip(rows[2]) == "" {
 		t.Fatal("bottom row empty")
 	}
 }
@@ -42,28 +42,9 @@ func TestAreaChartZeroData(t *testing.T) {
 	if n := strings.Count(out, "\n") + 1; n != 2 {
 		t.Fatalf("zero-data rows = %d", n)
 	}
-	if strings.Contains(strings.NewReplacer(" ", "", "\n", "").Replace(stripANSI(out)), "█") {
+	if strings.Contains(strings.NewReplacer(" ", "", "\n", "").Replace(strip(out)), "█") {
 		t.Fatal("zero data rendered filled cells")
 	}
-}
-
-// stripANSI removes escape sequences (test-local copy of ui.strip).
-func stripANSI(s string) string {
-	var b strings.Builder
-	esc := false
-	for _, r := range s {
-		switch {
-		case esc:
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				esc = false
-			}
-		case r == '\x1b':
-			esc = true
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 func TestGaugeBar(t *testing.T) {
@@ -179,7 +160,7 @@ func TestStaticFrameRenders(t *testing.T) {
 	}
 	out := StaticFrame(Config{Version: "t"}, snap, 110, 36)
 	for _, want := range []string{"TOKENTOP", "BACKENDS", "ENGINE STATE", "PROBES", "AGENT FEED", "SYS", "llama3"} {
-		if !strings.Contains(stripANSI(out), want) {
+		if !strings.Contains(strip(out), want) {
 			t.Errorf("frame missing %q", want)
 		}
 	}
@@ -209,7 +190,7 @@ func TestStaticFrameSystemStrip(t *testing.T) {
 		},
 	}
 	out := StaticFrame(Config{Version: "t"}, snap, 110, 30)
-	plain := stripANSI(out)
+	plain := strip(out)
 	for _, want := range []string{"SYS", "mem ", "50%", "swp ", "ld ",
 		"nv0 71°", "42%", "20G/80G", "310W"} {
 		if !strings.Contains(plain, want) {
@@ -217,7 +198,7 @@ func TestStaticFrameSystemStrip(t *testing.T) {
 		}
 	}
 	// wider terminals fit the second GPU and CPU temps too
-	wide := stripANSI(StaticFrame(Config{Version: "t"}, snap, 170, 30))
+	wide := strip(StaticFrame(Config{Version: "t"}, snap, 170, 30))
 	for _, want := range []string{"amd0 55°", "8.0G/64G", "64°"} {
 		if !strings.Contains(wide, want) {
 			t.Errorf("wide strip missing %q in:\n%s", want, wide)
@@ -239,7 +220,7 @@ func TestSystemStripSuppressesHwmonGPUDupes(t *testing.T) {
 			GPUs: []core.GPUDevice{{Vendor: "nvidia", Index: 0, MilliC: 70000}},
 		},
 	}
-	out := stripANSI(StaticFrame(Config{Version: "t"}, snap, 110, 30))
+	out := strip(StaticFrame(Config{Version: "t"}, snap, 110, 30))
 	if strings.Contains(out, "edge") {
 		t.Errorf("hwmon GPU temp leaked into strip:\n%s", out)
 	}
@@ -254,7 +235,7 @@ func TestStaticFrameNoSensors(t *testing.T) {
 		Providers: []core.ProviderSnapshot{{Label: "x", Kind: core.KindOllama, OK: true}},
 		Sys:       &core.SysSample{},
 	}
-	out := stripANSI(StaticFrame(Config{Version: "t"}, snap, 110, 30))
+	out := strip(StaticFrame(Config{Version: "t"}, snap, 110, 30))
 	if !strings.Contains(out, "mem n/a") || !strings.Contains(out, "no sensors found") {
 		t.Errorf("empty sys sample not handled:\n%s", out)
 	}
@@ -262,7 +243,7 @@ func TestStaticFrameNoSensors(t *testing.T) {
 
 func TestStaticFrameEmptyState(t *testing.T) {
 	out := StaticFrame(Config{Version: "t"}, core.Snapshot{}, 90, 30)
-	if !strings.Contains(stripANSI(out), "no inference engines detected") {
+	if !strings.Contains(strip(out), "no inference engines detected") {
 		t.Error("empty state hint missing")
 	}
 }
