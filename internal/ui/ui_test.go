@@ -266,3 +266,32 @@ func TestStaticFrameEmptyState(t *testing.T) {
 		t.Error("empty state hint missing")
 	}
 }
+
+func TestFmtDurMinuteRollover(t *testing.T) {
+	cases := map[time.Duration]string{
+		42 * time.Second:                          "42s",
+		5*time.Minute + 30*time.Second:            "5m30s",
+		time.Hour + 2*time.Minute + 3*time.Second: "62m03s",
+	}
+	for d, want := range cases {
+		if got := fmtDur(d); got != want {
+			t.Errorf("fmtDur(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// Sample spacing on the compressed timescale must follow the poll cadence,
+// not an assumed 1s: --interval 2s covers twice the wall-clock window.
+func TestTimedSeriesHonorsCadence(t *testing.T) {
+	t0 := time.Now()
+	s := core.Snapshot{Providers: []core.ProviderSnapshot{
+		{OutT0: t0, OutHist: []float64{1, 2}},
+	}}
+	tv := timedSeries(s, true, 2*time.Second)
+	if len(tv) != 2 {
+		t.Fatalf("len = %d, want 2", len(tv))
+	}
+	if !tv[0].t.Equal(t0) || !tv[1].t.Equal(t0.Add(2*time.Second)) {
+		t.Fatalf("timestamps %v..%v, want %v..%v", tv[0].t, tv[1].t, t0, t0.Add(2*time.Second))
+	}
+}
