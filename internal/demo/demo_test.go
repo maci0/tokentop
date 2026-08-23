@@ -102,6 +102,19 @@ func TestSnapshotCarriesAgentsAndProbes(t *testing.T) {
 	t.Fatal("no agent/probe activity within deadline")
 }
 
+// Sub-second poll intervals must still slide t0 forward on ring wrap; the
+// whole-second truncation used previously pinned t0 and skewed the time axis.
+func TestAdvanceT0SubSecondCadence(t *testing.T) {
+	start := time.Now()
+	if t0 := advanceT0(time.Time{}, 1, start, 500*time.Millisecond); !t0.Equal(start) {
+		t.Fatalf("first-sample t0 = %v, want %v", t0, start)
+	}
+	next := advanceT0(start, core.HistoryLen, start.Add(500*time.Millisecond), 500*time.Millisecond)
+	if !next.Equal(start.Add(500 * time.Millisecond)) {
+		t.Fatalf("wrapped t0 = %v, want %v", next, start.Add(500*time.Millisecond))
+	}
+}
+
 // Run drives the source from one goroutine while RecordAgent and ProbeAll
 // arrive from others (ingest handlers, UI prober); hammer that exact mix so
 // -race can prove the single s.mu contract holds.

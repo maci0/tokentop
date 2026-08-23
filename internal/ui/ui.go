@@ -254,7 +254,7 @@ func (m Model) outSeries(w int, cadence time.Duration) ([]float64, map[int]bool)
 	if !m.chartCompressed {
 		return aggHist(m.snap, true, w, cadence), nil
 	}
-	vals, bounds := compressSeries(timedSeries(m.snap, true), w, compressBlock)
+	vals, bounds := compressSeries(timedSeries(m.snap, true, cadence), w, compressBlock)
 	return vals, bounds
 }
 
@@ -272,8 +272,9 @@ type timedVal struct {
 	v float64
 }
 
-// timedSeries flattens every provider's history onto absolute timestamps.
-func timedSeries(s core.Snapshot, out bool) []timedVal {
+// timedSeries flattens every provider's history onto absolute timestamps
+// spaced one cadence apart.
+func timedSeries(s core.Snapshot, out bool, cadence time.Duration) []timedVal {
 	var tv []timedVal
 	for i := range s.Providers {
 		p := &s.Providers[i]
@@ -285,7 +286,7 @@ func timedSeries(s core.Snapshot, out bool) []timedVal {
 			continue
 		}
 		for j, v := range vals {
-			tv = append(tv, timedVal{t0.Add(time.Duration(j) * time.Second), v})
+			tv = append(tv, timedVal{t0.Add(time.Duration(j) * cadence), v})
 		}
 	}
 	sort.Slice(tv, func(i, j int) bool { return tv[i].t.Before(tv[j].t) })
@@ -683,7 +684,10 @@ func (m Model) probesBody(w, h int) string {
 func (m Model) renderFeed() string {
 	w := m.w - 4
 	_, _, feedIn := m.sectionHeights()
-	title := "AGENT FEED" + dim("  ← POST http://"+m.cfg.IngestAddr+"/v1/events")
+	title := "AGENT FEED"
+	if m.cfg.IngestAddr != "" {
+		title += dim("  ← POST http://" + m.cfg.IngestAddr + "/v1/events")
+	}
 	if m.paused {
 		title += "  " + styleWarn.Render("(paused)")
 	}
@@ -698,7 +702,11 @@ func (m Model) renderFeed() string {
 		lines[i], lines[j] = lines[j], lines[i]
 	}
 	if len(lines) == 0 {
-		lines = append(lines, dim("no agent activity yet — point your harness at the endpoint above"))
+		if m.cfg.IngestAddr != "" {
+			lines = append(lines, dim("no agent activity yet — point your harness at the endpoint above"))
+		} else {
+			lines = append(lines, dim("no agent activity (agent event endpoint disabled)"))
+		}
 	}
 	content := strings.Join(lines, "\n")
 	return panel(title, content, w, feedIn)
@@ -973,7 +981,7 @@ func fmtDur(d time.Duration) string {
 	if d < time.Minute {
 		return d.String()
 	}
-	return (d / time.Minute).String() + "m" + fmt.Sprintf("%02ds", int(d/time.Second)%60)
+	return fmt.Sprintf("%dm%02ds", d/time.Minute, int(d/time.Second)%60)
 }
 
 func humanBytes(b uint64) string {

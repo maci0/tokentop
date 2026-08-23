@@ -90,6 +90,7 @@ func main() {
 	// The agent event endpoint runs in every mode so harnesses can always
 	// feed the dashboard.
 	var recorder ingest.Recorder
+	feedAddr := "" // advertised by the UI only while the endpoint is live
 
 	switch {
 	case *demoMode:
@@ -145,23 +146,23 @@ func main() {
 		go col.Run(ctx, ch)
 		prober = col
 		recorder = col
+	}
 
-		if *probeSecs > 0 {
-			d := time.Duration(*probeSecs) * time.Second
-			go func() {
-				t := time.NewTicker(d)
-				defer t.Stop()
-				col.ProbeAll()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-t.C:
-						col.ProbeAll()
-					}
+	if *probeSecs > 0 && prober != nil {
+		d := time.Duration(*probeSecs) * time.Second
+		go func() {
+			t := time.NewTicker(d)
+			defer t.Stop()
+			prober.ProbeAll()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					prober.ProbeAll()
 				}
-			}()
-		}
+			}
+		}()
 	}
 
 	if !*noIngest && recorder != nil {
@@ -169,6 +170,7 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "tokentop: ingest disabled (%v)\n", err)
 		} else {
+			feedAddr = srv.Addr()
 			go func() {
 				if err := srv.Serve(); err != nil {
 					fmt.Fprintf(os.Stderr, "tokentop: ingest stopped: %v\n", err)
@@ -181,7 +183,7 @@ func main() {
 	cfg := ui.Config{
 		Version:    version,
 		Demo:       *demoMode,
-		IngestAddr: *ingestArg,
+		IngestAddr: feedAddr,
 		PollEvery:  *interval,
 		Prober:     prober,
 	}

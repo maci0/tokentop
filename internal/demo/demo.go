@@ -131,7 +131,7 @@ func (s *Source) frame(now time.Time) {
 		in := clamp((b.inBase*wave+burst*4)*jitter, 0, 20000)
 		s.histOut[b.label] = ring(s.histOut[b.label], out)
 		s.histIn[b.label] = ring(s.histIn[b.label], in)
-		s.t0[b.label] = advanceT0(s.t0[b.label], len(s.histOut[b.label]), now, int(s.interval.Seconds()))
+		s.t0[b.label] = advanceT0(s.t0[b.label], len(s.histOut[b.label]), now, s.interval)
 
 		target := 45 + 40*math.Sin(s.t/14+float64(i)) + s.rng.NormFloat64()*3
 		s.kv[i] += (clamp(target, 3, 99) - s.kv[i]) * 0.15
@@ -303,14 +303,15 @@ func ring(h []float64, v float64) []float64 {
 	return append(h, v)
 }
 
-// advanceT0 tracks the timestamp of hist[0], sliding forward on ring wrap so
-// the UI can place samples on an absolute time axis (mirrors the collector).
-func advanceT0(t0 time.Time, length int, now time.Time, cadenceSecs int) time.Time {
+// advanceT0 tracks the timestamp of hist[0], sliding forward one cadence on
+// ring wrap so the UI can place samples on an absolute time axis (mirrors
+// the collector).
+func advanceT0(t0 time.Time, length int, now time.Time, cadence time.Duration) time.Time {
 	if t0.IsZero() {
 		return now
 	}
 	if length >= core.HistoryLen {
-		return t0.Add(time.Duration(cadenceSecs) * time.Second)
+		return t0.Add(cadence)
 	}
 	return t0
 }
