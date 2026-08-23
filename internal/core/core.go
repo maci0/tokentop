@@ -5,6 +5,12 @@ import "time"
 
 const HistoryLen = 180 // rolling samples per provider (~3 min at 1s poll)
 
+// Rolling history caps for snapshot payloads.
+const (
+	AgentHistoryLen = 64  // agent events kept per snapshot
+	ProbeHistoryLen = 128 // probe samples kept per snapshot
+)
+
 // Provider kinds.
 const (
 	KindOllama    = "ollama"

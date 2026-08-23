@@ -147,10 +147,10 @@ func TestEmitUsesCachedSysSample(t *testing.T) {
 
 func TestAgentEventRing(t *testing.T) {
 	c := New(nil, time.Second)
-	for i := 0; i < agentRingCap+5; i++ {
+	for i := 0; i < core.AgentHistoryLen+5; i++ {
 		c.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "a"})
 	}
-	if len(c.agents) != agentRingCap {
+	if len(c.agents) != core.AgentHistoryLen {
 		t.Fatalf("agent ring = %d", len(c.agents))
 	}
 	if c.agents[len(c.agents)-1].At.Before(c.agents[0].At) {

@@ -18,9 +18,7 @@ import (
 )
 
 const (
-	agentRingCap = 64
-	probeRingCap = 128
-	emaAlpha     = 0.35
+	emaAlpha = 0.35
 )
 
 type prevSample struct {
@@ -343,8 +341,8 @@ func (c *Collector) RecordAgent(ev core.AgentEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.agents = append(c.agents, ev)
-	if len(c.agents) > agentRingCap {
-		c.agents = c.agents[len(c.agents)-agentRingCap:]
+	if len(c.agents) > core.AgentHistoryLen {
+		c.agents = c.agents[len(c.agents)-core.AgentHistoryLen:]
 	}
 }
 
@@ -353,8 +351,8 @@ func (c *Collector) RecordProbe(s core.ProbeSample) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.probes = append(c.probes, s)
-	if len(c.probes) > probeRingCap {
-		c.probes = c.probes[len(c.probes)-probeRingCap:]
+	if len(c.probes) > core.ProbeHistoryLen {
+		c.probes = c.probes[len(c.probes)-core.ProbeHistoryLen:]
 	}
 }
 
