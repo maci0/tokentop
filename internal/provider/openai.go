@@ -30,7 +30,7 @@ func (o *OpenAICompat) Kind() string  { return o.kind }
 func tolerantKind(kind string) bool {
 	switch kind {
 	case core.KindLemonade, core.KindGPUStack, core.KindLiteLLM,
-		core.KindTRTLLM, core.KindLMStudio:
+		core.KindTRTLLM, core.KindLMStudio, core.KindOmniRoute:
 		return true
 	}
 	return false
@@ -47,14 +47,20 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 	}
 	var lm struct {
 		Data []struct {
-			ID string `json:"id"`
+			ID            string `json:"id"`
+			ContextLength int64  `json:"context_length"`
+			MaxContextLen int64  `json:"max_context_length"` // LM Studio shape
 		} `json:"data"`
 	}
 	haveModels := getJSON(ctx, o.base+"/v1/models", &lm) == nil
 	if haveModels {
 		for _, d := range lm.Data {
 			if d.ID != "" {
-				m.Models = append(m.Models, core.ModelInfo{Name: d.ID})
+				mi := core.ModelInfo{Name: d.ID}
+				if n := maxI64(d.ContextLength, d.MaxContextLen); n > 0 {
+					mi.CtxMax = uint64(n)
+				}
+				m.Models = append(m.Models, mi)
 			}
 		}
 	}
@@ -137,3 +143,10 @@ type endpointErr struct{ base string }
 func (e endpointErr) Error() string { return "no known endpoints on " + e.base }
 
 var errNoEndpoints = endpointErr{}
+
+func maxI64(a, b int64) int64 {
+	if b > a {
+		return b
+	}
+	return a
+}

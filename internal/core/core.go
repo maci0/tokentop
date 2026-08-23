@@ -22,7 +22,8 @@ const (
 	KindTabbyAPI  = "tabbyapi"
 	KindLiteLLM   = "litellm"
 	KindGPUStack  = "gpustack"
-	KindLemonade  = "lemonade" // AMD Ryzen AI server
+	KindLemonade  = "lemonade"   // AMD Ryzen AI server
+	KindOmniRoute = "omnirouter" // OmniRoute local AI gateway (port 20128)
 )
 
 type ModelInfo struct {

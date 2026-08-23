@@ -218,3 +218,30 @@ func TestIdentifyLemonade(t *testing.T) {
 		t.Errorf("kind = %q", kind)
 	}
 }
+
+// discoverBases must identify candidates concurrently yet return providers
+// in candidate order, skipping non-engines.
+func TestDiscoverBasesParallelKeepsOrder(t *testing.T) {
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			w.Write([]byte("sglang:gen_throughput 1\n"))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(engine.Close)
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(plain.Close)
+
+	found := discoverBases(context.Background(), []string{plain.URL, engine.URL, plain.URL})
+	if len(found) != 1 {
+		t.Fatalf("providers = %d, want 1", len(found))
+	}
+	// newProvider labels non-ollama engines with their kind
+	if found[0].Addr() != engine.URL || found[0].Label() != core.KindSGLang {
+		t.Fatalf("got %s (%s), want engine %s as %s",
+			found[0].Addr(), found[0].Label(), engine.URL, core.KindSGLang)
+	}
+}

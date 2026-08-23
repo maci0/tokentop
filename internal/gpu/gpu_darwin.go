@@ -9,22 +9,32 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"tokentop/internal/core"
 )
 
-// init wires Apple GPU discovery via system_profiler. This shells out because
-// IOKit/Metal device queries have no pure-Go API; it is slow (~1-2s) so the
-// result is cached for the process lifetime. Utilization and temperatures are
-// not exposed without root (powermetrics), so they stay zero.
+// Apple GPU support has two halves:
+//
+//   - Identity (chip name, VRAM size) comes from system_profiler once per
+//     process. There is no pure-Go IOKit binding without cgo, and
+//     system_profiler is its documented CLI, so shelling out is deliberate.
+//   - Live statistics come from ioreg's IOAccelerator PerformanceStatistics,
+//     readable without root: "In use GPU memory" in bytes plus utilization.
+//     This refreshes on a throttle since Sample runs every poll cycle.
+
 func init() {
 	var (
 		once   sync.Once
-		cached []core.GPUDevice
+		idents []core.GPUDevice
 	)
 	platformExtras = func(context.Context) []core.GPUDevice {
-		once.Do(func() { cached = appleGPUs() })
-		return cached
+		once.Do(func() { idents = appleGPUs() })
+		if len(idents) == 0 {
+			return nil
+		}
+		applyIOAccelStats(idents)
+		return idents
 	}
 }
 
@@ -65,6 +75,66 @@ func appleGPUs() []core.GPUDevice {
 		devs = append(devs, dev)
 	}
 	return devs
+}
+
+var (
+	ioAccelMu      sync.Mutex
+	ioAccelAt      time.Time
+	ioAccelMemUsed uint64
+	ioAccelUtil    float64
+)
+
+const ioAccelRefresh = 2 * time.Second
+
+// applyIOAccelStats overlays live memory/utilization onto the first device:
+// aggregate accelerator numbers are exact on single-GPU Macs, which dominate;
+// multi-GPU Mac Pros would need device matching that ioreg output does not
+// expose portably, so they keep zeros rather than wrong ones.
+func applyIOAccelStats(devs []core.GPUDevice) {
+	ioAccelMu.Lock()
+	defer ioAccelMu.Unlock()
+	if time.Since(ioAccelAt) < ioAccelRefresh {
+		devs[0].MemUsed = ioAccelMemUsed
+		devs[0].UtilPct = ioAccelUtil
+		return
+	}
+	out, err := exec.Command("ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator").Output()
+	if err != nil {
+		ioAccelMemUsed, ioAccelUtil = 0, 0
+	} else {
+		ioAccelMemUsed, ioAccelUtil = parseIOAccelerator(string(out))
+	}
+	ioAccelAt = time.Now()
+	devs[0].MemUsed = ioAccelMemUsed
+	devs[0].UtilPct = ioAccelUtil
+}
+
+// parseIOAccelerator sums "In use GPU memory" across accelerators and takes
+// the max utilization percentage. Key spellings drift between macOS
+// releases; unknown lines are simply ignored.
+func parseIOAccelerator(text string) (memUsed uint64, utilPct float64) {
+	for _, line := range strings.Split(text, "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key := strings.TrimSpace(k)
+		switch key {
+		case `"In use GPU memory"`, `"gpumem_inuse"`:
+			memUsed += parseIoregNum(v)
+		case `"Device Utilization %"`, `"GPU Device Utilization %"`:
+			if u := parseIoregNum(v); float64(u) > utilPct {
+				utilPct = float64(u)
+			}
+		}
+	}
+	return memUsed, utilPct
+}
+
+func parseIoregNum(s string) uint64 {
+	s = strings.TrimSpace(strings.Trim(s, `"`))
+	v, _ := strconv.ParseUint(s, 10, 64)
+	return v // 0 on parse failure, the desired zero value
 }
 
 // parseSizeString reads vendor sizes like "128 GB", "8192 MB".

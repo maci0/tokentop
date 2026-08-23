@@ -73,3 +73,34 @@ func TestScanTempsEmptyDirs(t *testing.T) {
 		t.Fatalf("expected no temps, got %+v", temps)
 	}
 }
+
+func TestScanAccelDriversCountsDevices(t *testing.T) {
+	root := t.TempDir()
+	mk := func(accel, driver string) {
+		full := filepath.Join(root, "class", "accel", accel, "device")
+		if err := os.MkdirAll(full, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(root, "drivers", driver), filepath.Join(full, "driver")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("accel0", "amdxdna")
+	mk("accel1", "amdxdna")
+	mk("accel2", "intel_vpu")
+
+	got := scanAccelDrivers(filepath.Join(root, "class", "accel"))
+	want := []string{"AMD XDNA NPU x2", "Intel NPU"} // accel0/1 are amdxdna
+	if len(got) != len(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] = %q want %q", i, got[i], want[i])
+		}
+	}
+
+	if n := npuDisplayName("ivpu"); n != "Intel NPU" {
+		t.Errorf("ivpu alias = %q", n)
+	}
+}

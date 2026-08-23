@@ -3,6 +3,7 @@
 package sysmon
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -138,29 +139,32 @@ func utsField(b []byte) string {
 }
 
 // scanAccelDrivers enumerates the accelerator class (/sys/class/accel):
-// NPUs like Intel's NPU, AMD XDNA and Qualcomm Cloud AI100.
+// NPUs like Intel's NPU, AMD XDNA and Qualcomm Cloud AI100. Same-driver
+// devices collapse into one entry with a count suffix.
 func scanAccelDrivers(root string) []string {
 	entries, err := filepath.Glob(filepath.Join(root, "accel*"))
 	if err != nil {
 		return nil
 	}
-	var out []string
+	counts := map[string]int{}
+	var order []string
 	for _, e := range entries {
 		link, err := os.Readlink(filepath.Join(e, "device", "driver"))
 		if err != nil {
 			continue
 		}
 		name := npuDisplayName(filepath.Base(link))
-		dup := false
-		for _, existing := range out {
-			if existing == name {
-				dup = true
-				break
-			}
+		if counts[name] == 0 {
+			order = append(order, name)
 		}
-		if !dup {
-			out = append(out, name)
+		counts[name]++
+	}
+	out := make([]string, 0, len(order))
+	for _, name := range order {
+		if counts[name] > 1 {
+			name += fmt.Sprintf(" x%d", counts[name])
 		}
+		out = append(out, name)
 	}
 	return out
 }
@@ -168,7 +172,7 @@ func scanAccelDrivers(root string) []string {
 // npuDisplayName maps kernel driver names to human-friendly accelerators.
 func npuDisplayName(driver string) string {
 	switch driver {
-	case "intel_vpu":
+	case "intel_vpu", "ivpu":
 		return "Intel NPU"
 	case "amdxdna":
 		return "AMD XDNA NPU"

@@ -1,0 +1,86 @@
+package remote
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+const netTCPSample = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:2CAA 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 1 ffff8ba0c4a48000 100 0 0 10 1
+   1: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 23456 1 ffff8ba0c4a48800 100 0 0 10 1
+   2: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 9876 1 ffff8ba0c4a49000 100 0 0 10 2
+   3: 0100007F:C350 0100007F:C351 01 00000000:00000000 00:00000000 00000000  1000        0 34567 1 ffff8ba0c4a49800 20 4 30 10 -1
+`
+
+func TestParseNetTCP(t *testing.T) {
+	// 2CA6=11434, 1F90=8080, 0016=22 listening; the ESTABLISHED row is skipped.
+	got := parseNetTCP(netTCPSample)
+	want := []int{22, 8080, 11434}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseNetTCP = %v, want %v", got, want)
+	}
+}
+
+func TestParseNetTCP6(t *testing.T) {
+	out := "  sl  local_address remote_address                         st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" +
+		"   0: 00000000000000000000000000000000:1F92 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 777 1 f 100 0 0 10 1\n"
+	got := parseNetTCP(out)
+	if len(got) != 1 || got[0] != 8082 { // 1F92 = 8082
+		t.Errorf("parseNetTCP6 = %v, want [8082]", got)
+	}
+}
+
+func TestParseProcScan(t *testing.T) {
+	out := "101 /usr/bin/ollama serve\n" +
+		"102 python -m vllm.entrypoints.openai.api_server --port 9911\n" +
+		"103 \n" + // empty cmdline -> dropped by script, tolerated here
+		"notapid junk\n"
+	infos := parseProcScan(out)
+	if len(infos) != 2 {
+		t.Fatalf("got %d infos: %+v", len(infos), infos)
+	}
+	if infos[0].PID != 101 || infos[0].Name != "/usr/bin/ollama" {
+		t.Errorf("info[0] = %+v", infos[0])
+	}
+	ports := enginePorts(infos)
+	// ollama default 11434; vllm hint --port 9911 beats its default 8000.
+	if !reflect.DeepEqual(ports, []int{9911, 11434}) {
+		t.Errorf("enginePorts = %v, want [9911 11434]", ports)
+	}
+}
+
+func TestEnginePortsCustomFlagForms(t *testing.T) {
+	infos := parseProcScan(
+		"1 llama-server --port=9001\n" +
+			"2 sglang.launch_server --http-port 9100\n")
+	if got := enginePorts(infos); !reflect.DeepEqual(got, []int{9001, 9100}) {
+		t.Errorf("enginePorts = %v", got)
+	}
+}
+
+func TestForwardSet(t *testing.T) {
+	d := &Discovery{
+		Listening:   []int{22, 3000, 5005, 8080},
+		EnginePorts: []int{5005}, // custom-port engine
+	}
+	got := d.ForwardSet([]int{3000, 8080, 11434})
+	if !reflect.DeepEqual(got, []int{3000, 5005, 8080}) {
+		t.Errorf("ForwardSet = %v", got)
+	}
+}
+
+func TestVitalsScript(t *testing.T) {
+	s := vitalsScript()
+	for _, want := range []string{
+		"/proc/loadavg", "/proc/meminfo", "/proc/uptime",
+		"/proc/cpuinfo", "/etc/os-release", "uname -r", "nvidia-smi",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("vitalsScript missing %q", want)
+		}
+	}
+	if n := strings.Count(s, sectionMark); n != 6 {
+		t.Errorf("vitalsScript has %d section marks, want 6 (7 sections)", n)
+	}
+}

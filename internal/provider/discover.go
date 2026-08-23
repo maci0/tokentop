@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"tokentop/internal/bearer"
 	"tokentop/internal/core"
 	"tokentop/internal/procs"
 )
@@ -26,14 +27,16 @@ var defaultCandidates = []string{
 	"http://127.0.0.1:8001",
 	"http://127.0.0.1:8080", // llama.cpp server / mlx-lm / TGI / localai
 	"http://127.0.0.1:8081",
-	"http://127.0.0.1:1234", // lm studio (metal/mlx models)
-	"http://127.0.0.1:5001", // koboldcpp
-	"http://127.0.0.1:5000", // tabbyapi
-	"http://127.0.0.1:4000", // litellm proxy
-	"http://127.0.0.1:1337", // jan
-	"http://127.0.0.1:4891", // gpt4all
-	"http://127.0.0.1:7860", // text-generation-webui
-	"http://127.0.0.1:80",   // gpustack
+	"http://127.0.0.1:1234",  // lm studio (metal/mlx models)
+	"http://127.0.0.1:5001",  // koboldcpp
+	"http://127.0.0.1:5000",  // tabbyapi
+	"http://127.0.0.1:4000",  // litellm proxy
+	"http://127.0.0.1:1337",  // jan
+	"http://127.0.0.1:4891",  // gpt4all
+	"http://127.0.0.1:7860",  // text-generation-webui
+	"http://127.0.0.1:8790",  // prism proxy
+	"http://127.0.0.1:20128", // omniroute gateway
+	"http://127.0.0.1:80",    // gpustack
 	"http://127.0.0.1:3000",
 }
 
@@ -100,11 +103,29 @@ func Discover(ctx context.Context) []Provider {
 	for _, base := range defaultCandidates {
 		add(base)
 	}
+	return discoverBases(ctx, bases)
+}
+
+// discoverBases identifies every candidate concurrently and returns providers
+// for those that answer, preserving candidate order. Each probe cascades
+// several requests with per-request timeouts; probing one at a time would let
+// a single filtered port stall startup by its full timeout chain.
+func discoverBases(ctx context.Context, bases []string) []Provider {
+	kinds := make([]string, len(bases))
+	var wg sync.WaitGroup
+	for i, base := range bases {
+		wg.Add(1)
+		go func(i int, base string) {
+			defer wg.Done()
+			kinds[i] = Identify(ctx, base)
+		}(i, base)
+	}
+	wg.Wait()
 
 	var found []Provider
-	for _, base := range bases {
-		if kind := Identify(ctx, base); kind != "" {
-			found = append(found, newProvider(kind, base))
+	for i, kind := range kinds {
+		if kind != "" {
+			found = append(found, newProvider(kind, bases[i]))
 		}
 	}
 	return found
@@ -129,6 +150,9 @@ func newProvider(kind, base string) Provider {
 // Order matters: specific metrics prefixes first, then engine-specific
 // endpoints, then generic OpenAI probing.
 func Identify(ctx context.Context, base string) string {
+	if isOmniRoute(ctx, base) {
+		return core.KindOmniRoute
+	}
 	if isOllama(ctx, base) {
 		return core.KindOllama
 	}
@@ -209,6 +233,7 @@ func sglangInfoOK(ctx context.Context, base string) bool {
 	if err != nil {
 		return false
 	}
+	bearer.Apply(req)
 	resp, err := scanClient.Do(req)
 	if err != nil {
 		return false
@@ -229,6 +254,7 @@ func tritonReady(ctx context.Context, base string) bool {
 	if err != nil {
 		return false
 	}
+	bearer.Apply(req)
 	resp, err := scanClient.Do(req)
 	if err != nil {
 		return false
@@ -248,11 +274,29 @@ func idsLookMLX(mr *modelsResp) bool {
 	return false
 }
 
+// isOmniRoute detects the OmniRoute gateway by its distinctive routing
+// header on the API surface. One GET of /v1/models is enough; no auth
+// required (the header rides 401s too).
+func isOmniRoute(ctx context.Context, base string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/models", nil)
+	if err != nil {
+		return false
+	}
+	bearer.Apply(req)
+	resp, err := scanClient.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.Header.Get("X-OmniRoute-Route-Class") != ""
+}
+
 func isOllama(ctx context.Context, base string) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/ps", nil)
 	if err != nil {
 		return false
 	}
+	bearer.Apply(req)
 	resp, err := scanClient.Do(req)
 	if err != nil {
 		return false
@@ -278,6 +322,7 @@ func getOpenAIModels(ctx context.Context, base string) *modelsResp {
 	if err != nil {
 		return nil
 	}
+	bearer.Apply(req)
 	resp, err := scanClient.Do(req)
 	if err != nil {
 		return nil
@@ -298,6 +343,7 @@ func healthOK(ctx context.Context, base string) bool {
 	if err != nil {
 		return false
 	}
+	bearer.Apply(req)
 	resp, err := scanClient.Do(req)
 	if err != nil {
 		return false

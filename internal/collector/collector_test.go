@@ -2,6 +2,8 @@ package collector
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -102,6 +104,47 @@ func TestEmitSnapshotShape(t *testing.T) {
 	<-done
 }
 
+// Host-vitals sampling happens off the emit path: the background poller
+// fills the cache, and a warm emit must never invoke the (potentially
+// seconds-slow) sampler itself.
+func TestEmitUsesCachedSysSample(t *testing.T) {
+	c := New(nil, time.Hour)
+	var calls atomic.Int32
+	c.SetSysFn(func() core.SysSample {
+		calls.Add(1)
+		return core.SysSample{MemTotal: 7}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.startSysPoller(ctx)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for c.sysSnapshot() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("background poller never cached a sample")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	before := calls.Load()
+
+	ch := make(chan core.Snapshot, 1)
+	done := make(chan struct{})
+	go func() { defer close(done); c.emit(ch) }()
+	var snap core.Snapshot
+	select {
+	case snap = <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("emit did not produce a snapshot")
+	}
+	<-done
+	if snap.Sys == nil || snap.Sys.MemTotal != 7 {
+		t.Fatalf("cached sys sample missing from snapshot: %+v", snap.Sys)
+	}
+	if got := calls.Load(); got != before {
+		t.Fatalf("emit invoked the sampler inline (%d -> %d calls)", before, got)
+	}
+}
+
 func TestAgentEventRing(t *testing.T) {
 	c := New(nil, time.Second)
 	for i := 0; i < agentRingCap+5; i++ {
@@ -121,4 +164,27 @@ func TestProbeAllSkipsWhenNoModelKnown(t *testing.T) {
 	if len(c.probes) != 0 {
 		t.Fatalf("unexpected probes: %d", len(c.probes))
 	}
+}
+
+// A provider failing its very first poll has no history rings yet; emit must
+// still include it (with the error surfaced) instead of dereferencing nil.
+func TestEmitSurvivesFirstPollError(t *testing.T) {
+	fp := &fakeProvider{label: "dead", err: errors.New("connection refused")}
+	ch := make(chan core.Snapshot, 1)
+	c := New([]provider.Provider{fp}, time.Hour)
+	done := make(chan struct{})
+	go func() { defer close(done); c.emit(ch) }()
+	select {
+	case snap := <-ch:
+		if len(snap.Providers) != 1 {
+			t.Fatalf("providers = %d, want 1", len(snap.Providers))
+		}
+		p := snap.Providers[0]
+		if p.OK || p.Err == "" {
+			t.Fatalf("expected failed provider with error, got ok=%v err=%q", p.OK, p.Err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("emit did not produce a snapshot")
+	}
+	<-done
 }

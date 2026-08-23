@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"tokentop/internal/bearer"
 	"tokentop/internal/core"
 )
 
@@ -49,6 +50,7 @@ func getJSON(ctx context.Context, url string, out any) error {
 	if err != nil {
 		return err
 	}
+	bearer.Apply(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
@@ -63,7 +65,12 @@ func getJSON(ctx context.Context, url string, out any) error {
 // getText fetches a URL with the given client; callers enforce deadlines via
 // the client timeout or request context.
 func getText(c *http.Client, url string) (string, error) {
-	resp, err := c.Get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	bearer.Apply(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		return "", err
 	}

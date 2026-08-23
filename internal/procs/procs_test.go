@@ -17,8 +17,8 @@ func TestExtractPort(t *testing.T) {
 		{[]string{"x", "-p", "1234"}, 0}, // -p is ambiguous, must not match
 	}
 	for _, c := range cases {
-		if got := extractPort(c.args); got != c.want {
-			t.Errorf("extractPort(%v) = %d, want %d", c.args, got, c.want)
+		if got := ExtractPort(c.args); got != c.want {
+			t.Errorf("ExtractPort(%v) = %d, want %d", c.args, got, c.want)
 		}
 	}
 }
@@ -45,8 +45,8 @@ func TestMatchEngine(t *testing.T) {
 	}
 	for _, c := range cases {
 		i := Info{PID: 1, Name: c.name, Args: c.args}
-		i.PortHint = extractPort(c.args)
-		eng, def, ok := matchEngine(i)
+		i.PortHint = ExtractPort(c.args)
+		eng, def, ok := MatchEngine(i)
 		if ok != c.ok || eng != c.engine || (ok && def != c.port) {
 			t.Errorf("match(%s %v) = %q/%d/%v, want %q/%d/%v",
 				c.name, c.args, eng, def, ok, c.engine, c.port, c.ok)
