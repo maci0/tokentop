@@ -28,17 +28,17 @@ type Config struct {
 }
 
 type Model struct {
-	cfg    Config
-	ch     <-chan core.Snapshot
-	snap   core.Snapshot
-	w, h   int
-	ready  bool
-	paused bool
-	help   bool
-	clock  time.Time
-	maxAgg float64
-	prevAgg float64
-	trendUp bool
+	cfg             Config
+	ch              <-chan core.Snapshot
+	snap            core.Snapshot
+	w, h            int
+	ready           bool
+	paused          bool
+	help            bool
+	clock           time.Time
+	maxAgg          float64
+	prevAgg         float64
+	trendUp         bool
 	chartCompressed bool
 }
 
