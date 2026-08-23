@@ -132,12 +132,20 @@ func authHint(err error) error {
 	return err
 }
 
-// keepalive keeps NAT/firewall state alive and turns silent network death
-// into a closed connection within ~45s instead of a hung session. It exits
-// as soon as the client is torn down instead of ticking on a dead session.
+// keepaliveEvery and keepaliveReplies pace the liveness probe; vars so
+// tests can shrink them.
+var (
+	keepaliveEvery   = 15 * time.Second
+	keepaliveReplies = 5 * time.Second
+)
+
+// keepalive turns silent network death into a closed connection within about
+// a minute (3 unanswered probes) instead of a hung session. Each probe races
+// a bounded wait: SendRequest alone would block forever on a peer that stops
+// replying without closing TCP, so the miss counter would never advance.
 func (c *Client) keepalive() {
 	defer close(c.keepaliveDone)
-	t := time.NewTicker(15 * time.Second)
+	t := time.NewTicker(keepaliveEvery)
 	defer t.Stop()
 	misses := 0
 	for {
@@ -146,16 +154,35 @@ func (c *Client) keepalive() {
 			return
 		case <-t.C:
 		}
-		_, _, err := c.conn.SendRequest("keepalive@tokentop", true, nil)
-		if err != nil {
-			misses++
-			if misses >= 3 {
-				c.conn.Close()
-				return
-			}
+		if c.probe(keepaliveReplies) {
+			misses = 0
 			continue
 		}
-		misses = 0
+		misses++
+		if misses >= 3 {
+			c.conn.Close() // unblocks any probe still awaiting a reply
+			return
+		}
+	}
+}
+
+// probe sends one global request and reports whether the peer answered in
+// good health within wait. At most one probe goroutine can be stranded per
+// miss window; conn.Close() releases it.
+func (c *Client) probe(wait time.Duration) bool {
+	type ack struct{ ok bool }
+	ch := make(chan ack, 1)
+	go func() {
+		_, _, err := c.conn.SendRequest("keepalive@tokentop", true, nil)
+		ch <- ack{err == nil}
+	}()
+	select {
+	case a := <-ch:
+		return a.ok
+	case <-time.After(wait):
+		return false
+	case <-c.closed:
+		return false
 	}
 }
 
@@ -260,16 +287,16 @@ func (c *Client) relay(l net.Listener, rport int) {
 	}
 }
 
-// Close tears down relays and the connection. Safe more than once.
+// Close tears down relays and the connection. Safe more than once, and
+// complete even after the connection died on its own: listeners must be
+// reclaimed either way.
 func (c *Client) Close() {
 	c.closeMu.Lock()
 	select {
-	case <-c.closed: // already closed
-		c.closeMu.Unlock()
-		return
+	case <-c.closed:
 	default:
+		close(c.closed)
 	}
-	close(c.closed)
 	c.closeMu.Unlock()
 
 	c.mu.Lock()
@@ -284,22 +311,19 @@ func (c *Client) Close() {
 }
 
 // watchClose marks abnormal termination when the underlying connection dies
-// outside Close(): still-open relays prove this was not a deliberate shutdown.
-// Call once at Connect time.
+// outside Close(): Done must fire for any drop, deliberate shutdowns are
+// already marked by Close before they reach this point. Call once at Connect
+// time.
 func (c *Client) watchClose() {
 	c.conn.Conn.Wait() // returns when the connection is torn down
-	c.mu.Lock()
-	unexpected := len(c.listeners) > 0
-	c.mu.Unlock()
-	if !unexpected {
-		return
-	}
-	c.setErr(fmt.Errorf("ssh connection lost"))
 	c.closeMu.Lock()
 	select {
-	case <-c.closed:
+	case <-c.closed: // deliberate shutdown, not a loss
+		c.closeMu.Unlock()
+		return
 	default:
 		close(c.closed)
 	}
 	c.closeMu.Unlock()
+	c.setErr(fmt.Errorf("ssh connection lost"))
 }

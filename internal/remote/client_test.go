@@ -323,6 +323,83 @@ func TestKeepaliveStopsOnClose(t *testing.T) {
 	}
 }
 
+// newSilentSSHServer completes handshakes and then goes dark: channels and
+// global requests are drained but never serviced, TCP stays open. It models
+// a blackholed route or a hung remote sshd, the failure mode keepalive must
+// detect.
+func newSilentSSHServer(t *testing.T) *testSSHServer {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &ssh.ServerConfig{
+		PublicKeyCallback: func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
+			return &ssh.Permissions{}, nil
+		},
+	}
+	cfg.AddHostKey(signer)
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &testSSHServer{lis: lis, hostKey: signer}
+	go func() {
+		for {
+			nc, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			s.mu.Lock()
+			s.conns = append(s.conns, nc)
+			s.mu.Unlock()
+			go func(nc net.Conn) {
+				conn, chans, reqs, err := ssh.NewServerConn(nc, cfg)
+				if err != nil {
+					nc.Close()
+					return
+				}
+				defer conn.Close()
+				go func() { // accept no channels
+					for range chans {
+					}
+				}()
+				for range reqs { // reply to no global requests
+				}
+				// hold TCP until the client gives up on us
+			}(nc)
+		}
+	}()
+	t.Cleanup(s.Close)
+	return s
+}
+
+// A peer that stops replying without closing TCP must be force-closed by
+// keepalive after three unanswered probes; Done must fire.
+func TestKeepaliveDetectsSilentPeer(t *testing.T) {
+	withKnownHosts(t)
+	oldEvery, oldWait := keepaliveEvery, keepaliveReplies
+	keepaliveEvery, keepaliveReplies = 10*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { keepaliveEvery, keepaliveReplies = oldEvery, oldWait })
+
+	srv := newSilentSSHServer(t)
+	cli, err := Connect(t.Context(), testTarget(srv.Port()))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer cli.Close()
+
+	select {
+	case <-cli.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("silent peer not detected within probe window")
+	}
+}
+
 func TestClientRunFailureCarriesStderr(t *testing.T) {
 	withKnownHosts(t)
 	srv := newTestSSHServer(t, "", 0)
