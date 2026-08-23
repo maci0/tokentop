@@ -4,7 +4,9 @@ package ingest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -64,8 +66,8 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	for {
 		var ev core.AgentEvent
 		if err := dec.Decode(&ev); err != nil {
-			if n > 0 && err.Error() == "EOF" {
-				break
+			if n > 0 && errors.Is(err, io.EOF) {
+				break // clean end of stream after at least one event
 			}
 			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 			return

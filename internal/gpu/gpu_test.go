@@ -46,7 +46,7 @@ const rocmJSON = `{
 }`
 
 func TestParseRocmSMI(t *testing.T) {
-	devs := parseRocmSMI([]byte(rocmJSON))
+	devs := ParseRocmSMI([]byte(rocmJSON))
 	if len(devs) != 1 {
 		t.Fatalf("devices = %d", len(devs))
 	}

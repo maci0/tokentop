@@ -45,6 +45,6 @@ func (o *Ollama) Poll(ctx context.Context) (*Metrics, error) {
 		}
 		m.Models = append(m.Models, core.ModelInfo{Name: name, SizeVRAM: mm.SizeVRAM})
 	}
-	m.Version = fetchVersion(&o.version, o.base)
+	m.Version = fetchVersion(ctx, &o.version, o.base)
 	return m, nil
 }

@@ -28,30 +28,34 @@ func Sparkline(vals []float64, w int) string {
 	return AreaChart(vals, w, 1, func(float64) lipgloss.Color { return lipgloss.Color("") })
 }
 
+// tailCols returns exactly w columns carrying the last w values, zero-padded
+// on the left so charts hug the right edge like a scope trace, plus their
+// peak (floored at 1 so an all-zero series still renders).
+func tailCols(vals []float64, w int) ([]float64, float64) {
+	vs := vals
+	if len(vs) > w {
+		vs = vs[len(vs)-w:]
+	}
+	maxV := 0.0
+	for _, v := range vs {
+		maxV = max(maxV, v)
+	}
+	if maxV <= 0 {
+		maxV = 1
+	}
+	pad := max(w-len(vs), 0)
+	cols := make([]float64, pad+len(vs))
+	copy(cols[pad:], vs)
+	return cols, maxV
+}
+
 // AreaChart renders a multi-row column chart of the last w values scaled to
 // the max, colored per column by heatColor(frac).
 func AreaChart(vals []float64, w, h int, heat func(float64) lipgloss.Color) string {
 	if w <= 0 || h <= 0 {
 		return ""
 	}
-	vs := vals
-	if len(vs) > w {
-		vs = vs[len(vs)-w:]
-	}
-	max := 0.0
-	for _, v := range vs {
-		max = maxf(max, v)
-	}
-	if max <= 0 {
-		max = 1
-	}
-	// left-pad so charts hug the right edge like a scope trace
-	pad := w - len(vs)
-	if pad < 0 {
-		pad = 0
-	}
-	cols := make([]float64, pad+len(vs))
-	copy(cols[pad:], vs)
+	cols, peak := tailCols(vals, w)
 
 	rows := make([]strings.Builder, h)
 	type cacheKey struct{ band, level int }
@@ -59,7 +63,7 @@ func AreaChart(vals []float64, w, h int, heat func(float64) lipgloss.Color) stri
 	for r := 0; r < h; r++ {
 		base := (h - 1 - r) * 8 // subcell offset of this row's bottom
 		for _, v := range cols {
-			frac := v / max
+			frac := v / peak
 			band := int(frac * 6) // 6 heat bands
 			level := int(frac*float64(h*8)) - base
 			ch := LevelChar(level)
@@ -130,23 +134,7 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 	if heat == nil {
 		heat = func(float64) lipgloss.Color { return lipgloss.Color("") }
 	}
-	vs := vals
-	if len(vs) > w {
-		vs = vs[len(vs)-w:]
-	}
-	max := 0.0
-	for _, v := range vs {
-		max = maxf(max, v)
-	}
-	if max <= 0 {
-		max = 1
-	}
-	pad := w - len(vs)
-	if pad < 0 {
-		pad = 0
-	}
-	cols := make([]float64, pad+len(vs))
-	copy(cols[pad:], vs)
+	cols, peak := tailCols(vals, w)
 
 	dotH := h * 4
 	type cacheKey struct {
@@ -157,7 +145,7 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 	rows := make([]strings.Builder, h)
 	for cy := 0; cy < h; cy++ {
 		for cx := 0; cx < w; cx++ {
-			frac := clamp01(cols[cx] / max)
+			frac := clamp01(cols[cx] / peak)
 			pattern := 0
 			level := frac * float64(dotH)
 			for sr := 0; sr < 4; sr++ {
@@ -172,7 +160,7 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 			}
 			col := heat(frac)
 			if st.FadeAge && frac > 0.02 {
-				f := 0.30 + 0.70*(float64(cx)/float64(maxi(w-1, 1)))
+				f := 0.30 + 0.70*(float64(cx)/float64(max(w-1, 1)))
 				col = lipgloss.Color(fadeColor(col, f))
 			}
 			k := cacheKey{color: string(col), pattern: pattern}
@@ -218,11 +206,4 @@ func clamp01(v float64) float64 {
 		return 1
 	}
 	return v
-}
-
-func maxf(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
 }

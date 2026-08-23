@@ -62,10 +62,10 @@ func getJSON(ctx context.Context, url string, out any) error {
 	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
 }
 
-// getText fetches a URL with the given client; callers enforce deadlines via
-// the client timeout or request context.
-func getText(c *http.Client, url string) (string, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+// getText fetches a URL with the given client; the caller's context bounds
+// the request alongside any client timeout.
+func getText(ctx context.Context, c *http.Client, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
@@ -85,11 +85,11 @@ func getText(c *http.Client, url string) (string, error) {
 // fetchVersion probes common engine version endpoints once and caches the
 // result. Engines differ wildly here: /api/version (Ollama-style),
 // /version (vLLM, llama.cpp), /get_server_info (SGLang embeds one).
-func fetchVersion(cache *sync.Once, base string) string {
+func fetchVersion(ctx context.Context, cache *sync.Once, base string) string {
 	var v string
 	cache.Do(func() {
 		for _, path := range []string{"/api/version", "/version", "/get_server_info"} {
-			text, err := getText(httpClient, base+path)
+			text, err := getText(ctx, httpClient, base+path)
 			if err != nil {
 				continue
 			}
@@ -213,7 +213,7 @@ func classify(fam map[string]float64, m *Metrics) {
 				m.HasKV = true
 			}
 		case strings.Contains(n, "time_to_first_token") && strings.HasSuffix(n, "_sum"):
-			cnt := famByKey(lower, trimSuffix(n, "_sum")+"_count")
+			cnt := lower[strings.TrimSuffix(n, "_sum")+"_count"]
 			if cnt > 0 {
 				m.TTFTms = v / cnt * 1000
 			}
@@ -225,8 +225,6 @@ func classify(fam map[string]float64, m *Metrics) {
 	}
 }
 
-func famByKey(m map[string]float64, k string) float64 { return m[k] }
-
 func containsAny(s string, subs ...string) bool {
 	for _, sub := range subs {
 		if strings.Contains(s, sub) {
@@ -234,8 +232,4 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
-}
-
-func trimSuffix(s, suf string) string {
-	return strings.TrimSuffix(s, suf)
 }

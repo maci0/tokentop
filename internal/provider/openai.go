@@ -38,7 +38,7 @@ func tolerantKind(kind string) bool {
 
 func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 	m := &Metrics{}
-	text, merr := getText(httpClient, o.base+"/metrics")
+	text, merr := getText(ctx, httpClient, o.base+"/metrics")
 	if merr != nil && o.kind == core.KindVLLM {
 		return nil, merr // vLLM without metrics is not worth showing
 	}
@@ -57,7 +57,7 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 		for _, d := range lm.Data {
 			if d.ID != "" {
 				mi := core.ModelInfo{Name: d.ID}
-				if n := maxI64(d.ContextLength, d.MaxContextLen); n > 0 {
+				if n := max(d.ContextLength, d.MaxContextLen); n > 0 {
 					mi.CtxMax = uint64(n)
 				}
 				m.Models = append(m.Models, mi)
@@ -75,7 +75,7 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 		enrichLemonade(ctx, o.base, m)
 	}
 	if m.Version == "" {
-		m.Version = fetchVersion(&o.version, o.base)
+		m.Version = fetchVersion(ctx, &o.version, o.base)
 	}
 	return m, nil
 }
@@ -141,12 +141,3 @@ func enrichLemonade(ctx context.Context, base string, m *Metrics) {
 type endpointErr struct{ base string }
 
 func (e endpointErr) Error() string { return "no known endpoints on " + e.base }
-
-var errNoEndpoints = endpointErr{}
-
-func maxI64(a, b int64) int64 {
-	if b > a {
-		return b
-	}
-	return a
-}

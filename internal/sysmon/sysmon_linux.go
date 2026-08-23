@@ -293,12 +293,3 @@ func containsAny(s string, subs ...string) bool {
 	}
 	return false
 }
-
-// helpers shared with pure parsers in sysmon.go
-
-func strconvParseUint(s string) (uint64, error) { return strconv.ParseUint(s, 10, 64) }
-
-func parseF(s string) float64 {
-	v, _ := strconv.ParseFloat(s, 64)
-	return v
-}

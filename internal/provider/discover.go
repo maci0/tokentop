@@ -61,6 +61,26 @@ func CandidatePorts() []int {
 
 var scanClient = &http.Client{Timeout: scanTimeout}
 
+// scanGet issues one identification GET through scanClient with the bearer
+// token applied. The response body, when present, must be closed by the
+// caller; err is nil only for HTTP 200.
+func scanGet(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	bearer.Apply(req)
+	resp, err := scanClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("http %s", resp.Status)
+	}
+	return resp, nil
+}
+
 // procSampler lazily starts the platform process sampler; engine processes
 // found by name contribute candidate URLs ahead of the blind port scan.
 var procSampler = struct {
@@ -156,7 +176,7 @@ func Identify(ctx context.Context, base string) string {
 	if isOllama(ctx, base) {
 		return core.KindOllama
 	}
-	if text, err := getText(scanClient, base+"/metrics"); err == nil {
+	if text, err := getText(ctx, scanClient, base+"/metrics"); err == nil {
 		switch {
 		case strings.Contains(text, "vllm:"):
 			return core.KindVLLM
@@ -208,7 +228,7 @@ func Identify(ctx context.Context, base string) string {
 
 // probeContains fetches a path and checks that every needle appears.
 func probeContains(ctx context.Context, base, path string, needles ...string) bool {
-	text, err := getText(scanClient, base+path)
+	text, err := getText(ctx, scanClient, base+path)
 	if err != nil {
 		return false
 	}
@@ -223,25 +243,17 @@ func probeContains(ctx context.Context, base, path string, needles ...string) bo
 
 // bodyOK reports whether path answers 200 with the substring in its body.
 func bodyOK(ctx context.Context, url, substr string) bool {
-	text, err := getText(scanClient, url)
+	text, err := getText(ctx, scanClient, url)
 	return err == nil && strings.Contains(strings.ToLower(text), strings.ToLower(substr))
 }
 
 // sglangInfoOK detects SGLang via its native /get_model_info endpoint.
 func sglangInfoOK(ctx context.Context, base string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/get_model_info", nil)
-	if err != nil {
-		return false
-	}
-	bearer.Apply(req)
-	resp, err := scanClient.Do(req)
+	resp, err := scanGet(ctx, base+"/get_model_info")
 	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
 	var body struct {
 		ModelPath string `json:"model_path"`
 	}
@@ -250,17 +262,12 @@ func sglangInfoOK(ctx context.Context, base string) bool {
 
 // tritonReady checks the KServe v2 readiness endpoint served by Triton.
 func tritonReady(ctx context.Context, base string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v2/health/ready", nil)
+	resp, err := scanGet(ctx, base+"/v2/health/ready")
 	if err != nil {
 		return false
 	}
-	bearer.Apply(req)
-	resp, err := scanClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	resp.Body.Close()
+	return true
 }
 
 // idsLookMLX reports whether any served model id looks like an MLX build
@@ -276,7 +283,8 @@ func idsLookMLX(mr *modelsResp) bool {
 
 // isOmniRoute detects the OmniRoute gateway by its distinctive routing
 // header on the API surface. One GET of /v1/models is enough; no auth
-// required (the header rides 401s too).
+// required (the header rides 401s too), so any status may carry it and
+// scanGet's 200-only rule does not apply here.
 func isOmniRoute(ctx context.Context, base string) bool {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/models", nil)
 	if err != nil {
@@ -292,19 +300,11 @@ func isOmniRoute(ctx context.Context, base string) bool {
 }
 
 func isOllama(ctx context.Context, base string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/ps", nil)
-	if err != nil {
-		return false
-	}
-	bearer.Apply(req)
-	resp, err := scanClient.Do(req)
+	resp, err := scanGet(ctx, base+"/api/ps")
 	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
 	var body struct {
 		Models []json.RawMessage `json:"models"`
 	}
@@ -318,19 +318,11 @@ type modelsResp struct {
 }
 
 func getOpenAIModels(ctx context.Context, base string) *modelsResp {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/models", nil)
-	if err != nil {
-		return nil
-	}
-	bearer.Apply(req)
-	resp, err := scanClient.Do(req)
+	resp, err := scanGet(ctx, base+"/v1/models")
 	if err != nil {
 		return nil
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
 	var mr modelsResp
 	if json.NewDecoder(resp.Body).Decode(&mr) != nil || len(mr.Data) == 0 {
 		return nil
@@ -339,15 +331,10 @@ func getOpenAIModels(ctx context.Context, base string) *modelsResp {
 }
 
 func healthOK(ctx context.Context, base string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/health", nil)
+	resp, err := scanGet(ctx, base+"/health")
 	if err != nil {
 		return false
 	}
-	bearer.Apply(req)
-	resp, err := scanClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	resp.Body.Close()
+	return true
 }
