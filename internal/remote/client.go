@@ -1,3 +1,6 @@
+// Package remote attaches tokentop to engines on other hosts over one
+// long-lived ssh connection: target parsing, host key handling, discovery of
+// listening inference ports and periodic vitals sampling.
 package remote
 
 import (

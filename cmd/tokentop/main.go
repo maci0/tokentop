@@ -217,24 +217,20 @@ func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotRelo
 		})
 	}
 
-	for {
-		prog := tea.NewProgram(ui.New(cfg, ch), tea.WithAltScreen())
-		mu.Lock()
-		current = prog
-		mu.Unlock()
+	prog := tea.NewProgram(ui.New(cfg, ch), tea.WithAltScreen())
+	mu.Lock()
+	current = prog
+	mu.Unlock()
 
-		if _, err := prog.Run(); err != nil {
+	if _, err := prog.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "tokentop:", err)
+		os.Exit(1)
+	}
+	if reloaded.Load() {
+		fmt.Fprintln(os.Stderr, "tokentop: binary changed, restarting…")
+		if err := selfreload.ReExec(self, os.Args, os.Environ()); err != nil {
 			fmt.Fprintln(os.Stderr, "tokentop:", err)
-			os.Exit(1)
 		}
-		if reloaded.Load() {
-			fmt.Fprintln(os.Stderr, "tokentop: binary changed, restarting…")
-			if err := selfreload.ReExec(self, os.Args, os.Environ()); err != nil {
-				fmt.Fprintln(os.Stderr, "tokentop:", err)
-			}
-			return
-		}
-		return // clean quit
 	}
 }
 

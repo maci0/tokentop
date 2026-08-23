@@ -195,12 +195,10 @@ func (s *Source) genEvent(now time.Time) {
 	s.addAgent(ev)
 }
 
-const agentRingCap = 64
-
 func (s *Source) addAgent(ev core.AgentEvent) {
 	s.agents = append(s.agents, ev)
-	if len(s.agents) > agentRingCap {
-		s.agents = s.agents[len(s.agents)-agentRingCap:]
+	if len(s.agents) > core.AgentHistoryLen {
+		s.agents = s.agents[len(s.agents)-core.AgentHistoryLen:]
 	}
 }
 
@@ -214,12 +212,10 @@ func (s *Source) RecordAgent(ev core.AgentEvent) {
 	s.addAgent(ev)
 }
 
-const probeRingCap = 128
-
 func (s *Source) addProbe(p core.ProbeSample) {
 	s.probes = append(s.probes, p)
-	if len(s.probes) > probeRingCap {
-		s.probes = s.probes[len(s.probes)-probeRingCap:]
+	if len(s.probes) > core.ProbeHistoryLen {
+		s.probes = s.probes[len(s.probes)-core.ProbeHistoryLen:]
 	}
 }
 
