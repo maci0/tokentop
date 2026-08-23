@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -19,13 +18,17 @@ type memRecorder struct{ evs []core.AgentEvent }
 
 func (m *memRecorder) RecordAgent(ev core.AgentEvent) { m.evs = append(m.evs, ev) }
 
-func post(t *testing.T, url, body string) *http.Response {
+// post sends body and returns the status code, draining the response so
+// keep-alive connections are reusable.
+func post(t *testing.T, url, body string) int {
 	t.Helper()
 	resp, err := http.Post(url, "application/json", bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resp
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
 }
 
 func TestIngestAcceptsEvents(t *testing.T) {
@@ -40,8 +43,8 @@ func TestIngestAcceptsEvents(t *testing.T) {
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
 		`{"agent":"coder","kind":"tool","prompt_tokens":100,"output_tokens":5}`+"\n"+
 			`{"agent":"coder","kind":"turn","output_tokens":50}`+"\n")
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("status = %d", resp.StatusCode)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
 	}
 	deadline := time.Now().Add(time.Second)
 	for len(rec.evs) < 2 && time.Now().Before(deadline) {
@@ -66,16 +69,16 @@ func TestIngestDefaultsAndBadJSON(t *testing.T) {
 	base := "http://" + s.Addr() + "/v1/events"
 
 	resp := post(t, base, `{"prompt_tokens":1}`)
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("anonymous event rejected: %d", resp.StatusCode)
+	if resp != http.StatusAccepted {
+		t.Fatalf("anonymous event rejected: %d", resp)
 	}
 	if rec.evs[0].Agent != "anonymous" || rec.evs[0].Kind != "turn" {
 		t.Errorf("defaults not applied: %+v", rec.evs[0])
 	}
 
 	resp = post(t, base, `{not json`)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("bad json status = %d", resp.StatusCode)
+	if resp != http.StatusBadRequest {
+		t.Fatalf("bad json status = %d", resp)
 	}
 }
 
@@ -84,12 +87,17 @@ func TestHealthz(t *testing.T) {
 	go s.Serve()
 	defer s.Close()
 	resp, err := http.Get("http://" + s.Addr() + "/healthz")
-	if err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("healthz: %v %v", err, resp)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var body map[string]string
-	json.NewDecoder(resp.Body).Decode(&body)
-	resp.Body.Close()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
+		t.Fatalf("healthz = %d %q, want 200 ok", resp.StatusCode, body)
+	}
 }
 
 func TestIngestClampsOversizedFields(t *testing.T) {
@@ -101,8 +109,8 @@ func TestIngestClampsOversizedFields(t *testing.T) {
 	huge := strings.Repeat("x", 10_000)
 	body := fmt.Sprintf(`{"agent":%q,"model":%q,"note":%q}`, huge, huge, huge)
 	resp := post(t, "http://"+s.Addr()+"/v1/events", body)
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("status = %d", resp.StatusCode)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
 	}
 	deadline := time.Now().Add(time.Second)
 	for len(rec.evs) < 1 && time.Now().Before(deadline) {

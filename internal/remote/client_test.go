@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -228,8 +227,9 @@ func (s *testSSHServer) serveDirect(nch ssh.NewChannel) {
 	}()
 }
 
-func testTarget(port int) Target {
-	os.Setenv("USER", "tester")
+func testTarget(t *testing.T, port int) Target {
+	t.Helper()
+	t.Setenv("USER", "tester") // currentUser() reads it; scoped to this test
 	return Target{User: "tester", Host: "127.0.0.1", Port: port}
 }
 
@@ -246,7 +246,7 @@ func TestClientConnectRunForward(t *testing.T) {
 	srv := newTestSSHServer(t, "", 0)
 	defer srv.Close()
 
-	cli, err := Connect(t.Context(), testTarget(srv.Port()))
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestKeepaliveStopsOnClose(t *testing.T) {
 	srv := newTestSSHServer(t, "", 0)
 	defer srv.Close()
 
-	cli, err := Connect(t.Context(), testTarget(srv.Port()))
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestKeepaliveDetectsSilentPeer(t *testing.T) {
 	t.Cleanup(func() { keepaliveEvery, keepaliveReplies = oldEvery, oldWait })
 
 	srv := newSilentSSHServer(t)
-	cli, err := Connect(t.Context(), testTarget(srv.Port()))
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestClientRunFailureCarriesStderr(t *testing.T) {
 	withKnownHosts(t)
 	srv := newTestSSHServer(t, "", 0)
 	defer srv.Close()
-	cli, err := Connect(t.Context(), testTarget(srv.Port()))
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func TestClientPasswordAuth(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("TOKENTOP_SSH_PASSWORD", "secret")
 
-	cli, err := Connect(t.Context(), testTarget(srv.Port()))
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
 	if err != nil {
 		t.Fatalf("password connect: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestClientWrongPasswordFails(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("TOKENTOP_SSH_PASSWORD", "wrong")
 
-	_, err := Connect(t.Context(), testTarget(srv.Port()))
+	_, err := Connect(t.Context(), testTarget(t, srv.Port()))
 	if err == nil {
 		t.Fatal("expected auth failure")
 	}
@@ -454,7 +454,7 @@ func TestClientHostKeyChangeRefused(t *testing.T) {
 	withKnownHosts(t)
 	srv := newTestSSHServer(t, "", 0)
 	port := srv.Port()
-	cli, err := Connect(t.Context(), testTarget(port))
+	cli, err := Connect(t.Context(), testTarget(t, port))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +464,7 @@ func TestClientHostKeyChangeRefused(t *testing.T) {
 	// Same address, different host key.
 	srv2 := newTestSSHServer(t, "", port)
 	defer srv2.Close()
-	_, err = Connect(t.Context(), testTarget(port))
+	_, err = Connect(t.Context(), testTarget(t, port))
 	if err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("changed host key must be refused, got: %v", err)
 	}
