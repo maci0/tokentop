@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"tokentop/internal/bearer"
@@ -153,4 +154,128 @@ func TestCandidatePortsIncludeOmniRoute(t *testing.T) {
 		}
 	}
 	t.Error("20128 missing from candidate ports")
+}
+
+// The Ollama provider must list loaded models from /api/ps, falling back to
+// the `model` field when `name` is absent, and carry the daemon version.
+func TestPollOllamaModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ps":
+			w.Write([]byte(`{"models":[` +
+				`{"name":"llama3:latest","size_vram":8000000000},` +
+				`{"model":"qwen2:7b-instruct-q4_K_M","size_vram":4700000000}]}`))
+		case "/api/version":
+			w.Write([]byte(`{"version":"0.5.4"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	p := NewOllama(srv.URL)
+	if p.Addr() != srv.URL || p.Label() != "ollama" {
+		t.Fatalf("identity = %s/%s", p.Label(), p.Addr())
+	}
+	m, err := p.Poll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Models) != 2 {
+		t.Fatalf("models = %+v, want 2", m.Models)
+	}
+	if m.Models[0].Name != "llama3:latest" || m.Models[0].SizeVRAM != 8000000000 {
+		t.Errorf("model[0] = %+v", m.Models[0])
+	}
+	if m.Models[1].Name != "qwen2:7b-instruct-q4_K_M" {
+		t.Errorf("empty name must fall back to model field: %+v", m.Models[1])
+	}
+	if m.Version != "0.5.4" {
+		t.Errorf("version = %q, want 0.5.4", m.Version)
+	}
+
+	srv.Close()
+	if _, err := p.Poll(context.Background()); err == nil {
+		t.Error("poll against dead daemon must fail")
+	}
+}
+
+// LM Studio enrichment must replace the thin OpenAI listing with the native
+// v0 feed, dropping non-LLM entries and carrying load state + context length.
+func TestPollLMStudioEnrichment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.Write([]byte(`{"data":[{"id":"qwen"},{"id":"stale-only-here"}]}`))
+		case "/api/v0/models":
+			w.Write([]byte(`{"data":[` +
+				`{"id":"embedder","type":"embeddings"},` +
+				`{"id":"qwen","type":"llm","state":"loaded","max_context_length":8192}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(srv.URL, "lmstudio", core.KindLMStudio)
+	m, err := p.Poll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []core.ModelInfo{{Name: "qwen", State: "loaded", CtxMax: 8192}}
+	if len(m.Models) != 1 || m.Models[0] != want[0] {
+		t.Fatalf("models = %+v, want %+v (non-llm filtered, v0 feed wins)", m.Models, want)
+	}
+}
+
+// Lemonade enrichment must surface the health version and the loaded-model
+// inventory in preference to anything scraped elsewhere.
+func TestPollLemonadeEnrichment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/health":
+			w.Write([]byte(`{"status":"ok","version":"9.3.3","all_models_loaded":[` +
+				`{"model_name":"Llama-3.2-1B","ctx_size":4096}]}`))
+		case "/v1/models":
+			http.Error(w, "needs auth", http.StatusUnauthorized)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(srv.URL, "lemonade", core.KindLemonade)
+	m, err := p.Poll(context.Background()) // tolerant kind: auth-walled models must not fail the poll
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Version != "9.3.3" {
+		t.Errorf("version = %q, want 9.3.3", m.Version)
+	}
+	want := []core.ModelInfo{{Name: "Llama-3.2-1B", State: "loaded", CtxMax: 4096}}
+	if len(m.Models) != 1 || m.Models[0] != want[0] {
+		t.Fatalf("models = %+v, want %+v", m.Models, want)
+	}
+}
+
+// Version extraction feeds the UI header across wildly different engine
+// responses; pin every accepted shape and every rejection.
+func TestExtractVersionField(t *testing.T) {
+	cases := map[string]string{
+		`{"version":"0.5.4"}`:                                 "0.5.4",
+		`{"Version":"1.2.3"}`:                                 "1.2.3",
+		`{"server_info":{"version":"9.9"}}`:                   "9.9",
+		`{"backend_version_info":{"sglang_version":"0.4.2"}}`: "0.4.2",
+		`"b1234"`:                "b1234", // llama.cpp bare quoted string
+		"b4600":                  "b4600", // llama.cpp plain text
+		`{"nope":1}`:             "",
+		"":                       "",
+		`{"a":1} trailing junk`:  "",
+		strings.Repeat("x", 129): "", // over-long text is not a version
+	}
+	for body, want := range cases {
+		if got := extractVersionField(body); got != want {
+			t.Errorf("extractVersionField(%q) = %q, want %q", body, got, want)
+		}
+	}
 }

@@ -1,10 +1,15 @@
 package remote
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 )
 
 func TestParseTarget(t *testing.T) {
@@ -163,14 +168,47 @@ func TestTOFUStore(t *testing.T) {
 	}
 }
 
+// The default-key leg of the auth chain must pick up a passphrase-less key
+// from ~/.ssh and silently skip unreadable or encrypted files.
 func TestDefaultKeyPathsAndAuthChain(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "") // no agent interference
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on windows
+
 	tgt := Target{}
 	methods, cleanup := tgt.authMethods()
-	defer cleanup()
-	if methods == nil && defaultKeyPaths() == nil {
-		t.Skip("no home dir")
+	cleanup()
+	if len(methods) != 0 {
+		t.Fatalf("empty home yielded %d methods, want 0", len(methods))
 	}
-	// no assertion on count: keys may legitimately not exist in CI
-	t.Logf("methods from defaults: %d", len(methods))
+	if got, want := len(defaultKeyPaths()), 3; got != want {
+		t.Fatalf("defaultKeyPaths = %d paths, want %d", got, want)
+	}
+
+	key := filepath.Join(home, ".ssh", "id_ed25519")
+	if err := os.MkdirAll(filepath.Dir(key), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "tokentop test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// junk next to it must be skipped without breaking the chain
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "id_rsa"), []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	methods, cleanup = tgt.authMethods()
+	defer cleanup()
+	if len(methods) != 1 {
+		t.Fatalf("authMethods = %d methods with one valid key present, want 1", len(methods))
+	}
 }
