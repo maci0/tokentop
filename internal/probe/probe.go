@@ -49,16 +49,21 @@ func Run(ctx context.Context, r Request) core.ProbeSample {
 		s.Err = err.Error()
 		return s
 	}
+	// Windows clocks tick coarsely; instant local servers can land the whole
+	// exchange inside one tick. Fall back to full-duration accounting.
+	if ttft <= 0 {
+		ttft = total
+	}
 	s.OK = true
 	s.Tokens = tokens
-	if ttft > 0 {
-		s.TTFTms = float64(ttft.Microseconds()) / 1000.0
-	}
+	s.TTFTms = float64(ttft.Microseconds()) / 1000.0
 	switch {
 	case evalDur > 0:
 		s.TokPS = float64(tokens) / evalDur.Seconds()
 	case total > ttft && tokens > 0:
 		s.TokPS = float64(tokens) / (total - ttft).Seconds()
+	case tokens > 0 && total > 0:
+		s.TokPS = float64(tokens) / total.Seconds()
 	}
 	return s
 }
