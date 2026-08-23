@@ -393,6 +393,44 @@ func TestKeepaliveDetectsSilentPeer(t *testing.T) {
 	}
 }
 
+// A host that completes TCP accept but never sends its ssh banner must fail
+// Connect promptly via the handshake deadline, not hang forever.
+func TestConnectFailsOnSilentHost(t *testing.T) {
+	withKnownHosts(t)
+	old := bannerTimeout
+	bannerTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { bannerTimeout = old })
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lis.Close() })
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, err := lis.Accept()
+		if err == nil {
+			accepted <- c // hold TCP open, send nothing
+		}
+	}()
+	t.Cleanup(func() {
+		select {
+		case c := <-accepted:
+			c.Close()
+		default:
+		}
+	})
+
+	start := time.Now()
+	_, err = Connect(t.Context(), testTarget(t, lis.Addr().(*net.TCPAddr).Port))
+	if err == nil {
+		t.Fatal("silent host must fail Connect")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("silent host took %v to fail, want ~bannerTimeout", d)
+	}
+}
+
 func TestClientRunFailureCarriesStderr(t *testing.T) {
 	withKnownHosts(t)
 	srv := newTestSSHServer(t, "", 0)

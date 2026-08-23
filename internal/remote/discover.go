@@ -54,6 +54,8 @@ func (d *Discovery) ForwardSet(wellKnown []int) []int {
 func Discover(ctx context.Context, c *Client, wellKnown []int) (*Discovery, error) {
 	d := &Discovery{}
 
+	// A failing /proc/net/tcp read is not fatal: hardened kernels hide it
+	// from unprivileged readers and the active probe below covers the gap.
 	if out, err := c.Run(ctx, netTCPScript); err == nil {
 		d.Listening = parseNetTCP(out)
 	}
@@ -62,7 +64,7 @@ func Discover(ctx context.Context, c *Client, wellKnown []int) (*Discovery, erro
 		// back to actively probing the well-known ports through the shell.
 		out, err := c.Run(ctx, probeScript(wellKnown))
 		if err != nil {
-			return nil, err // unreachable host: nothing else will work either
+			return nil, fmt.Errorf("port probe failed: %w", err) // unreachable host: nothing else will work either
 		}
 		for _, f := range strings.Fields(out) {
 			if p, err := strconv.Atoi(f); err == nil && p > 0 {
@@ -71,6 +73,9 @@ func Discover(ctx context.Context, c *Client, wellKnown []int) (*Discovery, erro
 		}
 	}
 
+	// Engine-port hints are optional: a failing or missing cmdline sweep just
+	// means custom-port engines are not pre-discovered; the listening-port
+	// sweep above still drives the tunnel.
 	if out, err := c.Run(ctx, procScanScript()); err == nil {
 		d.EnginePorts = enginePorts(parseProcScan(out))
 	}

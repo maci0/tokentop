@@ -43,16 +43,22 @@ func loadSigner(path string) (ssh.Signer, error) {
 	return s, err
 }
 
-// keyFileAuth builds an AuthMethod from one key file, or nil.
-func keyFileAuth(path string) ssh.AuthMethod {
+// keyFileAuth builds an AuthMethod from one key file. required marks an
+// explicitly configured key (--ssh-key): its load failure must reach the
+// operator instead of degrading into a confusing generic auth rejection;
+// optional keys (the ~/.ssh defaults) may return an error the caller ignores.
+func keyFileAuth(path string, required bool) (ssh.AuthMethod, error) {
 	if path == "" {
-		return nil
+		return nil, nil
 	}
 	s, err := loadSigner(path)
 	if err != nil {
-		return nil
+		if !required {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return ssh.PublicKeys(s)
+	return ssh.PublicKeys(s), nil
 }
 
 // passwordSource yields a secret at most once per connection attempt chain:
@@ -136,15 +142,19 @@ var dialAgent = func(sock string) (agent.Agent, func(), error) {
 }
 
 // authMethods assembles the credential chain in preference order: explicit
-// key file, config/default keys, then the agent if SSH_AUTH_SOCK is set.
-func (t Target) authMethods() ([]ssh.AuthMethod, func()) {
+// key file, config/default keys, then the agent if SSH_AUTH_SOCK is set. A
+// load failure of the explicitly configured key aborts the chain: dialing
+// without it could only end in a misleading credentials-rejected error.
+func (t Target) authMethods() ([]ssh.AuthMethod, func(), error) {
 	cleanup := func() {}
 	var methods []ssh.AuthMethod
-	if m := keyFileAuth(t.KeyFile); m != nil {
+	if m, err := keyFileAuth(t.KeyFile, true); err != nil {
+		return nil, cleanup, fmt.Errorf("key %s: %w", t.KeyFile, err)
+	} else if m != nil {
 		methods = append(methods, m)
 	}
 	for _, p := range defaultKeyPaths() {
-		if m := keyFileAuth(p); m != nil {
+		if m, _ := keyFileAuth(p, false); m != nil { // defaults are best effort
 			methods = append(methods, m)
 		}
 	}
@@ -155,5 +165,5 @@ func (t Target) authMethods() ([]ssh.AuthMethod, func()) {
 			cleanup = func() { old(); ac() }
 		}
 	}
-	return methods, cleanup
+	return methods, cleanup, nil
 }

@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"strings"
-	"sync"
 	"time"
 
 	"tokentop/internal/core"
@@ -14,7 +13,7 @@ import (
 type Ollama struct {
 	base    string
 	label   string
-	version sync.Once
+	version versionCache
 }
 
 func NewOllama(base string) *Ollama {
@@ -45,6 +44,6 @@ func (o *Ollama) Poll(ctx context.Context) (*Metrics, error) {
 		}
 		m.Models = append(m.Models, core.ModelInfo{Name: name, SizeVRAM: mm.SizeVRAM})
 	}
-	m.Version = fetchVersion(ctx, &o.version, o.base)
+	m.Version = o.version.fetch(ctx, o.base)
 	return m, nil
 }

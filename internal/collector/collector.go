@@ -52,6 +52,7 @@ type Collector struct {
 	agents     []core.AgentEvent
 	probes     []core.ProbeSample
 	started    time.Time
+	baseCtx    context.Context // set by Run; bounds ad-hoc probes past shutdown
 }
 
 func New(providers []provider.Provider, interval time.Duration) *Collector {
@@ -175,6 +176,9 @@ func (c *Collector) procSnapshot() []procs.Info {
 
 // Run polls until ctx is cancelled, emitting one Snapshot per interval.
 func (c *Collector) Run(ctx context.Context, out chan<- core.Snapshot) {
+	c.mu.Lock()
+	c.baseCtx = ctx
+	c.mu.Unlock()
 	c.startProcPoller(ctx)
 	c.startSysPoller(ctx)
 	t := time.NewTicker(c.interval)
@@ -360,6 +364,8 @@ func (c *Collector) RecordProbe(s core.ProbeSample) {
 }
 
 // ProbeAll launches one probe against every known backend, asynchronously.
+// Probes ride the Run context so shutdown cancels in-flight generations
+// instead of leaving them running for the client's full timeout.
 func (c *Collector) ProbeAll() {
 	c.mu.Lock()
 	var targets []probe.Request
@@ -368,10 +374,14 @@ func (c *Collector) ProbeAll() {
 			targets = append(targets, probe.Request{Kind: kindOf(p), Base: p.Addr(), Model: model})
 		}
 	}
+	ctx := c.baseCtx
 	c.mu.Unlock()
+	if ctx == nil { // probed before Run: nothing bounds these but the client timeout
+		ctx = context.Background()
+	}
 	for _, t := range targets {
 		go func(t probe.Request) {
-			c.RecordProbe(probe.Run(context.Background(), t))
+			c.RecordProbe(probe.Run(ctx, t))
 		}(t)
 	}
 }

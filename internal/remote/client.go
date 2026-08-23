@@ -72,12 +72,39 @@ var currentUser = func() string {
 	return ""
 }
 
+// bannerTimeout bounds the wait for the remote sshd's version banner after
+// TCP connect. ClientConfig.Timeout does not apply here (it only covers
+// Dial's own connect), so without this a host that accepts the connection
+// and then goes silent would stall Connect forever; x/crypto/ssh's
+// handshake consults neither our context nor any deadline. Var so tests can
+// shrink it.
+var bannerTimeout = 15 * time.Second
+
+// handshakeConn enforces bannerTimeout until the server sends its first
+// bytes, then lifts it permanently: interactive password auth inside
+// NewClientConn may legitimately take as long as the user needs.
+type handshakeConn struct {
+	net.Conn
+	once sync.Once
+}
+
+func (c *handshakeConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.once.Do(func() { c.Conn.SetDeadline(time.Time{}) })
+	}
+	return n, err
+}
+
 // Connect establishes an authenticated connection to t. Credentials are tried
 // in order: explicit key file, config/default keys, agent, then a password
 // (TOKENTOP_SSH_PASSWORD first, else an interactive prompt when stdin is a
 // TTY). Host keys are trust-on-first-use with change detection.
 func Connect(ctx context.Context, t Target) (*Client, error) {
-	methods, cleanup := t.authMethods()
+	methods, cleanup, err := t.authMethods()
+	if err != nil {
+		return nil, err
+	}
 	defer cleanup()
 
 	pw := &passwordSource{}
@@ -100,11 +127,14 @@ func Connect(ctx context.Context, t Target) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
-	cc, chans, reqs, err := ssh.NewClientConn(nc, addr, cfg)
+	hc := &handshakeConn{Conn: nc}
+	hc.SetDeadline(time.Now().Add(bannerTimeout))
+	cc, chans, reqs, err := ssh.NewClientConn(hc, addr, cfg)
 	if err != nil {
 		nc.Close()
 		return nil, fmt.Errorf("ssh %s: %w", t.userHost(), authHint(err))
 	}
+	hc.SetDeadline(time.Time{}) // belt and braces: the conn outlives the handshake
 	c := &Client{Target: t, conn: ssh.NewClient(cc, chans, reqs), closed: make(chan struct{}),
 		keepaliveDone: make(chan struct{})}
 	go c.watchClose()
@@ -233,12 +263,14 @@ func stderrTail(s string) string {
 }
 
 // connLost classifies session-open failures so callers can tell a dead
-// connection from a transient hiccup.
+// connection from a transient hiccup. The original cause stays wrapped: the
+// classification label is for branching, not a replacement for detail.
 func connLost(err error) error {
-	if strings.Contains(err.Error(), "connection lost") ||
-		strings.Contains(err.Error(), "EOF") ||
-		strings.Contains(err.Error(), "closed") {
-		return fmt.Errorf("ssh connection lost")
+	msg := err.Error()
+	if strings.Contains(msg, "connection lost") ||
+		strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "closed") {
+		return fmt.Errorf("ssh connection lost: %w", err)
 	}
 	return err
 }
