@@ -3,9 +3,14 @@ package ingest
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"tokentop/internal/core"
 )
@@ -85,4 +90,67 @@ func TestHealthz(t *testing.T) {
 	var body map[string]string
 	json.NewDecoder(resp.Body).Decode(&body)
 	resp.Body.Close()
+}
+
+func TestIngestClampsOversizedFields(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	huge := strings.Repeat("x", 10_000)
+	body := fmt.Sprintf(`{"agent":%q,"model":%q,"note":%q}`, huge, huge, huge)
+	resp := post(t, "http://"+s.Addr()+"/v1/events", body)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != 1 {
+		t.Fatal("event not recorded")
+	}
+	ev := rec.evs[0]
+	if len(ev.Agent) > 64 || len(ev.Model) > 128 || utf8.RuneCountInString(ev.Note) > 512 {
+		t.Errorf("oversized fields retained: agent=%d model=%d note=%d",
+			len(ev.Agent), len(ev.Model), utf8.RuneCountInString(ev.Note))
+	}
+}
+
+// Keep-alive connections idle between requests must be reaped; otherwise
+// vanished peers hold an fd and a goroutine each for the process lifetime.
+func TestIdleKeepAliveConnsReaped(t *testing.T) {
+	old := idleTimeout
+	idleTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { idleTimeout = old })
+
+	s, err := New("127.0.0.1:0", &memRecorder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	defer s.Close()
+
+	conn, err := net.Dial("tcp", s.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "GET /healthz HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n\r\n", s.Addr())
+
+	buf := make([]byte, 4096)
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		_, err = conn.Read(buf)
+		if err == io.EOF {
+			return // server closed the now-idle connection
+		}
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			t.Fatal("idle keep-alive connection still open after idleTimeout")
+		}
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+	}
 }
