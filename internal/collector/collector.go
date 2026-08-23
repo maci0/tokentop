@@ -37,6 +37,8 @@ type Collector struct {
 	interval  time.Duration
 	sysFn     func() core.SysSample
 	procFn    func() []procs.Info
+	procMu    sync.Mutex
+	procCache []procs.Info
 
 	mu         sync.Mutex
 	histOut    map[string][]float64
@@ -77,8 +79,44 @@ var procSampler = procs.NewSampler()
 // stats merge local + remote readings).
 func (c *Collector) SetSysFn(fn func() core.SysSample) { c.sysFn = fn }
 
+// startProcPoller refreshes the process table in the background; emit never
+// blocks on it (Windows CIM enumeration takes seconds).
+func (c *Collector) startProcPoller(ctx context.Context) {
+	if c.procFn == nil {
+		return
+	}
+	go func() {
+		t := time.NewTicker(c.interval)
+		defer t.Stop()
+		refresh := func() {
+			if infos := c.procFn(); infos != nil {
+				c.procMu.Lock()
+				c.procCache = infos
+				c.procMu.Unlock()
+			}
+		}
+		refresh()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				refresh()
+			}
+		}
+	}()
+}
+
+// procSnapshot returns the latest cached engine processes.
+func (c *Collector) procSnapshot() []procs.Info {
+	c.procMu.Lock()
+	defer c.procMu.Unlock()
+	return c.procCache
+}
+
 // Run polls until ctx is cancelled, emitting one Snapshot per interval.
 func (c *Collector) Run(ctx context.Context, out chan<- core.Snapshot) {
+	c.startProcPoller(ctx)
 	t := time.NewTicker(c.interval)
 	defer t.Stop()
 	c.emit(out) // immediate first frame
@@ -123,16 +161,14 @@ func (c *Collector) emit(out chan<- core.Snapshot) {
 		snap.Sys = &sys
 	}
 	byPort := map[int]procs.Info{}
-	if c.procFn != nil {
-		for _, p := range c.procFn() {
-			port := p.PortHint
-			if port == 0 && p.Engine != "" {
-				port = p.DefPort
-			}
-			if port > 0 {
-				if _, dup := byPort[port]; !dup {
-					byPort[port] = p
-				}
+	for _, p := range c.procSnapshot() {
+		port := p.PortHint
+		if port == 0 && p.Engine != "" {
+			port = p.DefPort
+		}
+		if port > 0 {
+			if _, dup := byPort[port]; !dup {
+				byPort[port] = p
 			}
 		}
 	}
