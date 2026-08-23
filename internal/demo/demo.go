@@ -29,6 +29,7 @@ type Source struct {
 	t       float64
 	histOut map[string][]float64
 	histIn  map[string][]float64
+	t0      map[string]time.Time // first-sample timestamp per label
 	kv      []float64
 	nextEv  time.Time
 	nextPr  time.Time
@@ -60,6 +61,7 @@ func NewSource(interval time.Duration, seed int64) *Source {
 		},
 		histOut: map[string][]float64{},
 		histIn:  map[string][]float64{},
+		t0:      map[string]time.Time{},
 		kv:      make([]float64, 5),
 		memPct:  52,
 		swapPct: 14,
@@ -118,6 +120,7 @@ func (s *Source) frame(now time.Time) {
 		in := clamp((b.inBase*wave+burst*4)*jitter, 0, 20000)
 		s.histOut[b.label] = ring(s.histOut[b.label], out)
 		s.histIn[b.label] = ring(s.histIn[b.label], in)
+		s.t0[b.label] = advanceT0(s.t0[b.label], len(s.histOut[b.label]), now, int(s.interval.Seconds()))
 
 		target := 45 + 40*math.Sin(s.t/14+float64(i)) + s.rng.NormFloat64()*3
 		s.kv[i] += (clamp(target, 3, 99) - s.kv[i]) * 0.15
@@ -269,6 +272,8 @@ func (s *Source) snapshot(now time.Time) core.Snapshot {
 		ps.Waiting = int(clamp(math.Sin(s.t/13+float64(i*2))*3+3, 0, 24))
 		ps.OutHist = append([]float64(nil), s.histOut[b.label]...)
 		ps.InHist = append([]float64(nil), s.histIn[b.label]...)
+		ps.OutT0 = s.t0[b.label]
+		ps.InT0 = s.t0[b.label]
 		snap.Providers = append(snap.Providers, ps)
 	}
 	return snap
@@ -288,4 +293,16 @@ func ring(h []float64, v float64) []float64 {
 		h = h[1:]
 	}
 	return append(h, v)
+}
+
+// advanceT0 tracks the timestamp of hist[0], sliding forward on ring wrap so
+// the UI can place samples on an absolute time axis (mirrors the collector).
+func advanceT0(t0 time.Time, length int, now time.Time, cadenceSecs int) time.Time {
+	if t0.IsZero() {
+		return now
+	}
+	if length >= core.HistoryLen {
+		return t0.Add(time.Duration(cadenceSecs) * time.Second)
+	}
+	return t0
 }

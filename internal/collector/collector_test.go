@@ -60,15 +60,21 @@ func TestRatesHonorDirectThroughput(t *testing.T) {
 }
 
 func TestHistoryRingCap(t *testing.T) {
-	h := []float64{}
+	r := &timedRing{}
+	t0 := time.Now()
 	for i := 0; i < core.HistoryLen+10; i++ {
-		h = appendRing(h, float64(i))
+		r.push(float64(i), t0.Add(time.Duration(i)*time.Second), time.Second)
 	}
-	if len(h) != core.HistoryLen {
-		t.Fatalf("ring len = %d, want %d", len(h), core.HistoryLen)
+	if len(r.vals) != core.HistoryLen {
+		t.Fatalf("ring len = %d, want %d", len(r.vals), core.HistoryLen)
 	}
-	if h[len(h)-1] != float64(core.HistoryLen+9) {
+	if r.vals[len(r.vals)-1] != float64(core.HistoryLen+9) {
 		t.Fatal("newest sample lost")
+	}
+	// oldest timestamp must slide forward one cadence per evicted sample
+	wantT0 := t0.Add(10 * time.Second)
+	if !r.t0.Equal(wantT0) {
+		t.Fatalf("t0 = %v, want %v", r.t0, wantT0)
 	}
 }
 

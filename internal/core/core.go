@@ -42,9 +42,15 @@ type ProviderSnapshot struct {
 	Err     string `json:"error,omitempty"`
 	Version string `json:"version,omitempty"` // engine version, best effort
 
-	PID     int     `json:"pid,omitempty"`      // serving process, when found locally
-	ProcRSS uint64  `json:"proc_rss,omitempty"` // resident memory of that process
+	PID     int    `json:"pid,omitempty"`      // serving process, when found locally
+	ProcRSS uint64 `json:"proc_rss,omitempty"` // resident memory of that process
 	ProcCPU float64 `json:"proc_cpu,omitempty"` // percent of one core
+
+	// OutT0/InT0 timestamp Hist[0]; combined with the collector cadence this
+	// lets the UI place samples on an absolute time axis (outages and late
+	// joiners no longer skew the chart window).
+	OutT0 time.Time `json:"-"`
+	InT0  time.Time `json:"-"`
 
 	Models []ModelInfo `json:"models,omitempty"`
 

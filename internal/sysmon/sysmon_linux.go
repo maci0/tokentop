@@ -137,8 +137,8 @@ func utsField(b []byte) string {
 	return string(out)
 }
 
-// scanAccelDrivers enumerates the accelerator class (NPUs: intel_vpu,
-// amdxdna, qaic) via the driver symlink on each device.
+// scanAccelDrivers enumerates the accelerator class (/sys/class/accel):
+// NPUs like Intel's NPU, AMD XDNA and Qualcomm Cloud AI100.
 func scanAccelDrivers(root string) []string {
 	entries, err := filepath.Glob(filepath.Join(root, "accel*"))
 	if err != nil {
@@ -150,7 +150,7 @@ func scanAccelDrivers(root string) []string {
 		if err != nil {
 			continue
 		}
-		name := filepath.Base(link)
+		name := npuDisplayName(filepath.Base(link))
 		dup := false
 		for _, existing := range out {
 			if existing == name {
@@ -163,6 +163,20 @@ func scanAccelDrivers(root string) []string {
 		}
 	}
 	return out
+}
+
+// npuDisplayName maps kernel driver names to human-friendly accelerators.
+func npuDisplayName(driver string) string {
+	switch driver {
+	case "intel_vpu":
+		return "Intel NPU"
+	case "amdxdna":
+		return "AMD XDNA NPU"
+	case "qaic":
+		return "Qualcomm Cloud AI100"
+	default:
+		return driver
+	}
 }
 
 func cpuModelLinux() string {

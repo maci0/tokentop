@@ -23,25 +23,27 @@ type Config struct {
 	Version    string
 	Demo       bool
 	IngestAddr string
-	Prober     Prober // nil disables manual probing
+	PollEvery  time.Duration // sampling cadence; anchors the chart timescale
+	Prober     Prober        // nil disables manual probing
 }
 
 type Model struct {
-	cfg     Config
-	ch      <-chan core.Snapshot
-	snap    core.Snapshot
-	w, h    int
-	ready   bool
-	paused  bool
-	help    bool
-	clock   time.Time
-	maxAgg  float64
+	cfg    Config
+	ch     <-chan core.Snapshot
+	snap   core.Snapshot
+	w, h   int
+	ready  bool
+	paused bool
+	help   bool
+	clock  time.Time
+	maxAgg float64
 	prevAgg float64
 	trendUp bool
+	chartCompressed bool
 }
 
 func New(cfg Config, ch <-chan core.Snapshot) Model {
-	return Model{cfg: cfg, ch: ch}
+	return Model{cfg: cfg, ch: ch, chartCompressed: chartCompressedDefault}
 }
 
 // StaticFrame renders one snapshot for non-interactive output (--once).
@@ -115,6 +117,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cfg.Prober != nil {
 				go m.cfg.Prober.ProbeAll()
 			}
+			return m, nil
+		case "t", "T":
+			m.chartCompressed = !m.chartCompressed
 			return m, nil
 		case "?", "h":
 			m.help = !m.help
@@ -225,19 +230,135 @@ func maxi(a, b int) int {
 
 func (m Model) renderCharts() string {
 	w := m.w - 4 // panel borders + padding
+	cad := m.chartCadence()
 	outH, _, _ := m.sectionHeights()
-	agg := aggHist(m.snap, true)
+	agg, grid := m.outSeries(w, cad)
 	out := panel(
-		"THROUGHPUT "+styleHot.Render("▲ "+fmtRate(m.prevAgg)+" tok/s")+dim("  decode"),
-		AreaChart(agg, w, outH, heatColor),
+		m.throughputTitle(),
+		BrailleChart(agg, w, outH, ChartStyle{Heat: heatColor, FadeAge: true, Grid: grid}),
 		w, outH,
 	)
 	in := panel(
 		"PROMPT "+styleInfo.Render("▼ "+fmtRate(aggIn(m.snap))+" tok/s"),
-		Sparkline(aggHist(m.snap, false), w),
+		BrailleChart(aggHist(m.snap, false, w, cad), w, 1,
+			ChartStyle{Heat: func(float64) lipgloss.Color { return cTeal }, FadeAge: true}),
 		w, 1,
 	)
 	return out + "\n" + in
+}
+
+// chartCompressedDefault is on: recent seconds stay detailed while older
+// history compresses leftward, btop-zoom style. 't' toggles it.
+const chartCompressedDefault = true
+
+// compressBlock is how many columns share the same timespan before it
+// doubles moving left.
+const compressBlock = 12
+
+// outSeries produces the throughput series plus grid boundaries for the
+// active timescale mode.
+func (m Model) outSeries(w int, cadence time.Duration) ([]float64, map[int]bool) {
+	if !m.chartCompressed {
+		return aggHist(m.snap, true, w, cadence), nil
+	}
+	vals, bounds := compressSeries(timedSeries(m.snap, true), w, compressBlock)
+	return vals, bounds
+}
+
+func (m Model) throughputTitle() string {
+	title := "THROUGHPUT " + styleHot.Render("▲ "+fmtRate(m.prevAgg)+" tok/s") + dim("  decode")
+	if m.chartCompressed {
+		title += dim(" · compressed ←") + styleInfo.Render("t")
+	}
+	return title
+}
+
+// timedVal is one sample with its absolute timestamp.
+type timedVal struct {
+	t time.Time
+	v float64
+}
+
+// timedSeries flattens every provider's history onto absolute timestamps.
+func timedSeries(s core.Snapshot, out bool) []timedVal {
+	var tv []timedVal
+	for i := range s.Providers {
+		p := &s.Providers[i]
+		vals, t0 := p.OutHist, p.OutT0
+		if !out {
+			vals, t0 = p.InHist, p.InT0
+		}
+		if t0.IsZero() {
+			continue
+		}
+		for j, v := range vals {
+			tv = append(tv, timedVal{t0.Add(time.Duration(j) * time.Second), v})
+		}
+	}
+	sort.Slice(tv, func(i, j int) bool { return tv[i].t.Before(tv[j].t) })
+	return tv
+}
+
+// compressSeries maps samples onto w columns whose covered timespan doubles
+// every `block` columns moving away from the newest sample: right edge shows
+// per-cadence detail, the far left packs hours. bounds marks where each
+// coarser block begins so charts can draw faint separators.
+func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
+	if len(tv) == 0 || w <= 0 {
+		return nil, nil
+	}
+	end := tv[len(tv)-1].t
+	spans := make([]time.Duration, w)
+	total := time.Duration(0)
+	for j := 0; j < w; j++ { // j=0 oldest … w-1 newest
+		level := (w - 1 - j) / block
+		spans[j] = time.Second << level
+		if spans[j] < 1*time.Second {
+			spans[j] = time.Second // guard against cadence << 30 overflow
+		}
+		total += spans[j]
+	}
+
+	grid := make([]float64, w)
+	counts := make([]int, w)
+	bounds := map[int]bool{}
+	for j := range grid {
+		if (w-1-j)%block == 0 && j < w-1 {
+			bounds[j] = true
+		}
+	}
+	for _, s := range tv {
+		offset := end.Sub(s.t)
+		if offset < 0 || offset >= total {
+			continue
+		}
+		j := 0
+		acc := total
+		for j < w-1 {
+			if offset < acc-spans[j] {
+				acc -= spans[j]
+				j++
+				continue
+			}
+			break
+		}
+		grid[j] += s.v
+		counts[j]++
+	}
+	for j := range grid {
+		if counts[j] > 0 {
+			grid[j] /= float64(counts[j])
+		}
+	}
+	return grid, bounds
+}
+
+// chartCadence is the sampling interval charts are drawn at.
+func (m Model) chartCadence() time.Duration {
+	if m.cfg.PollEvery > 0 {
+		return m.cfg.PollEvery
+	}
+	return time.Second
 }
 
 func (m Model) renderMidRow() string {
@@ -552,12 +673,9 @@ func (m Model) probesTitle() string {
 }
 
 func (m Model) probesBody(w, h int) string {
-	var vals []float64
-	for _, p := range m.snap.Probes {
-		vals = append(vals, p.TokPS)
-	}
+	vals := probeSeries(m.snap, w, m.chartCadence())
 	chartH := clampi(h-3-len(m.snap.Providers), 2, 8)
-	out := AreaChart(vals, w, chartH, heatColor) + "\n"
+	out := BrailleChart(vals, w, chartH, ChartStyle{Heat: heatColor, FadeAge: true}) + "\n"
 	shown := 0
 	for i := len(m.snap.Probes) - 1; i >= 0 && shown < 2; i-- {
 		p := m.snap.Probes[i]
@@ -637,6 +755,7 @@ func (m Model) renderFooter() string {
 	foot := styleInfo.Render("q") + dim(" quit  ") +
 		styleInfo.Render("space") + dim(" pause  ") +
 		styleInfo.Render("p") + dim(" probe  ") +
+		styleInfo.Render("t") + dim(" timescale  ") +
 		styleInfo.Render("?") + dim(" help")
 	tag := ""
 	if m.cfg.Demo {
@@ -745,33 +864,82 @@ func aggIn(s core.Snapshot) float64 {
 	return t
 }
 
-// aggHist sums provider histories tail-aligned (they share sample cadence).
-func aggHist(s core.Snapshot, out bool) []float64 {
-	var hists [][]float64
-	minLen := 1 << 30
-	for _, p := range s.Providers {
-		h := p.OutHist
+// aggHist sums every provider's history onto one absolute time grid of w
+// columns ending at the newest sample anywhere. Because samples carry their
+// own timestamps (OutT0/InT0), engines that joined late or dropped out for a
+// while cannot stretch or compress the visible window.
+func aggHist(s core.Snapshot, out bool, w int, cadence time.Duration) []float64 {
+	type src struct {
+		vals []float64
+		t0   time.Time
+	}
+	var srcs []src
+	var end time.Time
+	for i := range s.Providers {
+		p := &s.Providers[i]
+		vals, t0 := p.OutHist, p.OutT0
 		if !out {
-			h = p.InHist
+			vals, t0 = p.InHist, p.InT0
 		}
-		if len(h) > 0 {
-			hists = append(hists, h)
-			if len(h) < minLen {
-				minLen = len(h)
-			}
+		if len(vals) == 0 || t0.IsZero() {
+			continue
+		}
+		srcs = append(srcs, src{vals, t0})
+		last := t0.Add(time.Duration(len(vals)-1) * cadence)
+		if last.After(end) {
+			end = last
 		}
 	}
-	if minLen == 1<<30 {
+	if len(srcs) == 0 || end.IsZero() {
 		return nil
 	}
-	sum := make([]float64, minLen)
-	for _, h := range hists {
-		off := len(h) - minLen
-		for i := 0; i < minLen; i++ {
-			sum[i] += h[off+i]
+	grid := make([]float64, w)
+	start := end.Add(-time.Duration(w-1) * cadence)
+	half := cadence / 2
+	for j := range grid {
+		ts := start.Add(time.Duration(j) * cadence)
+		var sum float64
+		for _, sr := range srcs {
+			d := ts.Sub(sr.t0)
+			idx := int((d + cadence/2) / cadence) // nearest sample
+			if idx < 0 || idx >= len(sr.vals) {
+				continue
+			}
+			sampleT := sr.t0.Add(time.Duration(idx) * cadence)
+			if d := sampleT.Sub(ts); d > half || d < -half {
+				continue // no sample near this bucket: engine was silent
+			}
+			sum += sr.vals[idx]
+		}
+		grid[j] = sum
+	}
+	return grid
+}
+
+// probeSeries turns irregularly timed probe results into a step-hold series
+// on a uniform grid ending at the newest probe: each bucket carries the most
+// recently measured tok/s.
+func probeSeries(s core.Snapshot, w int, cadence time.Duration) []float64 {
+	if len(s.Probes) == 0 {
+		return nil
+	}
+	end := s.Probes[len(s.Probes)-1].At
+	grid := make([]float64, w)
+	start := end.Add(-time.Duration(w-1) * cadence)
+	last := 0.0
+	seen := false
+	next := 0
+	for j := range grid {
+		bucketEnd := start.Add(time.Duration(j+1) * cadence)
+		for next < len(s.Probes) && s.Probes[next].At.Before(bucketEnd) {
+			last, seen = s.Probes[next].TokPS, true // hold even pre-window probes
+			next++
+		}
+		if seen {
+			grid[j] = last
 		}
 	}
-	return sum
+	return grid
 }
 
 func norm(v, maxV float64) float64 {

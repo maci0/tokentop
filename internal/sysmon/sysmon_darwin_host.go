@@ -4,7 +4,6 @@ package sysmon
 
 import (
 	"encoding/binary"
-
 	"strings"
 	"time"
 
@@ -28,6 +27,21 @@ func hostInfoDarwin(s *core.SysSample) {
 		s.Kernel = utsFieldByte(un.Release[:])
 	}
 	s.HostUptime = boottimeUptime()
+	s.NPUs = appleNPUs()
+}
+
+// appleNPUs reports the Apple Neural Engine on Apple Silicon. The ANE has no
+// public utilization interface without root (powermetrics), so this is a
+// presence indicator derived from the chip name.
+func appleNPUs() []string {
+	chip, err := unix.Sysctl("machdep.cpu.brand_string")
+	if err != nil || chip == "" {
+		return nil
+	}
+	if strings.HasPrefix(strings.TrimSpace(chip), "Apple") {
+		return []string{"Apple Neural Engine (" + strings.TrimSpace(chip) + ")"}
+	}
+	return nil // Intel Macs have no NPU
 }
 
 func boottimeUptime() time.Duration {

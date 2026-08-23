@@ -3,6 +3,10 @@
 `btop` for AI: a terminal dashboard for LLM inference engines and the agents
 hammering them.
 
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="tokentop dashboard" width="900">
+</p>
+
 ```
 ./tokentop --demo          # simulated fleet, works instantly
 ./tokentop                 # auto-discovers local engines (ports + processes)
@@ -27,8 +31,14 @@ tokentop ssh://maci@box    # watch engines on another host
     '{"agent":"coder","kind":"tool","prompt_tokens":4200,"output_tokens":310,"note":"shell(git status)"}'
   ```
 - **System strip** - RAM/swap/load, CPU model, OS+kernel, GPU driver versions
-  (incl. CUDA), NPU enumeration, GPU temp/util/VRAM/power/fans/clocks, and a
-  second identity row for sensors.
+  (incl. CUDA), NPU enumeration (Intel NPU, AMD XDNA, Qualcomm Cloud AI100,
+  Apple Neural Engine), GPU temp/util/VRAM/power/fans/clocks, and a second
+  identity row for sensors.
+- **Braille charts** - dot-matrix rendering with btop-style fading bloom;
+  timescale compresses leftward (`t` toggles) with faint grid marks showing
+  where each doubling begins.
+- **Hot reload** - rebuild the binary while it runs and tokentop restarts
+  into the fresh build automatically (`--no-hot-reload` to disable).
 
 ## Zero vendor libraries
 
@@ -68,6 +78,7 @@ POSIX shell - no agent is installed.
 | `q` | quit |
 | `space` | pause streaming |
 | `p` | fire probes at every backend |
+| `t` | toggle compressed timescale + grid |
 | `?` | help |
 
 ## Flags
@@ -88,7 +99,7 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 
 ```
 go test ./...
-go build -o tokentop .
+go build -o tokentop ./cmd/tokentop
 GOOS=darwin GOARCH=arm64 go build -o tokentop-macos .
 GOOS=windows GOARCH=amd64 go build -o tokentop.exe .
 ```

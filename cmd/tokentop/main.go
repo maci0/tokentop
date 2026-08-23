@@ -9,7 +9,10 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -22,6 +25,7 @@ import (
 	"tokentop/internal/ingest"
 	"tokentop/internal/provider"
 	"tokentop/internal/remote"
+	"tokentop/internal/selfreload"
 	"tokentop/internal/sysmon"
 	"tokentop/internal/ui"
 )
@@ -37,6 +41,8 @@ func main() {
 		ingestArg = flag.String("ingest", "127.0.0.1:8420", "agent event ingest listen address")
 		noIngest  = flag.Bool("no-ingest", false, "disable the agent event HTTP endpoint")
 		once      = flag.Bool("once", false, "render one frame and exit (non-interactive)")
+		frames    = flag.Int("frames", 2, "with --once: snapshots to accumulate before rendering")
+		noReload  = flag.Bool("no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
 		seed      = flag.Int64("seed", 42, "demo RNG seed")
 		showVer   = flag.Bool("version", false, "print version")
 	)
@@ -160,28 +166,80 @@ func main() {
 		Version:    version,
 		Demo:       *demoMode,
 		IngestAddr: *ingestArg,
+		PollEvery:  *interval,
 		Prober:     prober,
 	}
 
 	if *once {
-		runOnce(cfg, ch)
+		runOnce(cfg, ch, *frames)
 		return
 	}
 
-	if _, err := tea.NewProgram(ui.New(cfg, ch), tea.WithAltScreen()).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "tokentop:", err)
-		os.Exit(1)
+	runTUI(ctx, cfg, ch, !*noReload)
+}
+
+// runTUI runs the dashboard, restarting into a fresh binary whenever the
+// executable on disk is rebuilt (dev hot-reload).
+func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotReload bool) {
+	self, _ := os.Executable()
+	var (
+		mu       sync.Mutex
+		current  *tea.Program
+		reloaded atomic.Bool
+	)
+	if hotReload {
+		wctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go selfreload.Watch(wctx, self, 400*time.Millisecond, func() {
+			reloaded.Store(true)
+			mu.Lock()
+			p := current
+			mu.Unlock()
+			if p != nil {
+				p.Quit()
+			}
+		})
+	}
+
+	for {
+		prog := tea.NewProgram(ui.New(cfg, ch), tea.WithAltScreen())
+		mu.Lock()
+		current = prog
+		mu.Unlock()
+
+		if _, err := prog.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "tokentop:", err)
+			os.Exit(1)
+		}
+		if reloaded.Load() {
+			fmt.Fprintln(os.Stderr, "tokentop: binary changed, restarting…")
+			if err := selfreload.ReExec(self, os.Args, os.Environ()); err != nil {
+				fmt.Fprintln(os.Stderr, "tokentop:", err)
+			}
+			return
+		}
+		return // clean quit
 	}
 }
 
 // runOnce prints a single rendered frame sized to the terminal (or 120x38).
-func runOnce(cfg ui.Config, ch <-chan core.Snapshot) {
+// TOKENTOP_COLUMNS / TOKENTOP_LINES override detection (useful for capture).
+func runOnce(cfg ui.Config, ch <-chan core.Snapshot, n int) {
 	w, h := 120, 38
 	if tw, th, err := term.GetSize(int(os.Stdout.Fd())); err == nil && tw > 40 && th > 20 {
 		w, h = tw, th
 	}
+	if v, err := strconv.Atoi(os.Getenv("TOKENTOP_COLUMNS")); err == nil && v > 40 {
+		w = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("TOKENTOP_LINES")); err == nil && v > 20 {
+		h = v
+	}
+	if n < 1 {
+		n = 1
+	}
 	var snap core.Snapshot
-	for i := 0; i < 2; i++ { // two ticks so charts carry some history
+	for i := 0; i < n; i++ { // several ticks so charts carry some history
 		select {
 		case snap = <-ch:
 		case <-time.After(5 * time.Second):
