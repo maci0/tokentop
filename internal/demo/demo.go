@@ -99,7 +99,13 @@ func (s *Source) Run(ctx context.Context, ch chan<- core.Snapshot) {
 	}
 }
 
+// frame mutates every simulated channel (rng, histories, vitals). It takes
+// the same lock as the externally callable RecordAgent/ProbeAll/snapshot:
+// Run drives it from one goroutine, but probes and agent events arrive from
+// the UI goroutine, and rand.Rand is not safe for concurrent use.
 func (s *Source) frame(now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if now.After(s.nextEv) {
 		s.genEvent(now)
 		s.nextEv = now.Add(time.Duration(2+s.rng.Intn(5)) * s.interval)
@@ -172,6 +178,7 @@ func (s *Source) sysSample() core.SysSample {
 	return sys
 }
 
+// genEvent synthesizes one agent event; caller holds s.mu.
 func (s *Source) genEvent(now time.Time) {
 	b := s.backends[s.rng.Intn(len(s.backends))]
 	ev := core.AgentEvent{
@@ -185,11 +192,15 @@ func (s *Source) genEvent(now time.Time) {
 	if ev.Kind == "note" || ev.Kind == "error" {
 		ev.Note = notes[s.rng.Intn(len(notes))]
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.addAgent(ev)
+}
+
+const agentRingCap = 64
+
+func (s *Source) addAgent(ev core.AgentEvent) {
 	s.agents = append(s.agents, ev)
-	if len(s.agents) > 64 {
-		s.agents = s.agents[len(s.agents)-64:]
+	if len(s.agents) > agentRingCap {
+		s.agents = s.agents[len(s.agents)-agentRingCap:]
 	}
 }
 
@@ -200,9 +211,15 @@ func (s *Source) RecordAgent(ev core.AgentEvent) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.agents = append(s.agents, ev)
-	if len(s.agents) > 64 {
-		s.agents = s.agents[len(s.agents)-64:]
+	s.addAgent(ev)
+}
+
+const probeRingCap = 128
+
+func (s *Source) addProbe(p core.ProbeSample) {
+	s.probes = append(s.probes, p)
+	if len(s.probes) > probeRingCap {
+		s.probes = s.probes[len(s.probes)-probeRingCap:]
 	}
 }
 
@@ -211,38 +228,28 @@ func (s *Source) ProbeAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.backends {
-		b := s.backends[i]
-		ttft := 60 + s.rng.Float64()*180
-		dur := 0.3 + s.rng.Float64()
-		n := int(dur * (b.outBase / (1 + s.rng.Float64())))
-		s.probes = append(s.probes, core.ProbeSample{
-			At: time.Now(), Addr: b.addr, Model: b.model, OK: true,
-			TTFTms: ttft,
-			TokPS:  float64(n) / dur,
-			Tokens: n,
-		})
-	}
-	if len(s.probes) > 128 {
-		s.probes = s.probes[len(s.probes)-128:]
+		s.addProbe(s.synthProbe(s.backends[i], time.Now(), 60, 180, 0.3, 1))
 	}
 }
 
-func (s *Source) genProbe(now time.Time) {
-	b := s.backends[s.rng.Intn(len(s.backends))]
-	ttft := 80 + s.rng.Float64()*140
-	dur := 0.4 + s.rng.Float64()*1.2
+// synthProbe fabricates one plausible probe result; spans size the random
+// ttft/duration draws.
+func (s *Source) synthProbe(b backend, at time.Time, ttftLo, ttftSpan, durLo, durSpan float64) core.ProbeSample {
+	ttft := ttftLo + s.rng.Float64()*ttftSpan
+	dur := durLo + s.rng.Float64()*durSpan
 	n := int(dur * (b.outBase / (1 + s.rng.Float64())))
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.probes = append(s.probes, core.ProbeSample{
-		At: now, Addr: b.addr, Model: b.model, OK: true,
+	return core.ProbeSample{
+		At: at, Addr: b.addr, Model: b.model, OK: true,
 		TTFTms: ttft,
 		TokPS:  float64(n) / dur,
 		Tokens: n,
-	})
-	if len(s.probes) > 128 {
-		s.probes = s.probes[len(s.probes)-128:]
 	}
+}
+
+// genProbe drops in one background probe; caller holds s.mu.
+func (s *Source) genProbe(now time.Time) {
+	b := s.backends[s.rng.Intn(len(s.backends))]
+	s.addProbe(s.synthProbe(b, now, 80, 140, 0.4, 1.2))
 }
 
 func (s *Source) snapshot(now time.Time) core.Snapshot {

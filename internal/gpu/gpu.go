@@ -88,7 +88,7 @@ func sampleAMD(ctx context.Context) []core.GPUDevice {
 	if p, ok := lookup("rocm-smi"); ok {
 		if out, ok2 := run(ctx, p,
 			"--showtemp", "--showusemem", "--showmeminfo", "vram", "--showuse", "--json"); ok2 {
-			if devs := parseRocmSMI(out); len(devs) > 0 {
+			if devs := ParseRocmSMI(out); len(devs) > 0 {
 				return devs
 			}
 		}
@@ -192,11 +192,6 @@ func flexF(s string) float64 {
 // strings or single-element arrays depending on version. Exported so the
 // remote ssh path can parse rocm-smi output gathered from another host.
 func ParseRocmSMI(b []byte) []core.GPUDevice {
-	return parseRocmSMI(b)
-}
-
-// parseRocmSMI is the shared implementation behind ParseRocmSMI.
-func parseRocmSMI(b []byte) []core.GPUDevice {
 	var raw map[string]map[string]any
 	if json.Unmarshal(b, &raw) != nil {
 		return nil
@@ -312,16 +307,9 @@ func flatten(v any) any {
 func flexAny(v any) float64 {
 	switch t := v.(type) {
 	case float64:
-		return maxF(t, 0)
+		return max(t, 0)
 	case string:
 		return flexF(t)
 	}
 	return 0
-}
-
-func maxF(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
 }

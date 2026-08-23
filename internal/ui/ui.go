@@ -216,16 +216,9 @@ func (m Model) sectionHeights() (outH, midIn, feedIn int) {
 	if midIn < 5 {
 		outH -= 5 - midIn
 		midIn = 5
-		outH = maxi(outH, 3)
+		outH = max(outH, 3)
 	}
 	return outH, midIn, feedIn
-}
-
-func maxi(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func (m Model) renderCharts() string {
@@ -554,14 +547,6 @@ func joinSpreadLeft(segs []string, w int) string {
 		used += lipgloss.Width(seg)
 	}
 	return b.String()
-}
-
-// sysTemps returns sensor readings or nil when unavailable.
-func sysTemps(sy *core.SysSample) []core.TempReading {
-	if sy == nil {
-		return nil
-	}
-	return sy.Temps
 }
 
 func tempColor(celsius float64) lipgloss.Color {
@@ -1075,17 +1060,6 @@ func joinSpread(left []string, right string, width int) string {
 		gap = 1
 	}
 	return l + strings.Repeat(" ", gap) + right
-}
-
-func interleave(items []string, sep string) []string {
-	out := make([]string, 0, len(items)*2)
-	for i, it := range items {
-		if i > 0 {
-			out = append(out, sep)
-		}
-		out = append(out, it)
-	}
-	return out
 }
 
 func dim(s string) string { return styleDim.Render(s) }

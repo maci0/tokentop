@@ -289,8 +289,8 @@ func (c *Collector) rates(label string, m *provider.Metrics, now time.Time) (out
 		return 0, 0
 	}
 	dt := now.Sub(pv.at).Seconds()
-	rawOut := maxF((m.OutTotal-pv.outTotal)/dt, 0) // clamp on counter reset
-	rawIn := maxF((m.InTotal-pv.inTotal)/dt, 0)
+	rawOut := max((m.OutTotal-pv.outTotal)/dt, 0) // clamp on counter reset
+	rawIn := max((m.InTotal-pv.inTotal)/dt, 0)
 	if m.DirectOutPS > 0 { // trust the engine's own tok/s gauge when present
 		rawOut = m.DirectOutPS
 	}
@@ -301,13 +301,6 @@ func (c *Collector) rates(label string, m *provider.Metrics, now time.Time) (out
 		outEMA: outPS, inEMA: inPS, hasTotals: true,
 	}
 	return outPS, inPS
-}
-
-func maxF(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func ema(prev, raw float64) float64 { return prev*(1-emaAlpha) + raw*emaAlpha }
@@ -382,15 +375,12 @@ func (c *Collector) ProbeAll() {
 	}
 }
 
+// kindOf reports a provider's engine kind; providers without one are ollama.
 func kindOf(p provider.Provider) string {
-	switch v := p.(type) {
-	case *provider.OpenAICompat:
-		return v.Kind()
-	case interface{ Kind() string }:
-		return v.Kind()
-	default:
-		return core.KindOllama
+	if k, ok := p.(interface{ Kind() string }); ok {
+		return k.Kind()
 	}
+	return core.KindOllama
 }
 
 // urlPort extracts the TCP port from a backend URL.
