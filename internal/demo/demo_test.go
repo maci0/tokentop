@@ -101,3 +101,35 @@ func TestSnapshotCarriesAgentsAndProbes(t *testing.T) {
 	}
 	t.Fatal("no agent/probe activity within deadline")
 }
+
+// Run drives the source from one goroutine while RecordAgent and ProbeAll
+// arrive from others (ingest handlers, UI prober); hammer that exact mix so
+// -race can prove the single s.mu contract holds.
+func TestSourceConcurrentAccess(t *testing.T) {
+	s := NewSource(2*time.Millisecond, 9)
+	ch := make(chan core.Snapshot, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); s.Run(ctx, ch) }()
+
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		for i := 0; i < 200; i++ {
+			s.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "x"})
+			s.ProbeAll()
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	<-workerDone
+	cancel()
+	for { // keep draining until Run has noticed cancellation and returned
+		select {
+		case <-ch:
+		case <-runDone:
+			return
+		}
+	}
+}
