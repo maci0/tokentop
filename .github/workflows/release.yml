@@ -1,0 +1,50 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: test before shipping
+        run: go test ./...
+
+      - name: build all platforms
+        id: build
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          OUT=dist
+          mkdir -p "$OUT"
+          for target in \
+            linux/amd64 linux/arm64 \
+            darwin/amd64 darwin/arm64 \
+            windows/amd64; do
+            goos=${target%/*}
+            goarch=${target#*/}
+            ext=""
+            [ "$goos" = "windows" ] && ext=".exe"
+            name="tokentop_${VERSION}_${goos}_${goarch}${ext}"
+            echo "building $name"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags "-s -w" -o "$OUT/$name" .
+            ( cd "$OUT" && sha256sum "$name" >> checksums.txt )
+          done
+          ( cd "$OUT" && tar czf "tokentop_${VERSION}_checksums.tar.gz" checksums.txt && rm checksums.txt )
+
+      - name: publish github release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*
