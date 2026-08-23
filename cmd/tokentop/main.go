@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
+	"tokentop/internal/bearer"
 	"tokentop/internal/collector"
 	"tokentop/internal/core"
 	"tokentop/internal/demo"
@@ -44,6 +46,8 @@ func main() {
 		frames    = flag.Int("frames", 2, "with --once: snapshots to accumulate before rendering")
 		noReload  = flag.Bool("no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
 		seed      = flag.Int64("seed", 42, "demo RNG seed")
+		sshKey    = flag.String("ssh-key", "", "private key for ssh:// targets (overrides ~/.ssh/config)")
+		bearerArg = flag.String("bearer", "", "bearer token sent to engines (OmniRoute etc.)")
 		showVer   = flag.Bool("version", false, "print version")
 	)
 	flag.Var(&adds, "add", "attach an openai-compatible backend URL (repeatable)")
@@ -54,6 +58,17 @@ func main() {
 		return
 	}
 	log.SetFlags(0)
+
+	// Bearer token for gateways that require API keys (OmniRoute et al).
+	// Flag wins; OMNIROUTE_API_KEY / TOKENTOP_BEARER are convenience fallbacks.
+	switch {
+	case *bearerArg != "":
+		bearer.Set(*bearerArg)
+	case os.Getenv("OMNIROUTE_API_KEY") != "":
+		bearer.Set(os.Getenv("OMNIROUTE_API_KEY"))
+	case os.Getenv("TOKENTOP_BEARER") != "":
+		bearer.Set(os.Getenv("TOKENTOP_BEARER"))
+	}
 
 	// positional ssh:// targets
 	var remoteTargets []string
@@ -101,6 +116,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "tokentop:", err)
 				os.Exit(2)
 			}
+			tgt.KeyFile = *sshKey
 			rp, rsys, rerr := attachRemote(ctx, tgt)
 			if rerr != nil {
 				fmt.Fprintf(os.Stderr, "tokentop: %v\n", rerr)
@@ -255,34 +271,87 @@ type flagAddList []string
 func (a *flagAddList) String() string     { return strings.Join(*a, ",") }
 func (a *flagAddList) Set(v string) error { *a = append(*a, v); return nil }
 
-// attachRemote discovers engines on an ssh target and starts a tunnel plus
-// remote stats sampling. The tunnel lives until ctx is cancelled.
+// attachRemote connects to an ssh target, discovers engines, relays their
+// ports through the connection and starts remote stats sampling. Everything
+// shares one in-process ssh client; its death mid-run is reported once.
 func attachRemote(ctx context.Context, tgt remote.Target) ([]provider.Provider, *remote.Stats, error) {
-	ports, err := remote.DiscoverPorts(ctx, tgt, provider.CandidatePorts())
+	cli, err := remote.Connect(ctx, tgt)
 	if err != nil {
 		return nil, nil, err
 	}
+
+	wellKnown := provider.CandidatePorts()
+	disc, err := remote.Discover(ctx, cli, wellKnown)
+	if err != nil {
+		cli.Close()
+		return nil, nil, err
+	}
+	ports := disc.ForwardSet(wellKnown)
 	if len(ports) == 0 {
+		cli.Close()
 		return nil, nil, fmt.Errorf("no inference ports listening on %s", tgt.Host)
 	}
-	tun, err := remote.StartTunnel(ctx, tgt, ports)
+	fwd, err := cli.Forward(ports)
 	if err != nil {
+		cli.Close()
 		return nil, nil, err
 	}
 	go func() {
-		<-ctx.Done()
-		tun.Close()
+		select {
+		case <-ctx.Done():
+			return // normal shutdown closes the client by design
+		case <-cli.Done():
+			if ctx.Err() != nil {
+				return // shutdown raced the drop; not a loss
+			}
+			fmt.Fprintf(os.Stderr, "tokentop: ssh connection to %s lost (%v)\n", tgt.Host, cli.Err())
+		}
 	}()
 
-	var providers []provider.Provider
-	for rport, lport := range tun.Local {
-		base := fmt.Sprintf("http://127.0.0.1:%d", lport)
-		label := fmt.Sprintf("%s:%d", tgt.Host, rport)
-		if kind := provider.Identify(ctx, base); kind != "" {
-			providers = append(providers, provider.NewOpenAICompat(base, label, kind))
-		}
+	rports := sortedKeys(fwd) // deterministic order
+	bases := make([]string, len(rports))
+	for i, rport := range rports {
+		bases[i] = fmt.Sprintf("http://127.0.0.1:%d", fwd[rport])
 	}
-	stats := &remote.Stats{Target: tgt}
+	// Identify concurrently: each probe chains several requests with
+	// per-request timeouts, and a remote host can forward many candidates.
+	kinds := make([]string, len(bases))
+	var wg sync.WaitGroup
+	for i, base := range bases {
+		wg.Add(1)
+		go func(i int, base string) {
+			defer wg.Done()
+			kinds[i] = provider.Identify(ctx, base)
+		}(i, base)
+	}
+	wg.Wait()
+
+	var providers []provider.Provider
+	var skipped []int
+	for i, kind := range kinds {
+		if kind != "" {
+			label := fmt.Sprintf("%s:%d", tgt.Host, rports[i])
+			providers = append(providers, provider.NewOpenAICompat(bases[i], label, kind))
+			continue
+		}
+		skipped = append(skipped, rports[i])
+	}
+	for _, p := range skipped {
+		fmt.Fprintf(os.Stderr, "tokentop: %s:%d is listening but speaks no recognized engine API; skipping\n",
+			tgt.Host, p)
+	}
+	stats := &remote.Stats{Client: cli}
 	go stats.Run(ctx, 5*time.Second)
 	return providers, stats, nil
+}
+
+// sortedKeys returns the tunnel's remote ports in ascending order so backend
+// ordering does not depend on Go map iteration.
+func sortedKeys(m map[int]int) []int {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
 }

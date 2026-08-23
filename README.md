@@ -19,8 +19,9 @@ tokentop ssh://maci@box    # watch engines on another host
   KV-cache pressure, queue depth and throughput. Fingerprinted kinds:
   Ollama, llama.cpp/llamafile/ramalama, vLLM, SGLang, TRT-LLM/Triton,
   LM Studio, MLX (mlx-lm / LM Studio), KoboldCpp, LocalAI, TGI,
-  text-generation-webui, TabbyAPI, LiteLLM, GPUStack, Lemonade - plus a
-  generic OpenAI-compatible fallback so nothing is left out.
+  text-generation-webui, TabbyAPI, LiteLLM, GPUStack, Lemonade, OmniRoute
+  (auto-detected via its routing header; per-model context windows shown) -
+  plus a generic OpenAI-compatible fallback so nothing is left out.
 - **Throughput charts** - aggregate decode + prompt tokens/sec as heat-colored
   area charts; engine-published tok/s gauges are trusted when present.
 - **Probes** (`p`, `--probe N`) - tiny streaming generations measuring real
@@ -31,9 +32,10 @@ tokentop ssh://maci@box    # watch engines on another host
     '{"agent":"coder","kind":"tool","prompt_tokens":4200,"output_tokens":310,"note":"shell(git status)"}'
   ```
 - **System strip** - RAM/swap/load, CPU model, OS+kernel, GPU driver versions
-  (incl. CUDA), NPU enumeration (Intel NPU, AMD XDNA, Qualcomm Cloud AI100,
-  Apple Neural Engine), GPU temp/util/VRAM/power/fans/clocks, and a second
-  identity row for sensors.
+  (incl. CUDA), NPU enumeration (Intel NPU, AMD XDNA xN, Qualcomm Cloud
+  AI100, Apple Neural Engine with chip generation), GPU temp/util/VRAM/
+  power/fans/clocks - on Apple Silicon including live wired-memory and
+  utilization from IOAccelerator - and a second identity row for sensors.
 - **Braille charts** - dot-matrix rendering with btop-style fading bloom;
   timescale compresses leftward (`t` toggles) with faint grid marks showing
   where each doubling begins.
@@ -43,9 +45,11 @@ tokentop ssh://maci@box    # watch engines on another host
 ## Zero vendor libraries
 
 Everything comes from procfs/sysfs/sysctl, vendor CLIs it shells out to
-(`nvidia-smi`, `rocm-smi`, `xpu-smi`, `system_profiler`) or plain HTTP from
-the engines themselves. No NVML, no Level Zero, no cgo: single static binary,
-trivially cross-compiled.
+(`nvidia-smi`, `rocm-smi`, `xpu-smi`, `system_profiler`, `ioreg` - each the
+vendor's documented interface with no in-process alternative) or plain HTTP
+from the engines themselves. SSH transport is an embedded pure-Go client, so
+remote monitoring needs no ssh binary either. No NVML, no Level Zero, no
+cgo: single static binary, trivially cross-compiled.
 
 Linux reads `/proc` + `/sys`; macOS uses sysctls and `system_profiler`;
 Windows uses `GlobalMemoryStatusEx`, `RtlGetVersion` and one CIM query for
@@ -68,8 +72,22 @@ tokentop --add http://10.0.0.5:8000        # repeatable
 tokentop ssh://user@host                   # remote engines + host vitals
 ```
 
-SSH mode needs key-based auth (`BatchMode=yes`); the remote only needs a
-POSIX shell - no agent is installed.
+SSH mode is built in (pure Go, no ssh binary needed) and the remote only
+needs a POSIX shell - no agent is installed. Discovery reads the remote
+`/proc` directly: listening sockets from `/proc/net/tcp(+6)` (with an active
+port probe as fallback) plus engine processes with their `--port` flags, so
+engines on custom ports are found just like locally. Engine traffic flows
+through direct TCP channels on one persistent connection - no local port
+forwards, nothing to race or leak. Host vitals stream the same way: load,
+memory, uptime, CPU model, OS, kernel and GPU rows (`nvidia-smi`, or
+`rocm-smi` on AMD boxes).
+
+Auth tries, in order: `--ssh-key PATH`, keys from `~/.ssh/config`
+(`HostName`, `User`, `Port`, `IdentityFile` are honored), your default
+keys, ssh-agent, and finally a password prompt when stdin is a terminal
+(or set `TOKENTOP_SSH_PASSWORD` for headless runs). Host keys use
+trust-on-first-use, stored under your config dir; a changed key is refused
+loudly.
 
 ## Keys
 
@@ -87,6 +105,9 @@ POSIX shell - no agent is installed.
 --demo            simulated fleet, zero setup
 --add URL         attach an openai-compatible endpoint (repeatable)
 ssh://user@host   positional; monitor remote hosts (repeatable)
+--ssh-key PATH    private key for ssh targets (overrides ~/.ssh/config)
+--bearer TOKEN    bearer token sent to engines; OmniRoute API keys etc.
+                  (env: OMNIROUTE_API_KEY, then TOKENTOP_BEARER)
 --probe N         auto-probe every N seconds
 --interval D      poll interval (default 1s)
 --ingest ADDR     agent event listen address (default 127.0.0.1:8420)
@@ -94,6 +115,8 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 --once            render one frame and exit
 --seed N          demo RNG seed
 ```
+
+Password auth for ssh targets: interactive prompt, or `TOKENTOP_SSH_PASSWORD`.
 
 ## Build & test
 

@@ -1,0 +1,160 @@
+package remote
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"tokentop/internal/core"
+)
+
+const vitalsDump = `3.10 2.20 1.05 4/900 12345
+%tokentop%
+MemTotal:       16096680 kB
+MemAvailable:   8000000 kB
+SwapTotal:       2000000 kB
+SwapFree:        1000000 kB
+%tokentop%
+183729.42 712000.11
+%tokentop%
+AMD Ryzen 9 7950X 16-Core Processor
+%tokentop%
+"Debian GNU/Linux 12 (bookworm)"
+%tokentop%
+6.1.0-18-amd64
+%tokentop%
+0, NVIDIA GeForce RTX 4090, 54, 12345, 24564, 97, 410.2, 60, 2520, 550.54.15, 8.9
+1, NVIDIA A100-SXM4-40GB, 61, 30000, 40960, 80, 250.0, [N/A], 1410, 535.104.05, 8.0
+`
+
+func TestParseVitals(t *testing.T) {
+	var s core.SysSample
+	parseVitals(vitalsDump, &s)
+
+	if s.Load1 != 3.10 || s.Load5 != 2.20 || s.Load15 != 1.05 {
+		t.Errorf("load = %v %v %v", s.Load1, s.Load5, s.Load15)
+	}
+	if want := uint64(16096680) << 10; s.MemTotal != want {
+		t.Errorf("memtotal = %d want %d", s.MemTotal, want)
+	}
+	if s.MemUsed != (uint64(16096680)-8000000)<<10 {
+		t.Errorf("memused = %d", s.MemUsed)
+	}
+	if s.SwapUsed != (uint64(2000000)-1000000)<<10 {
+		t.Errorf("swapused = %d", s.SwapUsed)
+	}
+	if want := time.Duration(183729.42 * float64(time.Second)); s.HostUptime != want {
+		t.Errorf("uptime = %v want %v", s.HostUptime, want)
+	}
+	if s.CPUModel != "AMD Ryzen 9 7950X 16-Core Processor" {
+		t.Errorf("cpumodel = %q", s.CPUModel)
+	}
+	if s.OsName != "Debian GNU/Linux 12 (bookworm)" {
+		t.Errorf("osname = %q", s.OsName)
+	}
+	if s.Kernel != "6.1.0-18-amd64" {
+		t.Errorf("kernel = %q", s.Kernel)
+	}
+	if len(s.GPUs) != 2 {
+		t.Fatalf("gpus = %+v", s.GPUs)
+	}
+	g0 := s.GPUs[0]
+	if g0.Index != 0 || g0.Vendor != "nvidia" || g0.Name != "NVIDIA GeForce RTX 4090" ||
+		g0.MilliC != 54000 || g0.UtilPct != 97 || g0.PowerW != 410.2 || g0.Driver != "550.54.15" {
+		t.Errorf("gpu[0] = %+v", g0)
+	}
+	g1 := s.GPUs[1]
+	if g1.Name != "NVIDIA A100-SXM4-40GB" || g1.FanRPM != 0 || g1.Driver != "535.104.05" {
+		t.Errorf("gpu[1] = %+v", g1) // [N/A] fields must degrade to zero values
+	}
+	if s.Drivers["nvidia"] != "550.54.15" {
+		t.Errorf("drivers = %v", s.Drivers)
+	}
+}
+
+func TestParseVitalsPartial(t *testing.T) {
+	var s core.SysSample
+	s.CPUModel = "keep me"
+	parseVitals("\n%tokentop%\n%tokentop%\n%tokentop%\n%tokentop%\n%tokentop%\n%tokentop%\n", &s)
+	if s.CPUModel != "keep me" || s.OsName != "" || s.Kernel != "" || len(s.GPUs) != 0 {
+		t.Errorf("empty sections must not clobber: %+v", s)
+	}
+}
+
+func TestStatsMergeFreshnessAndOverlay(t *testing.T) {
+	var s Stats
+	var into core.SysSample
+	into.GPUs = []core.GPUDevice{{Vendor: "apple", Index: 0}}
+
+	s.Merge(&into) // never polled: nothing changes
+	if into.RemoteHost != "" || len(into.GPUs) != 1 {
+		t.Fatalf("merge before poll changed sample: %+v", into)
+	}
+
+	parseVitals(vitalsDump, &s.last)
+	s.at = time.Now().Add(-30 * time.Second) // stale
+	s.Merge(&into)
+	if into.RemoteHost != "" {
+		t.Error("stale stats must be ignored")
+	}
+
+	s.at = time.Now()
+	s.last.RemoteHost = "box"
+	s.Merge(&into)
+	if into.RemoteHost != "box" || into.CPUModel == "" || into.HostUptime <= 0 {
+		t.Errorf("fresh merge missing vitals: %+v", into)
+	}
+	if len(into.GPUs) != 2 || into.GPUs[0].Vendor != "nvidia" {
+		t.Errorf("remote GPUs must replace local ones: %+v", into.GPUs)
+	}
+}
+
+func TestDiscoveryDescribe(t *testing.T) {
+	d := &Discovery{Listening: []int{11434}, EnginePorts: []int{5005}}
+	if got, want := d.Describe(), "listening[11434] engines[5005]"; got != want {
+		t.Errorf("Describe() = %q want %q", got, want)
+	}
+	d2 := &Discovery{}
+	if got, want := d2.Describe(), "listening[-] engines[-]"; got != want {
+		t.Errorf("Describe() = %q want %q", got, want)
+	}
+}
+
+const rocmJSON = `{"card0":{"Temperature (Sensor edge) (C)":"52.0","GPU use (%)":"88","Used Memory (VRAM)":"12271640576","Total Memory (VRAM)":"17163091968"}}`
+
+// vitalsDumpFrom builds a full vitals payload from ordered sections.
+func vitalsDumpFrom(parts ...string) string {
+	return strings.Join(parts, "\n"+sectionMark+"\n") + "\n"
+}
+
+func TestParseVitalsRocmGPUs(t *testing.T) {
+	var s core.SysSample
+	parseVitals(vitalsDumpFrom(
+		"1.0 1.0 1.0",
+		"", // meminfo absent
+		"",
+		"",
+		"",
+		"",
+		rocmJSON,
+	), &s)
+	if len(s.GPUs) != 1 {
+		t.Fatalf("gpus = %+v", s.GPUs)
+	}
+	g := s.GPUs[0]
+	if g.Vendor != "amd" || g.Index != 0 || g.MilliC != 52000 || g.UtilPct != 88 ||
+		g.MemUsed == 0 || g.MemTotal == 0 {
+		t.Errorf("rocm gpu = %+v", g)
+	}
+}
+
+func TestSplitSectionsConsecutiveEmpty(t *testing.T) {
+	secs := splitSections("\n" + sectionMark + "\n" + sectionMark + "\ndata\n" + sectionMark + "\n")
+	// lines: "", MARK, MARK, "data", MARK, "" -> four sections incl. trailing
+	if len(secs) != 4 {
+		t.Fatalf("sections = %q", secs)
+	}
+	if strings.TrimSpace(secs[2]) != "data" {
+		t.Errorf("section 2 = %q, want data", secs[2])
+	}
+}

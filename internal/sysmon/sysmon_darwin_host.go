@@ -30,18 +30,21 @@ func hostInfoDarwin(s *core.SysSample) {
 	s.NPUs = appleNPUs()
 }
 
-// appleNPUs reports the Apple Neural Engine on Apple Silicon. The ANE has no
-// public utilization interface without root (powermetrics), so this is a
-// presence indicator derived from the chip name.
+// appleNPUs reports the Apple Neural Engine on Apple Silicon, labelled with
+// the chip generation parsed from the CPU brand string ("Apple M3 Pro" ->
+// "ANE M3 Pro"). The ANE has no public utilization interface without root
+// (powermetrics), so this is a presence indicator.
 func appleNPUs() []string {
 	chip, err := unix.Sysctl("machdep.cpu.brand_string")
 	if err != nil || chip == "" {
 		return nil
 	}
-	if strings.HasPrefix(strings.TrimSpace(chip), "Apple") {
-		return []string{"Apple Neural Engine (" + strings.TrimSpace(chip) + ")"}
+	chip = strings.TrimSpace(chip)
+	if !strings.HasPrefix(chip, "Apple") {
+		return nil // Intel Macs have no NPU
 	}
-	return nil // Intel Macs have no NPU
+	label := strings.TrimSpace(strings.TrimPrefix(chip, "Apple"))
+	return []string{"ANE " + label}
 }
 
 func boottimeUptime() time.Duration {

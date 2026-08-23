@@ -1,8 +1,12 @@
 package provider
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"tokentop/internal/bearer"
 	"tokentop/internal/core"
 )
 
@@ -85,4 +89,68 @@ func TestKindConstants(t *testing.T) {
 		core.KindLlamaCPP != "llama.cpp" || core.KindOpenAI != "openai" {
 		t.Fatal("kind strings drifted")
 	}
+}
+
+func TestIdentifyOmniRoute(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-OmniRoute-Route-Class", "CLIENT_API")
+		switch r.URL.Path {
+		case "/v1/models":
+			w.Write([]byte(`{"data":[{"id":"auto","context_length":1048576}]}`))
+		default:
+			w.Write([]byte("ok"))
+		}
+	}))
+	defer srv.Close()
+
+	if kind := Identify(context.Background(), srv.URL); kind != core.KindOmniRoute {
+		t.Errorf("Identify = %q, want omnirouter", kind)
+	}
+}
+
+func TestIdentifyNotOmniRouteWithoutHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"m"}]}`))
+	}))
+	defer srv.Close()
+	if kind := Identify(context.Background(), srv.URL); kind == core.KindOmniRoute {
+		t.Error("plain server misidentified as omnirouter")
+	}
+}
+
+func TestPollCarriesBearerAndContextLength(t *testing.T) {
+	old := bearer.Token()
+	defer bearer.Set(old)
+	bearer.Set("sk-live")
+
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Write([]byte(`{"data":[{"id":"auto/big","context_length":200000}]}`))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(srv.URL, "test", core.KindOmniRoute)
+	m, err := p.Poll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer sk-live" {
+		t.Errorf("Authorization = %q", gotAuth)
+	}
+	if len(m.Models) != 1 || m.Models[0].Name != "auto/big" {
+		t.Fatalf("models = %+v", m.Models)
+	}
+	if m.Models[0].CtxMax != 200000 {
+		t.Errorf("CtxMax = %d, want 200000", m.Models[0].CtxMax)
+	}
+}
+
+func TestCandidatePortsIncludeOmniRoute(t *testing.T) {
+	for _, p := range CandidatePorts() {
+		if p == 20128 {
+			return
+		}
+	}
+	t.Error("20128 missing from candidate ports")
 }

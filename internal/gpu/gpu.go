@@ -64,7 +64,7 @@ func Sample(ctx context.Context) []core.GPUDevice {
 		if out, ok2 := run(ctx, p,
 			"--query-gpu=index,name,temperature.gpu,memory.used,memory.total,utilization.gpu,power.draw,fan.speed,clocks.sm,driver_version,compute_cap",
 			"--format=csv,noheader,nounits"); ok2 {
-			devs = append(devs, parseNvidiaSMI(out)...)
+			devs = append(devs, ParseNvidiaSMI(out)...)
 		}
 	}
 
@@ -127,10 +127,12 @@ func sampleXPU(ctx context.Context, xpu string) []core.GPUDevice {
 	return devs
 }
 
-// parseNvidiaSMI reads CSV rows of
+// ParseNvidiaSMI reads CSV rows of
 // index,name,temp,memused,memtotal,util,power,fan,clocks.sm,driver,compute_cap.
 // The name may contain commas; the last nine fields are always fixed.
-func parseNvidiaSMI(b []byte) []core.GPUDevice {
+// Exported so the remote ssh path can parse nvidia-smi output gathered from
+// another host with the exact same rules.
+func ParseNvidiaSMI(b []byte) []core.GPUDevice {
 	const fixedTail = 9
 	var devs []core.GPUDevice
 	for _, line := range strings.Split(string(b), "\n") {
@@ -186,8 +188,14 @@ func flexF(s string) float64 {
 	return v
 }
 
-// parseRocmSMI reads rocm-smi --json output keyed by "cardN". Values may be
-// strings or single-element arrays depending on version.
+// ParseRocmSMI reads rocm-smi --json output keyed by "cardN". Values may be
+// strings or single-element arrays depending on version. Exported so the
+// remote ssh path can parse rocm-smi output gathered from another host.
+func ParseRocmSMI(b []byte) []core.GPUDevice {
+	return parseRocmSMI(b)
+}
+
+// parseRocmSMI is the shared implementation behind ParseRocmSMI.
 func parseRocmSMI(b []byte) []core.GPUDevice {
 	var raw map[string]map[string]any
 	if json.Unmarshal(b, &raw) != nil {

@@ -12,7 +12,7 @@ const nvidiaCSV = `0, NVIDIA GeForce RTX 4090, 65, 12345, 24564, 98, 350.51, 40,
 `
 
 func TestParseNvidiaSMI(t *testing.T) {
-	devs := parseNvidiaSMI([]byte(nvidiaCSV))
+	devs := ParseNvidiaSMI([]byte(nvidiaCSV))
 	if len(devs) != 3 {
 		t.Fatalf("devices = %d", len(devs))
 	}

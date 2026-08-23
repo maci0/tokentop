@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"tokentop/internal/bearer"
 	"tokentop/internal/core"
 )
 
@@ -178,6 +179,7 @@ func postJSON(ctx context.Context, url string, body []byte) (*http.Response, err
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	bearer.Apply(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

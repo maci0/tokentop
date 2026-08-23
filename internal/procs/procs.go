@@ -88,7 +88,7 @@ func (s *Sampler) Snapshot() []Info {
 			Name:     r.name,
 			Args:     r.args,
 			RSS:      r.rss,
-			PortHint: extractPort(r.args),
+			PortHint: ExtractPort(r.args),
 		}
 		switch {
 		case r.cpuPercent > 0:
@@ -102,21 +102,18 @@ func (s *Sampler) Snapshot() []Info {
 		if _, tracked := s.prev[r.pid]; !tracked || r.ticks != 0 {
 			s.prev[r.pid] = r.ticks
 		}
-		if eng, defPort, ok := matchEngine(info); ok {
+		if eng, defPort, ok := MatchEngine(info); ok {
 			info.Engine, info.DefPort = eng, defPort
 		}
 		out = append(out, info)
 	}
 	// prune dead pids so the map cannot grow forever
+	live := make(map[int]struct{}, len(list))
+	for _, r := range list {
+		live[r.pid] = struct{}{}
+	}
 	for pid := range s.prev {
-		live := false
-		for _, r := range list {
-			if r.pid == pid {
-				live = true
-				break
-			}
-		}
-		if !live {
+		if _, ok := live[pid]; !ok {
 			delete(s.prev, pid)
 		}
 	}
@@ -136,8 +133,10 @@ func clampPct(v float64) float64 {
 
 func pidSelf() int { return osGetpid() }
 
-// extractPort scans argv for explicit listen-port flags.
-func extractPort(args []string) int {
+// ExtractPort scans argv for explicit listen-port flags. Exported so the
+// remote ssh path can reuse the same convention for command lines gathered
+// from another host.
+func ExtractPort(args []string) int {
 	for i, a := range args {
 		for _, flag := range []string{"--port", "--http-port", "--listen-port"} {
 			if a == flag && i+1 < len(args) {
@@ -244,8 +243,10 @@ func baseNameEq(args []string, want string) bool {
 	return false
 }
 
-// matchEngine finds the well-known engine behind a process, if any.
-func matchEngine(i Info) (engine string, defPort int, ok bool) {
+// MatchEngine finds the well-known engine behind a process, if any. The
+// name is basename'd internally, so raw argv[0] works. Exported for the
+// remote ssh path, which matches command lines gathered from another host.
+func MatchEngine(i Info) (engine string, defPort int, ok bool) {
 	name := baseName(i.Name)
 	lowerCmd := strings.ToLower(strings.Join(i.Args, " "))
 	for _, m := range engineMatchers {

@@ -35,10 +35,14 @@ type prevSample struct {
 type Collector struct {
 	providers []provider.Provider
 	interval  time.Duration
-	sysFn     func() core.SysSample
 	procFn    func() []procs.Info
 	procMu    sync.Mutex
 	procCache []procs.Info
+
+	sysMu       sync.Mutex // guards sysFn + sysCache
+	sysFn       func() core.SysSample
+	sysCache    *core.SysSample // last good sample from the background poller
+	sysSampling sync.Mutex      // serializes sampling; vendor CLIs take seconds
 
 	mu         sync.Mutex
 	histOut    map[string]*timedRing
@@ -76,8 +80,65 @@ func New(providers []provider.Provider, interval time.Duration) *Collector {
 var procSampler = procs.NewSampler()
 
 // SetSysFn overrides the host-vitals sampler (used for ssh targets whose
-// stats merge local + remote readings).
-func (c *Collector) SetSysFn(fn func() core.SysSample) { c.sysFn = fn }
+// stats merge local + remote readings). Call before Run.
+func (c *Collector) SetSysFn(fn func() core.SysSample) {
+	c.sysMu.Lock()
+	c.sysFn = fn
+	c.sysMu.Unlock()
+}
+
+// startSysPoller refreshes host vitals in the background; emit never blocks
+// on it (GPU vendor CLIs can take seconds and would stall every frame).
+func (c *Collector) startSysPoller(ctx context.Context) {
+	go func() {
+		t := time.NewTicker(c.interval)
+		defer t.Stop()
+		c.sampleSys(false) // first pass: skip if emit's cold path already sampled
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				c.sampleSys(true)
+			}
+		}
+	}()
+}
+
+// sampleSys runs the vitals sampler. Concurrent callers serialize on
+// sysSampling so slow tooling is never invoked twice at once; with force
+// unset an already-warm cache short-circuits without sampling.
+func (c *Collector) sampleSys(force bool) *core.SysSample {
+	c.sysSampling.Lock()
+	defer c.sysSampling.Unlock()
+	c.sysMu.Lock()
+	fn, cached := c.sysFn, c.sysCache
+	c.sysMu.Unlock()
+	if !force && (cached != nil || fn == nil) {
+		return cached
+	}
+	if fn == nil {
+		return nil
+	}
+	s := fn()
+	c.sysMu.Lock()
+	c.sysCache = &s
+	c.sysMu.Unlock()
+	return &s
+}
+
+// sysSnapshot returns the freshest vitals sample: a warm-cache read that
+// never waits on sampling, falling back to one serialized sample before the
+// first background refresh has landed.
+func (c *Collector) sysSnapshot() *core.SysSample {
+	c.sysMu.Lock()
+	cached := c.sysCache
+	c.sysMu.Unlock()
+	if cached != nil {
+		return cached
+	}
+	return c.sampleSys(false)
+}
 
 // startProcPoller refreshes the process table in the background; emit never
 // blocks on it (Windows CIM enumeration takes seconds).
@@ -117,6 +178,7 @@ func (c *Collector) procSnapshot() []procs.Info {
 // Run polls until ctx is cancelled, emitting one Snapshot per interval.
 func (c *Collector) Run(ctx context.Context, out chan<- core.Snapshot) {
 	c.startProcPoller(ctx)
+	c.startSysPoller(ctx)
 	t := time.NewTicker(c.interval)
 	defer t.Stop()
 	c.emit(out) // immediate first frame
@@ -156,10 +218,7 @@ func (c *Collector) emit(out chan<- core.Snapshot) {
 	defer c.mu.Unlock()
 	snap.Agents = append([]core.AgentEvent(nil), c.agents...)
 	snap.Probes = append([]core.ProbeSample(nil), c.probes...)
-	if c.sysFn != nil {
-		sys := c.sysFn()
-		snap.Sys = &sys
-	}
+	snap.Sys = c.sysSnapshot()
 	byPort := map[int]procs.Info{}
 	for _, p := range c.procSnapshot() {
 		port := p.PortHint
@@ -212,10 +271,11 @@ func (c *Collector) emit(out chan<- core.Snapshot) {
 			c.ring(c.histOut, ps.Label).push(outPS, now, c.interval)
 			c.ring(c.histIn, ps.Label).push(inPS, now, c.interval)
 		}
-		ps.OutHist = c.histOut[ps.Label].copy()
-		ps.InHist = c.histIn[ps.Label].copy()
-		ps.OutT0 = c.histOut[ps.Label].t0
-		ps.InT0 = c.histIn[ps.Label].t0
+		// ring() (not a bare map index): a provider whose first poll failed
+		// has no history yet, and indexing the map there would deref nil.
+		outR, inR := c.ring(c.histOut, ps.Label), c.ring(c.histIn, ps.Label)
+		ps.OutHist, ps.OutT0 = outR.copy(), outR.t0
+		ps.InHist, ps.InT0 = inR.copy(), inR.t0
 		snap.Providers = append(snap.Providers, ps)
 	}
 	out <- snap

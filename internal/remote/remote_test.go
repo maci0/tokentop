@@ -1,10 +1,10 @@
 package remote
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-
-	"tokentop/internal/core"
 )
 
 func TestParseTarget(t *testing.T) {
@@ -41,36 +41,136 @@ func TestParseTarget(t *testing.T) {
 	}
 }
 
-func TestProbeScript(t *testing.T) {
-	s := probeScript([]int{11434, 8000})
-	if !strings.Contains(s, "for p in 11434 8000") {
-		t.Errorf("script missing port list:\n%s", s)
+func TestParseTargetSSHConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config")
+	os.WriteFile(cfg, []byte(`
+# comment
+Host gpu
+  hostname 192.168.0.212
+  user maci
+  port 2022
+  identityfile ~/.ssh/gpu_key
+
+Host *.lab
+  user labadmin
+
+Host *
+  user fallback
+`), 0o600)
+	oldPath, oldRead := sshConfigPath, configReader
+	defer func() { sshConfigPath, configReader = oldPath, oldRead }()
+	sshConfigPath = func() string { return cfg }
+	configReader = func(path string) ([]byte, error) { return os.ReadFile(path) }
+
+	tgt, err := ParseTarget("ssh://gpu")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(s, "/dev/tcp") || !strings.Contains(s, "nc -z") {
-		t.Error("script must try /dev/tcp then nc")
+	want := Target{User: "maci", Host: "192.168.0.212", Port: 2022,
+		KeyFile: filepath.Join(dir, ".ssh", "gpu_key")}
+	// expandTilde resolves to $HOME, not dir; just verify suffix
+	if tgt.User != want.User || tgt.Host != want.Host || tgt.Port != want.Port {
+		t.Errorf("resolved = %+v, want %+v", tgt, want)
+	}
+	if !strings.HasSuffix(tgt.KeyFile, "gpu_key") {
+		t.Errorf("keyfile = %q", tgt.KeyFile)
+	}
+
+	tgt, _ = ParseTarget("ssh://box.lab")
+	if tgt.User != "labadmin" || tgt.Port != 22 {
+		t.Errorf("wildcard match = %+v", tgt)
+	}
+
+	// explicit URL fields win over config
+	tgt, _ = ParseTarget("ssh://root@gpu:23")
+	if tgt.User != "root" || tgt.Port != 23 {
+		t.Errorf("URL precedence = %+v", tgt)
 	}
 }
 
-func TestParseRemoteStats(t *testing.T) {
-	var s core.SysSample
-	parseRemoteStats("3.10 2.20 1.05 4/900 12345\n---\nMemTotal:       16096680 kB\nMemAvailable:   8000000 kB\nSwapTotal:       2000000 kB\nSwapFree:        1000000 kB\n", &s)
-	if s.Load1 != 3.10 || s.Load15 != 1.05 {
-		t.Errorf("load = %v %v %v", s.Load1, s.Load5, s.Load15)
+func TestCutConfigField(t *testing.T) {
+	cases := []struct {
+		line, key, val string
+		ok             bool
+	}{
+		{"HostName foo", "HostName", "foo", true},
+		{"  identityfile = ~/keys/id ", "identityfile", "~/keys/id", true},
+		{"#comment", "", "", false},
+		{"", "", "", false},
+		{"solokeyword", "", "", false},
 	}
-	if want := uint64(16096680) << 10; s.MemTotal != want {
-		t.Errorf("memtotal = %d want %d", s.MemTotal, want)
-	}
-	if s.MemUsed != (uint64(16096680)-8000000)<<10 {
-		t.Errorf("memused = %d", s.MemUsed)
-	}
-	if s.SwapUsed != (uint64(2000000)-1000000)<<10 {
-		t.Errorf("swapused = %d", s.SwapUsed)
+	for _, c := range cases {
+		k, v, ok := cutConfigField(c.line)
+		if k != c.key || v != c.val || ok != c.ok {
+			t.Errorf("cutConfigField(%q) = %q,%q,%v want %q,%q,%v",
+				c.line, k, v, ok, c.key, c.val, c.ok)
+		}
 	}
 }
 
-func TestFreeLocalPort(t *testing.T) {
-	p := freeLocalPort()
-	if p <= 0 || p > 65535 {
-		t.Fatalf("port = %d", p)
+func TestPatternMatch(t *testing.T) {
+	cases := []struct {
+		pat, s string
+		want   bool
+	}{
+		{"*", "anything", true},
+		{"gpu-*", "gpu-box1", true},
+		{"*.lab", "box.lab", true},
+		{"*.lab", "box.example.com", false},
+		{"host?", "host1", true},
+		{"host?", "host12", false},
+		{"exact", "exact", true},
+		{"a*b*c", "axxbyyc", true},
 	}
+	for _, c := range cases {
+		if got := patternMatch(c.pat, c.s); got != c.want {
+			t.Errorf("patternMatch(%q,%q) = %v", c.pat, c.s, got)
+		}
+	}
+}
+
+func TestTOFUStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	old := knownHostsPath
+	defer func() { knownHostsPath = old }()
+	knownHostsPath = func() string { return path }
+
+	cb1, err := tofu()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key1 := fakePublicKey("first")
+	if err := cb1("h:22", nil, key1); err != nil {
+		t.Fatalf("first contact rejected: %v", err)
+	}
+
+	// A fresh callback over the same store accepts the remembered key.
+	cb2, _ := tofu()
+	if err := cb2("h:22", nil, key1); err != nil {
+		t.Fatalf("remembered key rejected: %v", err)
+	}
+	// A different key must be refused.
+	if err := cb2("h:22", nil, fakePublicKey("second")); err == nil {
+		t.Fatal("changed key accepted")
+	} else if !strings.Contains(err.Error(), "changed") {
+		t.Errorf("mismatch error should say changed: %v", err)
+	}
+
+	store, _ := readKnownHosts(path)
+	if len(store) != 1 {
+		t.Errorf("store = %v", store)
+	}
+}
+
+func TestDefaultKeyPathsAndAuthChain(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "") // no agent interference
+	tgt := Target{}
+	methods, cleanup := tgt.authMethods()
+	defer cleanup()
+	if methods == nil && defaultKeyPaths() == nil {
+		t.Skip("no home dir")
+	}
+	// no assertion on count: keys may legitimately not exist in CI
+	t.Logf("methods from defaults: %d", len(methods))
 }
