@@ -197,24 +197,29 @@ func main() {
 // runTUI runs the dashboard, restarting into a fresh binary whenever the
 // executable on disk is rebuilt (dev hot-reload).
 func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotReload bool) {
-	self, _ := os.Executable()
+	self, selfErr := os.Executable()
 	var (
 		mu       sync.Mutex
 		current  *tea.Program
 		reloaded atomic.Bool
 	)
 	if hotReload {
-		wctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		go selfreload.Watch(wctx, self, 400*time.Millisecond, func() {
-			reloaded.Store(true)
-			mu.Lock()
-			p := current
-			mu.Unlock()
-			if p != nil {
-				p.Quit()
-			}
-		})
+		if selfErr != nil {
+			fmt.Fprintf(os.Stderr, "tokentop: hot reload disabled (%v)\n", selfErr)
+			hotReload = false
+		} else {
+			wctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			go selfreload.Watch(wctx, self, 400*time.Millisecond, func() {
+				reloaded.Store(true)
+				mu.Lock()
+				p := current
+				mu.Unlock()
+				if p != nil {
+					p.Quit()
+				}
+			})
+		}
 	}
 
 	prog := tea.NewProgram(ui.New(cfg, ch), tea.WithAltScreen())

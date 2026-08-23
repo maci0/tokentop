@@ -89,3 +89,17 @@ func TestRunEmptyStream(t *testing.T) {
 		t.Fatalf("empty stream should fail, got %+v", s)
 	}
 }
+
+// An Ollama engine closing the stream without tokens (crashed model, OOM)
+// must surface as a failed probe, not a silent zero-throughput success.
+func TestRunOllamaEmptyStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"response":"","done":true}` + "\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindOllama, Base: srv.URL, Model: "m"})
+	if s.OK || s.Err == "" {
+		t.Fatalf("empty ollama stream should fail, got %+v", s)
+	}
+}

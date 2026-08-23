@@ -58,11 +58,13 @@ func keyFileAuth(path string) ssh.AuthMethod {
 // passwordSource yields a secret at most once per connection attempt chain:
 // TOKENTOP_SSH_PASSWORD for headless runs, otherwise a terminal prompt. It
 // remembers the answer so password and keyboard-interactive mechanisms share
-// it without asking twice.
+// it without asking twice, and remembers why no answer was produced so an
+// aborted prompt surfaces as its real cause instead of a generic auth failure.
 type passwordSource struct {
 	mu    sync.Mutex
 	pw    string
 	asked bool
+	err   error // set when asked but no password could be obtained
 }
 
 var interactivePassword = func(t Target) (string, error) {
@@ -78,42 +80,42 @@ var interactivePassword = func(t Target) (string, error) {
 	return string(b), nil
 }
 
-func (p *passwordSource) get(t Target) (string, bool) {
+func (p *passwordSource) get(t Target) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.asked {
-		return p.pw, p.pw != ""
+		if p.pw != "" {
+			return p.pw, nil
+		}
+		return "", p.err
 	}
 	p.asked = true
 	if v := os.Getenv("TOKENTOP_SSH_PASSWORD"); v != "" {
 		p.pw = v
-		return v, true
+		return v, nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return "", false
+		p.err = fmt.Errorf("no password available (stdin is not a terminal; set TOKENTOP_SSH_PASSWORD)")
+		return "", p.err
 	}
 	v, err := interactivePassword(t)
 	if err != nil {
-		return "", false
+		p.err = fmt.Errorf("password prompt failed: %w", err)
+		return "", p.err
 	}
 	p.pw = v
-	return v, true
+	return v, nil
 }
 
 // authCallbacks turns a passwordSource into the two standard mechanisms so
 // servers preferring either password or keyboard-interactive both work.
 func (p *passwordSource) authCallbacks(t Target) []ssh.AuthMethod {
-	get := func() (string, bool) { return p.get(t) }
-	pw := ssh.PasswordCallback(func() (string, error) {
-		if s, ok := get(); ok {
-			return s, nil
-		}
-		return "", fmt.Errorf("no password available")
-	})
+	get := func() (string, error) { return p.get(t) }
+	pw := ssh.PasswordCallback(get)
 	ki := ssh.KeyboardInteractive(func(_ string, _ string, questions []string, _ []bool) ([]string, error) {
-		s, ok := get()
-		if !ok {
-			return nil, fmt.Errorf("no password available")
+		s, err := get()
+		if err != nil {
+			return nil, err
 		}
 		ans := make([]string, len(questions))
 		for i := range ans {
