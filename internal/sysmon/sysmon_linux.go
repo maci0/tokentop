@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -31,9 +32,13 @@ func init() {
 		}
 	}
 	platformTemps = func() []core.TempReading { return ScanTemps(sysHwmon, sysThermal) }
-	platformCPUModel = cpuModelLinux
+	platformCPUModel = cpuModelOnce // /proc/cpuinfo never changes: resolve once
 	platformHost = hostInfoLinux
 }
+
+// cpuModelOnce memoizes the brand string; /proc/cpuinfo can be hundreds of
+// kilobytes on many-core hosts and re-parsing it every poll is pure waste.
+var cpuModelOnce = sync.OnceValue(cpuModelLinux)
 
 func sampleMemoryLinux(s *core.SysSample) {
 	if b, err := os.ReadFile(procMeminfo); err == nil {
@@ -41,31 +46,56 @@ func sampleMemoryLinux(s *core.SysSample) {
 	}
 }
 
-// hostInfoLinux reads everything from procfs/sysfs: distro, kernel, uptime,
-// NVIDIA driver+CUDA versions, amdgpu module version and NPU enumeration.
-func hostInfoLinux(s *core.SysSample) {
-	s.OsName = prettyOSName()
+// hostStaticInfo gathers everything that cannot change while the process
+// runs: distro name, kernel release, driver versions and the NPU inventory.
+// Without the cache each poll would re-read five files and re-walk the
+// accel class for identical answers; all of it is resolved once and copied
+// into each fresh sample.
+type hostStatic struct {
+	osName    string
+	kernel    string
+	nvidiaDrv string
+	cuda      string
+	amdgpu    string
+	npus      []string
+}
+
+var hostStaticInfo = sync.OnceValue(func() hostStatic {
+	var h hostStatic
+	h.osName = prettyOSName()
 	var un unix.Utsname
 	if err := unix.Uname(&un); err == nil {
-		s.Kernel = utsField(un.Release[:])
-		if s.OsName == "" {
-			s.OsName = strings.TrimSpace(utsField(un.Sysname[:]))
+		h.kernel = strings.TrimSpace(utsField(un.Release[:]))
+		if h.osName == "" {
+			h.osName = strings.TrimSpace(utsField(un.Sysname[:]))
 		}
 	}
-	s.HostUptime = linuxUptime()
 	if b, err := os.ReadFile("/proc/driver/nvidia/version"); err == nil {
-		drv, cuda := parseNvidiaVersion(string(b))
-		if drv != "" && s.Drivers["nvidia"] == "" {
-			s.Drivers["nvidia"] = drv
-		}
-		if cuda != "" {
-			s.Drivers["cuda"] = cuda
-		}
+		h.nvidiaDrv, h.cuda = parseNvidiaVersion(string(b))
 	}
-	if v := sysModuleVersion("amdgpu"); v != "" {
-		s.Drivers["amdgpu"] = v
+	h.amdgpu = sysModuleVersion("amdgpu")
+	h.npus = scanAccelDrivers("/sys/class/accel")
+	return h
+})
+
+func hostInfoLinux(s *core.SysSample) {
+	h := hostStaticInfo()
+	s.OsName = h.osName
+	s.Kernel = h.kernel
+	s.HostUptime = linuxUptime()
+	if s.Drivers == nil { // Sample initializes late; never write a nil map
+		s.Drivers = map[string]string{}
 	}
-	s.NPUs = scanAccelDrivers("/sys/class/accel")
+	if h.nvidiaDrv != "" {
+		s.Drivers["nvidia"] = h.nvidiaDrv
+	}
+	if h.cuda != "" {
+		s.Drivers["cuda"] = h.cuda
+	}
+	if h.amdgpu != "" {
+		s.Drivers["amdgpu"] = h.amdgpu
+	}
+	s.NPUs = h.npus
 }
 
 func prettyOSName() string {

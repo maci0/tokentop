@@ -39,47 +39,39 @@ func listLinux() ([]raw, error) {
 
 		r := raw{pid: pid, name: baseName(args[0]), args: args}
 
+		// One stat read yields both CPU ticks and RSS; a second read of
+		// status would double the per-PID syscalls on every poll.
 		if stat, err := os.ReadFile(base + "/stat"); err == nil {
-			r.ticks = procStatTicks(string(stat))
-		}
-		if status, err := os.ReadFile(base + "/status"); err == nil {
-			r.rss = vmRSS(string(status))
+			r.ticks, r.rss = procStatCPUAndRSS(string(stat))
 		}
 		out = append(out, r)
 	}
 	return out, nil
 }
 
-// procStatTicks sums utime+stime (fields 14,15) respecting comm parens.
-func procStatTicks(stat string) uint64 {
+// procStatCPUAndRSS sums utime+stime jiffies (fields 14,15) and reads the
+// resident set in pages (field 24) from one /proc/PID/stat body, respecting
+// the comm parens (a comm may contain spaces).
+func procStatCPUAndRSS(stat string) (ticks uint64, rssBytes uint64) {
 	open := strings.LastIndexByte(stat, '(')
 	closeP := strings.LastIndexByte(stat, ')')
 	if open < 0 || closeP < 0 || closeP+2 > len(stat) {
-		return 0
+		return 0, 0
 	}
 	fields := strings.Fields(stat[closeP+2:]) // field 3 onward
-	const utimeIdx = 11                       // field 14 overall -> idx 11 here
-	if len(fields) <= utimeIdx+1 {
-		return 0
+	const (
+		utimeIdx = 11 // field 14 overall -> idx 11 here
+		stimeIdx = 12 // field 15 overall -> idx 12 here
+		rssIdx   = 21 // field 24 overall (rss, pages) -> idx 21 here
+	)
+	if len(fields) > stimeIdx {
+		u, _ := strconv.ParseUint(fields[utimeIdx], 10, 64)
+		si, _ := strconv.ParseUint(fields[stimeIdx], 10, 64)
+		ticks = u + si
 	}
-	u, _ := strconv.ParseUint(fields[utimeIdx], 10, 64)
-	si, _ := strconv.ParseUint(fields[utimeIdx+1], 10, 64)
-	return u + si
-}
-
-// vmRSS pulls "VmRSS:\t 1234 kB" out of /proc/PID/status.
-func vmRSS(status string) uint64 {
-	for _, line := range strings.Split(status, "\n") {
-		if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) == "VmRSS" {
-			f := strings.Fields(v)
-			if len(f) >= 2 && f[1] == "kB" {
-				kb, err := strconv.ParseUint(f[0], 10, 64)
-				if err == nil {
-					return kb << 10
-				}
-			}
-			return 0
-		}
+	if len(fields) > rssIdx {
+		pages, _ := strconv.ParseUint(fields[rssIdx], 10, 64)
+		rssBytes = pages * uint64(os.Getpagesize())
 	}
-	return 0
+	return ticks, rssBytes
 }

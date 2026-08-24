@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -154,8 +155,8 @@ func (m Model) View() string {
 		m.renderFeed(),
 	)
 	footer := m.renderFooter()
-	for lipgloss.Height(body)+lipgloss.Height(footer) < m.h {
-		body += "\n"
+	if gap := m.h - lipgloss.Height(body) - lipgloss.Height(footer); gap > 0 {
+		body += strings.Repeat("\n", gap)
 	}
 	return body + footer
 }
@@ -1082,8 +1083,9 @@ func clampi(v, lo, hi int) int {
 	return v
 }
 
-// wordmark renders the logo with a cyan→pink gradient.
-func wordmark() string {
+// wordmark renders the logo with a cyan→pink gradient. Static output:
+// built once, then reused by every frame.
+var wordmark = sync.OnceValue(func() string {
 	letters := []rune("TOKENTOP")
 	colors := []lipgloss.Color{cTeal, cCyan, cBlue, cLavender, cMagenta, cPink, cPeach, cYellow}
 	var b strings.Builder
@@ -1091,4 +1093,4 @@ func wordmark() string {
 		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colors[i%len(colors)]).Render(string(l)))
 	}
 	return b.String()
-}
+})

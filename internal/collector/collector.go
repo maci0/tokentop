@@ -321,26 +321,50 @@ func ema(prev, raw float64) float64 { return prev*(1-emaAlpha) + raw*emaAlpha }
 
 // timedRing is a value history carrying the wall-clock time of its oldest
 // sample so charts can place every point on an absolute time axis.
+//
+// The backing buffer is allocated once at HistoryLen and reused head-first:
+// after warm-up push never allocates or copies, where sliding a slice
+// (vals = vals[1:]) would realloc on every push for the life of the ring.
 type timedRing struct {
-	vals []float64
+	buf  []float64 // fixed capacity HistoryLen, samples in insertion order
+	head int       // counts fills while filling; then indexes the oldest element
 	t0   time.Time
 }
 
 func (r *timedRing) push(v float64, now time.Time, interval time.Duration) {
-	if len(r.vals) >= core.HistoryLen {
-		r.vals = r.vals[1:]
-		if !r.t0.IsZero() {
-			r.t0 = r.t0.Add(interval) // oldest sample slid off
+	if r.buf == nil { // one reservation for the ring's whole life
+		r.buf = make([]float64, 0, core.HistoryLen)
+	}
+	if len(r.buf) < core.HistoryLen { // filling: keep appending in order
+		r.buf = append(r.buf, v)
+		if len(r.buf) == 1 {
+			r.t0 = now
 		}
+		return
 	}
-	if r.t0.IsZero() {
-		r.t0 = now
+	if r.head == core.HistoryLen { // just filled: oldest lives at index 0
+		r.head = 0
 	}
-	r.vals = append(r.vals, v)
+	r.buf[r.head] = v // overwrite the oldest sample
+	r.head++
+	if r.head == core.HistoryLen {
+		r.head = 0
+	}
+	if !r.t0.IsZero() {
+		r.t0 = r.t0.Add(interval) // oldest sample slid off
+	}
 }
 
+// copy returns the samples in insertion order (oldest first), detached from
+// the ring so snapshots stay stable across later pushes.
 func (r *timedRing) copy() []float64 {
-	return append([]float64(nil), r.vals...)
+	if len(r.buf) == 0 {
+		return nil
+	}
+	out := make([]float64, len(r.buf))
+	n := copy(out, r.buf[r.head:])
+	copy(out[n:], r.buf[:r.head])
+	return out
 }
 
 func (c *Collector) ring(m map[string]*timedRing, label string) *timedRing {

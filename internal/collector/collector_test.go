@@ -74,16 +74,36 @@ func TestHistoryRingCap(t *testing.T) {
 	for i := 0; i < core.HistoryLen+10; i++ {
 		r.push(float64(i), t0.Add(time.Duration(i)*time.Second), time.Second)
 	}
-	if len(r.vals) != core.HistoryLen {
-		t.Fatalf("ring len = %d, want %d", len(r.vals), core.HistoryLen)
+	vals := r.copy()
+	if len(vals) != core.HistoryLen {
+		t.Fatalf("ring len = %d, want %d", len(vals), core.HistoryLen)
 	}
-	if r.vals[len(r.vals)-1] != float64(core.HistoryLen+9) {
+	if vals[len(vals)-1] != float64(core.HistoryLen+9) {
 		t.Fatal("newest sample lost")
+	}
+	if vals[0] != 10 { // oldest slid off in order: 0..9 evicted, 10 is now first
+		t.Fatal("ring order broken after wrap")
 	}
 	// oldest timestamp must slide forward one cadence per evicted sample
 	wantT0 := t0.Add(10 * time.Second)
 	if !r.t0.Equal(wantT0) {
 		t.Fatalf("t0 = %v, want %v", r.t0, wantT0)
+	}
+}
+
+// Once warm, push must stop allocating: the ring reuses one fixed buffer for
+// its lifetime instead of sliding a slice (which reallocs on every push).
+func TestHistoryRingDoesNotGrowBuffer(t *testing.T) {
+	r := &timedRing{}
+	for i := 0; i < core.HistoryLen*3; i++ {
+		r.push(float64(i), time.Unix(int64(i), 0), time.Second)
+	}
+	if cap(r.buf) != core.HistoryLen {
+		t.Fatalf("buffer capacity = %d, want exactly %d", cap(r.buf), core.HistoryLen)
+	}
+	vals := r.copy()
+	if want := float64(core.HistoryLen * 2); vals[0] != want {
+		t.Fatalf("oldest sample = %v, want %v", vals[0], want)
 	}
 }
 
