@@ -105,6 +105,7 @@ func main() {
 
 	ch := make(chan core.Snapshot, 8)
 	var prober ui.Prober
+	feedErr := make(chan string, 1) // carries the ingest endpoint's death to the UI
 
 	// The agent event endpoint runs in every mode so harnesses can always
 	// feed the dashboard.
@@ -212,6 +213,10 @@ func main() {
 			go func() {
 				if err := srv.Serve(); err != nil {
 					fmt.Fprintf(os.Stderr, "tokentop: ingest stopped: %v\n", err)
+					select { // the alt screen hides stderr; tell the UI too
+					case feedErr <- err.Error():
+					default:
+					}
 				}
 			}()
 			defer srv.Close()
@@ -224,6 +229,7 @@ func main() {
 		IngestAddr: feedAddr,
 		PollEvery:  *interval,
 		Prober:     prober,
+		FeedErr:    feedErr,
 	}
 
 	if *once {

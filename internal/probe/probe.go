@@ -109,11 +109,20 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 			Done         bool   `json:"done"`
 			EvalCount    int    `json:"eval_count"`
 			EvalDuration int64  `json:"eval_duration"`
+			Error        string `json:"error"`
 		}
 		if json.Unmarshal(line, &chunk) != nil {
 			continue
 		}
+		// Ollama streams failures as {"error":…} lines with HTTP 200; decoding
+		// them as content would report a green probe with invented throughput.
+		if chunk.Error != "" {
+			return 0, 0, ttft, fmt.Errorf("engine error: %s", httperr.Snippet([]byte(chunk.Error)))
+		}
 		if !chunk.Done {
+			if chunk.Response == "" { // keep-alive frames carry no content and are not tokens
+				continue
+			}
 			tokens++
 			if ttft == 0 {
 				ttft = time.Since(s.At)
@@ -170,9 +179,16 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 			Usage *struct {
 				CompletionTokens int `json:"completion_tokens"`
 			} `json:"usage"`
+			Error json.RawMessage `json:"error"`
 		}
 		if json.Unmarshal([]byte(payload), &chunk) != nil {
 			continue
+		}
+		// llama.cpp, LiteLLM and other gateways emit SSE error events with
+		// HTTP 200; skipping them passed broken generations off as partial
+		// successes (or as a context-free "empty stream").
+		if msg := sseErrorMessage(chunk.Error); msg != "" {
+			return 0, ttft, fmt.Errorf("engine error: %s", msg)
 		}
 		if chunk.Usage != nil && chunk.Usage.CompletionTokens > 0 {
 			tokens = chunk.Usage.CompletionTokens
@@ -193,6 +209,27 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 		return 0, ttft, fmt.Errorf("empty stream")
 	}
 	return tokens, ttft, nil
+}
+
+// sseErrorMessage extracts an engine-reported failure from a streaming data
+// payload. Gateways disagree on the shape: {"error":{"message":…}},
+// {"error":"…"}, or other junk; null and absent mean no error. The text is
+// bounded so one giant failure cannot flood a probe readout.
+func sseErrorMessage(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var obj struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(raw, &obj) == nil && obj.Message != "" {
+		return obj.Message
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil && s != "" {
+		return s
+	}
+	return httperr.Snippet(raw)
 }
 
 func postJSON(ctx context.Context, url string, body []byte) (*http.Response, error) {

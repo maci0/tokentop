@@ -129,6 +129,93 @@ func TestRunOllamaEmptyStream(t *testing.T) {
 	}
 }
 
+// Ollama streams mid-stream failures as {"error":…} NDJSON lines with HTTP
+// 200. Counting them as tokens reported a green probe with invented TTFT and
+// throughput; the engine's own explanation must surface as Err instead.
+func TestRunOllamaStreamError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"error":"model 'm' requires more system memory (18 GiB) than is available"}` + "\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindOllama, Base: srv.URL, Model: "m"})
+	if s.OK || s.Err == "" {
+		t.Fatalf("streamed engine error should fail the probe, got %+v", s)
+	}
+	if !strings.Contains(s.Err, "more system memory") {
+		t.Errorf("err missing engine explanation: %q", s.Err)
+	}
+}
+
+// Keep-alive frames without content carry no tokens: counting every non-done
+// line fabricated throughput out of empty chunks.
+func TestRunOllamaEmptyChunksAreNotTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(
+			`{"response":"","done":false}` + "\n" +
+				`{"response":"","done":true}` + "\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindOllama, Base: srv.URL, Model: "m"})
+	if s.OK || s.Err == "" {
+		t.Fatalf("contentless stream should fail, got %+v", s)
+	}
+}
+
+// OpenAI-compatible gateways (llama.cpp, LiteLLM) emit SSE error events with
+// HTTP 200. Arriving after real tokens they previously passed as a partial
+// success; the generation failed and must be reported as such.
+func TestRunOpenAIStreamErrorObject(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"He\"}}]}\n\n" +
+			"data: {\"error\":{\"message\":\"context length exceeded\"}}\n\n" +
+			"data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if s.OK || s.Err == "" {
+		t.Fatalf("streamed error event should fail the probe, got %+v", s)
+	}
+	if !strings.Contains(s.Err, "context length exceeded") {
+		t.Errorf("err missing engine explanation: %q", s.Err)
+	}
+}
+
+// The string flavor of SSE error events must be recognized too.
+func TestRunOpenAIStreamErrorString(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("data: {\"error\":\"quota exceeded\"}\n\n" +
+			"data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if s.OK || s.Err == "" {
+		t.Fatalf("streamed error event should fail the probe, got %+v", s)
+	}
+	if !strings.Contains(s.Err, "quota exceeded") {
+		t.Errorf("err missing engine explanation: %q", s.Err)
+	}
+}
+
+// A usage-bearing chunk with an explicit null error member is a normal final
+// frame, not a failure.
+func TestRunOpenAINullErrorIsNotFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"error\":null}\n\n" +
+			"data: {\"usage\":{\"completion_tokens\":2}}\n\n" +
+			"data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if !s.OK || s.Tokens != 2 {
+		t.Fatalf("null error must not fail the probe, got %+v", s)
+	}
+}
+
 // MaxTokens is an exported request field, but the generation cap must hold
 // at the spender: an absurd caller value is clamped before it reaches the
 // engine, so no configuration can turn a benchmark into an unbounded run.

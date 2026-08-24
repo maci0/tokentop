@@ -619,3 +619,74 @@ func TestMinimalViewGuidesRecovery(t *testing.T) {
 		}
 	}
 }
+
+// A dead ingest endpoint must be visible in-band: stderr is hidden under the
+// alternate screen, so without this the UI advertises a dead endpoint (and a
+// POST target that swallows events) forever.
+func TestFeedDeathSurfacesInDashboard(t *testing.T) {
+	feedErr := make(chan string, 1)
+	m := New(Config{Version: "t", IngestAddr: "127.0.0.1:8420", FeedErr: feedErr}, nil)
+
+	init := m.Init()
+	if init == nil {
+		t.Fatal("Init must watch the feed-error channel")
+	}
+	m.w, m.h, m.ready, m.clock = 110, 36, true, time.Now()
+	nm, _ := m.Update(snapMsg(core.Snapshot{
+		Providers: []core.ProviderSnapshot{{Label: "ollama", OK: true}},
+	}))
+	m = nm.(Model)
+	// A live endpoint advertises its POST target.
+	if out := strip(m.View()); !strings.Contains(out, "POST http://127.0.0.1:8420/v1/events") {
+		t.Fatalf("live feed lost its POST hint:\n%s", out)
+	}
+
+	feedErr <- "http: Server closed"
+	cmds := batchCmds(init)
+	if len(cmds) == 0 {
+		t.Fatal("Init returned no commands")
+	}
+	// Run every leaf: waitSnap/tickClock legitimately idle or sleep, but the
+	// pre-loaded feed channel must deliver immediately.
+	done := make(chan tea.Msg, len(cmds))
+	for _, c := range cmds {
+		go func(c tea.Cmd) { done <- c() }(c)
+	}
+	var got tea.Msg
+	select {
+	case got = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no Init command produced a message")
+	}
+	if _, ok := got.(feedDownMsg); !ok {
+		t.Fatalf("waiting on the feed channel produced %v, want feedDownMsg", got)
+	}
+	nm, again := m.Update(got)
+	m = nm.(Model)
+	if m.feedDown != "http: Server closed" {
+		t.Fatalf("feedDownMsg not recorded: %q", m.feedDown)
+	}
+	if again == nil {
+		t.Error("Update must re-arm the feed watcher for later signals")
+	}
+
+	out := strip(m.View())
+	if strings.Contains(out, "POST http://127.0.0.1:8420") {
+		t.Errorf("dead endpoint still advertised:\n%s", out)
+	}
+	for _, want := range []string{"ingest down", "ingest stopped: http: Server closed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dashboard missing %q after feed death:\n%s", want, out)
+		}
+	}
+}
+
+// batchCmds flattens a tea.Cmd (possibly tea.Batch) into its leaves.
+func batchCmds(cmd tea.Cmd) []tea.Cmd {
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Cmd{cmd}
+	}
+	return []tea.Cmd(batch)
+}

@@ -26,6 +26,11 @@ type Config struct {
 	IngestAddr string
 	PollEvery  time.Duration // sampling cadence; anchors the chart timescale
 	Prober     Prober        // nil disables manual probing
+	// FeedErr receives one message if the ingest endpoint dies after startup.
+	// nil (or silent) means it is up: stderr is invisible under the alternate
+	// screen, so without this in-band signal the UI would advertise a dead
+	// endpoint forever.
+	FeedErr <-chan string
 }
 
 type Model struct {
@@ -41,6 +46,7 @@ type Model struct {
 	lastAgg         float64 // most recent aggregate output rate across engines
 	chartCompressed bool
 	probeReq        time.Time // manual probe awaiting its first result
+	feedDown        string    // set once the ingest endpoint has died
 }
 
 func New(cfg Config, ch <-chan core.Snapshot) Model {
@@ -66,8 +72,24 @@ func StaticFrame(cfg Config, s core.Snapshot, w, h int) string {
 type snapMsg core.Snapshot
 type tickMsg time.Time
 
+// feedDownMsg reports the ingest endpoint died after startup; the payload is
+// the server's error text.
+type feedDownMsg string
+
 func waitSnap(ch <-chan core.Snapshot) tea.Cmd {
 	return func() tea.Msg { return snapMsg(<-ch) }
+}
+
+// waitFeedErr blocks until the feed dies; re-issued after each delivery so a
+// restart-and-resignal cycle is still observed. A nil channel never fires.
+func waitFeedErr(ch <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		err, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return feedDownMsg(err)
+	}
 }
 
 func tickClock() tea.Cmd {
@@ -77,7 +99,11 @@ func tickClock() tea.Cmd {
 // --- model ----------------------------------------------------------------
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(tickClock(), waitSnap(m.ch))
+	cmds := []tea.Cmd{tickClock(), waitSnap(m.ch)}
+	if m.cfg.FeedErr != nil {
+		cmds = append(cmds, waitFeedErr(m.cfg.FeedErr))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -95,6 +121,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.probeReq = time.Time{}
 		}
 		return m, tickClock()
+
+	case feedDownMsg:
+		m.feedDown = string(msg)
+		return m, waitFeedErr(m.cfg.FeedErr)
 
 	case snapMsg:
 		if !m.paused {
@@ -806,7 +836,10 @@ func (m Model) renderFeed() string {
 	if s := agentSummary(agentRates(m.snap.Agents, m.clock)); s != "" {
 		add("  " + s)
 	}
-	if m.cfg.IngestAddr != "" {
+	switch {
+	case m.feedDown != "":
+		add("  " + styleBad.Render("✗ ingest down"))
+	case m.cfg.IngestAddr != "":
 		add(dim("  ← POST http://" + m.cfg.IngestAddr + "/v1/events"))
 	}
 	lines := make([]string, 0, feedIn)
@@ -820,9 +853,15 @@ func (m Model) renderFeed() string {
 		lines[i], lines[j] = lines[j], lines[i]
 	}
 	if len(lines) == 0 {
-		if m.cfg.IngestAddr != "" {
+		switch {
+		case m.feedDown != "":
+			// The reason (listener failure, fd exhaustion) is otherwise only
+			// on stderr, invisible under the alternate screen.
+			reason := clip(shorten(core.SanitizeText("ingest stopped: "+m.feedDown), w), w)
+			lines = append(lines, styleBad.Render(reason))
+		case m.cfg.IngestAddr != "":
 			lines = append(lines, dim("no agent activity yet — point your harness at the endpoint above"))
-		} else {
+		default:
 			lines = append(lines, dim("no agent activity yet — agents running locally are picked up automatically"))
 		}
 	}
