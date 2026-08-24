@@ -42,16 +42,16 @@ type Collector struct {
 	sysCache    *core.SysSample // last good sample from the background poller
 	sysSampling sync.Mutex      // serializes sampling; vendor CLIs take seconds
 
-	mu         sync.Mutex
-	histOut    map[string]*timedRing
-	histIn     map[string]*timedRing
-	prev       map[string]prevSample
-	lastModel  map[string]string // endpoint -> model to probe
-	kvPct      map[string]float64
-	agents     []core.AgentEvent
-	probes     []core.ProbeSample
-	started    time.Time
-	baseCtx    context.Context // set by Run; bounds ad-hoc probes past shutdown
+	mu        sync.Mutex
+	histOut   map[string]*timedRing
+	histIn    map[string]*timedRing
+	prev      map[string]prevSample
+	lastModel map[string]string // endpoint -> model to probe
+	kvPct     map[string]float64
+	agents    []core.AgentEvent
+	probes    []core.ProbeSample
+	started   time.Time
+	baseCtx   context.Context // set by Run; bounds ad-hoc probes past shutdown
 }
 
 func New(providers []provider.Provider, interval time.Duration) *Collector {
@@ -59,16 +59,16 @@ func New(providers []provider.Provider, interval time.Duration) *Collector {
 		interval = time.Second
 	}
 	return &Collector{
-		providers:  providers,
-		interval:   interval,
-		sysFn:      sysmon.Sample,
-		procFn:     func() []procs.Info { return procSampler.Snapshot() },
-		histOut:    map[string]*timedRing{},
-		histIn:     map[string]*timedRing{},
-		prev:       map[string]prevSample{},
-		lastModel:  map[string]string{},
-		kvPct:      map[string]float64{},
-		started:    time.Now(),
+		providers: providers,
+		interval:  interval,
+		sysFn:     sysmon.Sample,
+		procFn:    func() []procs.Info { return procSampler.Snapshot() },
+		histOut:   map[string]*timedRing{},
+		histIn:    map[string]*timedRing{},
+		prev:      map[string]prevSample{},
+		lastModel: map[string]string{},
+		kvPct:     map[string]float64{},
+		started:   time.Now(),
 	}
 }
 
