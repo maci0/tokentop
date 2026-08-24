@@ -19,6 +19,19 @@ func TestLevelCharBounds(t *testing.T) {
 	}
 }
 
+// feedLine must render event timestamps in the viewer's zone: ingest events
+// carry sender-supplied RFC 3339 stamps whose offset (or absent offset,
+// decoded as UTC) is otherwise shown as-is.
+func TestFeedLineRendersEventTimeInLocalZone(t *testing.T) {
+	at := time.Date(2026, 8, 24, 23, 30, 5, 0, time.FixedZone("sender", 5*3600+1800))
+	ev := core.AgentEvent{At: at, Agent: "ci-bot", Kind: "turn"}
+	line := strip(feedLine(ev))
+	want := at.Local().Format("15:04:05")
+	if !strings.Contains(line, want) {
+		t.Fatalf("feedLine time = line %q, want it to show local %q", line, want)
+	}
+}
+
 func TestAreaChartShape(t *testing.T) {
 	vals := []float64{1, 2, 3, 4, 5}
 	out := AreaChart(vals, 10, 3, heatColor)
