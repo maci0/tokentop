@@ -124,8 +124,8 @@ Password auth for ssh targets: interactive prompt, or `TOKENTOP_SSH_PASSWORD`.
 ```
 go test ./...
 go build -o tokentop ./cmd/tokentop
-GOOS=darwin GOARCH=arm64 go build -o tokentop-macos .
-GOOS=windows GOARCH=amd64 go build -o tokentop.exe .
+GOOS=darwin GOARCH=arm64 go build -o tokentop-macos ./cmd/tokentop
+GOOS=windows GOARCH=amd64 go build -o tokentop.exe ./cmd/tokentop
 ```
 
 Releases: push a tag `v*` and GitHub Actions attaches binaries for
