@@ -193,6 +193,7 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 --seed N          demo RNG seed
 --no-hot-reload   disable restart-on-rebuild while running
 --version         print version and exit
+--help, -h        show usage, examples and environment fallbacks
 ```
 
 Password auth for ssh targets: interactive prompt, or `TOKENTOP_SSH_PASSWORD`.

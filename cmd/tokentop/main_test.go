@@ -42,9 +42,8 @@ func TestValidateFlags(t *testing.T) {
 	}
 }
 
-// captureWarnUnknownEnv runs warnUnknownEnv with stderr redirected and
-// returns what it printed.
-func captureWarnUnknownEnv(t *testing.T) string {
+// captureStderr runs f with stderr redirected and returns what it printed.
+func captureStderr(t *testing.T, f func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -53,13 +52,18 @@ func captureWarnUnknownEnv(t *testing.T) string {
 	old := os.Stderr
 	os.Stderr = w
 	defer func() { os.Stderr = old }()
-	warnUnknownEnv()
+	f()
 	w.Close()
 	out, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(out)
+}
+
+func captureWarnUnknownEnv(t *testing.T) string {
+	t.Helper()
+	return captureStderr(t, warnUnknownEnv)
 }
 
 func TestWarnUnknownEnv(t *testing.T) {
@@ -85,4 +89,54 @@ func TestWarnUnknownEnv(t *testing.T) {
 			t.Fatalf("warnUnknownEnv() printed %q, want silence", got)
 		}
 	})
+}
+
+func TestUsage(t *testing.T) {
+	var buf strings.Builder
+	usage(&buf)
+	got := buf.String()
+	for _, want := range []string{
+		"tokentop -",           // what the tool is
+		"Usage:",               // invocation line
+		"[ssh://user@host ...", // positional targets documented
+		"Examples:",            // worked examples section
+		"-demo",                // generated flag docs survive
+		"OMNIROUTE_API_KEY",    // env fallbacks named
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("usage() missing %q", want)
+		}
+	}
+}
+
+func TestWarnIgnoredFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		set     map[string]bool
+		demo    bool
+		once    bool
+		wantSub string // empty means silence expected
+	}{
+		{name: "seed outside demo warns", set: map[string]bool{"seed": true}, wantSub: "--seed"},
+		{name: "seed inside demo silent", set: map[string]bool{"seed": true}, demo: true},
+		{name: "seed default silent", set: map[string]bool{}, demo: false},
+		{name: "frames outside once warns", set: map[string]bool{"frames": true}, wantSub: "--frames"},
+		{name: "frames inside once silent", set: map[string]bool{"frames": true}, once: true},
+		{name: "both no-ops warn twice", set: map[string]bool{"seed": true, "frames": true},
+			wantSub: "--seed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once) })
+			if tt.wantSub == "" {
+				if got != "" {
+					t.Fatalf("warnIgnoredFlags() printed %q, want silence", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.wantSub) {
+				t.Fatalf("warnIgnoredFlags() printed %q, want mention of %q", got, tt.wantSub)
+			}
+		})
+	}
 }
