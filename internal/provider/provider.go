@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -182,6 +183,12 @@ func splitMetric(line string) (string, float64, bool) {
 	name := strings.TrimSpace(line[:sp])
 	v, err := strconv.ParseFloat(strings.TrimSpace(line[sp+1:]), 64)
 	if err != nil || name == "" {
+		return "", 0, false
+	}
+	// The exposition format allows NaN/+Inf values (0/0 gauges on engines
+	// that have not served yet); they would poison the summed family and,
+	// through the stored totals, every derived rate from here on.
+	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return "", 0, false
 	}
 	if i := strings.IndexByte(name, '{'); i >= 0 {

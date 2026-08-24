@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math/bits"
 	"sort"
 	"strconv"
 	"strings"
@@ -304,12 +305,13 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 	end := tv[len(tv)-1].t
 	spans := make([]time.Duration, w)
 	total := time.Duration(0)
+	cap := spanCap(w)
 	for j := 0; j < w; j++ { // j=0 oldest … w-1 newest
 		level := (w - 1 - j) / block
-		spans[j] = time.Second << level
-		if spans[j] < 1*time.Second {
-			spans[j] = time.Second // guard against cadence << 30 overflow
+		if level > cap { // wider shifts would overflow the span sums
+			level = cap
 		}
+		spans[j] = time.Second << level
 		total += spans[j]
 	}
 
@@ -345,6 +347,17 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 		}
 	}
 	return grid, bounds
+}
+
+// spanCap is the largest shift keeping w spans, and thus the whole summed
+// window, inside a time.Duration: past it the leftward timescale stops
+// doubling instead of wrapping negative and collapsing the chart's buckets.
+func spanCap(w int) int {
+	cap := 63 - bits.Len64(uint64(w)*uint64(time.Second))
+	if cap < 0 {
+		return 0
+	}
+	return cap
 }
 
 // chartCadence is the sampling interval charts are drawn at.

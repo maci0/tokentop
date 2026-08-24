@@ -93,7 +93,10 @@ func TestParseXpuDiscoveryAndMetrics(t *testing.T) {
 }
 
 func TestFlexF(t *testing.T) {
-	cases := map[string]float64{"[N/A]": 0, "[Not Supported]": 0, "42.5": 42.5, "-1": 0, " 12 ": 12}
+	cases := map[string]float64{
+		"[N/A]": 0, "[Not Supported]": 0, "42.5": 42.5, "-1": 0, " 12 ": 12,
+		"NaN": 0, "nan": 0,
+	}
 	for in, want := range cases {
 		if got := flexF(in); got != want {
 			t.Errorf("flexF(%q) = %v, want %v", in, got, want)

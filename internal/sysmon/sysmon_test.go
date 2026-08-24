@@ -43,6 +43,20 @@ func TestParseMeminfoGarbage(t *testing.T) {
 	}
 }
 
+// Some ballooning/virtualized kernels report MemAvailable above MemTotal;
+// the ssh vitals path can feed such text in from any remote. The used count
+// must saturate at zero instead of wrapping to ~2^64 bytes.
+func TestParseMeminfoAvailableExceedsTotal(t *testing.T) {
+	var s core.SysSample
+	ParseMeminfo([]byte("MemTotal:       1000000 kB\nMemAvailable:   1200000 kB\nSwapTotal:       500000 kB\nSwapFree:        600000 kB\n"), &s)
+	if s.MemUsed != 0 {
+		t.Errorf("MemUsed = %d, want 0 (no wrap)", s.MemUsed)
+	}
+	if s.SwapUsed != 0 {
+		t.Errorf("SwapUsed = %d, want 0 (no wrap)", s.SwapUsed)
+	}
+}
+
 func TestParseLoadavg(t *testing.T) {
 	l1, l5, l15 := ParseLoadavg("4.98 2.71 1.03 3/5123 4242")
 	if l1 != 4.98 || l5 != 2.71 || l15 != 1.03 {
