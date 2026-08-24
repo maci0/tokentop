@@ -7,9 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"os/signal"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -315,7 +316,8 @@ func attachRemote(ctx context.Context, tgt remote.Target) ([]provider.Provider, 
 		}
 	}()
 
-	rports := sortedKeys(fwd) // deterministic order
+	// Ascending remote ports: backend order must not depend on map iteration.
+	rports := slices.Sorted(maps.Keys(fwd))
 	bases := make([]string, len(rports))
 	for i, rport := range rports {
 		bases[i] = fmt.Sprintf("http://127.0.0.1:%d", fwd[rport])
@@ -350,15 +352,4 @@ func attachRemote(ctx context.Context, tgt remote.Target) ([]provider.Provider, 
 	stats := &remote.Stats{Client: cli}
 	go stats.Run(ctx, 5*time.Second)
 	return providers, stats, nil
-}
-
-// sortedKeys returns the tunnel's remote ports in ascending order so backend
-// ordering does not depend on Go map iteration.
-func sortedKeys(m map[int]int) []int {
-	keys := make([]int, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Ints(keys)
-	return keys
 }

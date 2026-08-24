@@ -3,6 +3,8 @@ package remote
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,12 +108,7 @@ func parseNetTCP(out string) []int {
 		}
 		seen[int(p)] = true
 	}
-	ports := make([]int, 0, len(seen))
-	for p := range seen {
-		ports = append(ports, p)
-	}
-	sort.Ints(ports)
-	return ports
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // ProbeScript prints listening ports from the given candidate list. Uses bash

@@ -87,7 +87,7 @@ func (s *Sampler) Snapshot() []Info {
 	dt := now.Sub(s.last).Seconds() // elapsed time (monotonic) since previous successful poll
 	s.last = now
 
-	self := pidSelf()
+	self := osGetpid()
 	out := make([]Info, 0, len(list))
 	for _, r := range list {
 		if r.pid == self {
@@ -140,8 +140,6 @@ func clampPct(v float64) float64 {
 	}
 	return v
 }
-
-func pidSelf() int { return osGetpid() }
 
 // ExtractPort scans argv for explicit listen-port flags. Exported so the
 // remote ssh path can reuse the same convention for command lines gathered
