@@ -6,6 +6,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"maps"
 	"os"
@@ -53,10 +54,20 @@ func main() {
 		sshKey    = flag.String("ssh-key", "", "private key for ssh:// targets (overrides ~/.ssh/config)")
 		bearerArg = flag.String("bearer", "", "bearer token sent to engines (OmniRoute etc.)")
 		showVer   = flag.Bool("version", false, "print version")
+		showHelp  bool
 	)
+	flag.BoolVar(&showHelp, "help", false, "show help and exit")
+	flag.BoolVar(&showHelp, "h", false, "shorthand for --help")
 	flag.Var(&adds, "add", "attach an openai-compatible backend URL (repeatable)")
+	// Error paths (unknown flag, bad value) print this usage on stderr and
+	// exit 2; -h/--help is handled below so it lands on stdout with exit 0.
+	flag.Usage = func() { usage(os.Stderr) }
 	flag.Parse()
 
+	if showHelp {
+		usage(os.Stdout)
+		return
+	}
 	if *showVer {
 		fmt.Println("tokentop", version)
 		return
@@ -69,14 +80,14 @@ func main() {
 	}
 	warnUnknownEnv()
 
+	// Flags the user passed explicitly, for warnings about no-op combos.
+	explicit := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	warnIgnoredFlags(explicit, *demoMode, *once)
+
 	// Only when --ingest was given explicitly should an unusable listen
 	// address abort the run; the default-enabled endpoint degrades gracefully.
-	ingestSet := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "ingest" {
-			ingestSet = true
-		}
-	})
+	ingestSet := explicit["ingest"]
 
 	// Bearer token for gateways that require API keys (OmniRoute et al).
 	// Flag wins; OMNIROUTE_API_KEY / TOKENTOP_BEARER are convenience fallbacks.
@@ -321,6 +332,48 @@ type flagAddList []string
 
 func (a *flagAddList) String() string     { return strings.Join(*a, ",") }
 func (a *flagAddList) Set(v string) error { *a = append(*a, v); return nil }
+
+// usage prints the full help screen: what tokentop is, how to invoke it,
+// worked examples, generated flag docs and where the env fallbacks live.
+// -h/--help sends it to stdout so piping works (`tokentop --help | grep
+// probe`); flag-package error paths call it with stderr.
+func usage(w io.Writer) {
+	out := flag.CommandLine.Output()
+	flag.CommandLine.SetOutput(w)
+	defer flag.CommandLine.SetOutput(out)
+	fmt.Fprint(w, `tokentop - btop-style dashboard for LLM inference engines and the agents hammering them
+
+Usage:
+  tokentop [flags] [ssh://user@host ...]
+
+Examples:
+  tokentop --demo                simulated fleet, works instantly
+  tokentop                       auto-discover engines on this machine
+  tokentop ssh://maci@box        watch another host's engines over ssh
+  tokentop --add http://10.0.0.5:8000   attach an endpoint (repeatable)
+  tokentop --once >frame.txt     render one static frame and exit
+
+Flags:
+`)
+	flag.PrintDefaults()
+	fmt.Fprint(w, `
+Positional arguments are ssh:// targets and may repeat; anything else is
+rejected with a hint. Bearer tokens fall back to $OMNIROUTE_API_KEY then
+$TOKENTOP_BEARER (--bearer wins); ssh passwords come from the terminal prompt
+or $TOKENTOP_SSH_PASSWORD. See README.md for all environment variables.
+`)
+}
+
+// warnIgnoredFlags names flags passed explicitly but with no effect in the
+// chosen mode: a silently dropped knob looks like a broken feature.
+func warnIgnoredFlags(set map[string]bool, demo, once bool) {
+	if set["seed"] && !demo {
+		fmt.Fprintln(os.Stderr, "tokentop: --seed has no effect without --demo")
+	}
+	if set["frames"] && !once {
+		fmt.Fprintln(os.Stderr, "tokentop: --frames has no effect without --once")
+	}
+}
 
 // validateFlags rejects out-of-range values at startup instead of letting
 // them be coerced downstream (a non-positive interval silently became 1s
