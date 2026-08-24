@@ -163,6 +163,12 @@ func (m Model) View() string {
 		return m.renderMinimal()
 	}
 	if len(m.snap.Providers) == 0 {
+		if len(m.snap.Agents) > 0 {
+			// Engines are not the only thing that burns tokens: an agent
+			// running here is real activity, and hiding it behind the
+			// setup screen would be the dashboard lying by omission.
+			return m.renderAgentsOnly()
+		}
 		return m.renderEmpty()
 	}
 	body := lipgloss.JoinVertical(lipgloss.Left,
@@ -784,12 +790,24 @@ func (m Model) probesBody(w, h int) string {
 func (m Model) renderFeed() string {
 	w := m.w - 4
 	_, _, feedIn := m.sectionHeights()
+	// A panel title is not clipped by the panel, and JoinVertical pads every
+	// other block out to the widest one, so an over-wide title here silently
+	// stretches the whole frame past the pane. Optional parts are therefore
+	// added only while they fit, most useful first.
 	title := "AGENT FEED"
-	if m.cfg.IngestAddr != "" {
-		title += dim("  ← POST http://" + m.cfg.IngestAddr + "/v1/events")
+	add := func(part string) {
+		if lipgloss.Width(title)+lipgloss.Width(part) <= w {
+			title += part
+		}
 	}
 	if m.paused {
-		title += "  " + styleWarn.Render("(paused)")
+		add("  " + styleWarn.Render("(paused)"))
+	}
+	if s := agentSummary(agentRates(m.snap.Agents, m.clock)); s != "" {
+		add("  " + s)
+	}
+	if m.cfg.IngestAddr != "" {
+		add(dim("  ← POST http://" + m.cfg.IngestAddr + "/v1/events"))
 	}
 	lines := make([]string, 0, feedIn)
 	n := len(m.snap.Agents)
@@ -805,7 +823,7 @@ func (m Model) renderFeed() string {
 		if m.cfg.IngestAddr != "" {
 			lines = append(lines, dim("no agent activity yet — point your harness at the endpoint above"))
 		} else {
-			lines = append(lines, dim("no agent activity (agent event endpoint disabled)"))
+			lines = append(lines, dim("no agent activity yet — agents running locally are picked up automatically"))
 		}
 	}
 	content := strings.Join(lines, "\n")

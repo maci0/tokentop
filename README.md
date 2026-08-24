@@ -13,6 +13,29 @@ hammering them.
 tokentop ssh://maci@box    # watch engines on another host
 ```
 
+
+## AI coding agents
+
+tokentop also watches the coding agents running on this machine, not just
+inference engines. It finds them by process, reads the token counts they
+already write to their own session logs, and shows their throughput beside the
+engines:
+
+```
+AGENTS  local, read from their own session logs
+  claude   ▲ 1.1k tok/s   2.4k tok   ● live
+  codex    ▲ 340 tok/s    18k tok    idle 12s
+```
+
+Nothing has to be configured, and the agent does not have to cooperate: claude,
+codex, qwen, pi, prime-agent, feynman, clanker, and dsh all keep transcripts
+that carry the provider's own counts. Agents that report nothing show no rate
+rather than a zero. `--no-agents` turns it off.
+
+Reading is done by `github.com/maci0/gauntlet-go/agentusage`, shared with
+gauntlet so both tools report the same numbers. Agents defined in
+`~/.gauntlet/agents.json` are picked up here too.
+
 ## What it shows
 
 - **Backends** - every engine found locally or via ssh, with model, version,

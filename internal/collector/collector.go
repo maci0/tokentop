@@ -223,18 +223,7 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	snap.Agents = append([]core.AgentEvent(nil), c.agents...)
 	snap.Probes = append([]core.ProbeSample(nil), c.probes...)
 	snap.Sys = c.sysSnapshot()
-	byPort := map[int]procs.Info{}
-	for _, p := range c.procSnapshot() {
-		port := p.PortHint
-		if port == 0 && p.Engine != "" {
-			port = p.DefPort
-		}
-		if port > 0 {
-			if _, dup := byPort[port]; !dup {
-				byPort[port] = p
-			}
-		}
-	}
+	byPort := procsByPort(c.procSnapshot())
 
 	now := time.Now()
 	for i, r := range results {
@@ -296,11 +285,25 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	}
 }
 
+// procsByPort indexes engine processes by their effective listen port;
+// on a collision the first sample wins.
+func procsByPort(infos []procs.Info) map[int]procs.Info {
+	byPort := make(map[int]procs.Info, len(infos))
+	for _, p := range infos {
+		if port := p.ListenPort(); port > 0 {
+			if _, dup := byPort[port]; !dup {
+				byPort[port] = p
+			}
+		}
+	}
+	return byPort
+}
+
 // rates derives smoothed tok/s deltas since the previous sample.
-func (c *Collector) rates(label string, m *provider.Metrics, now time.Time) (outPS, inPS float64) {
-	pv, had := c.prev[label]
+func (c *Collector) rates(key string, m *provider.Metrics, now time.Time) (outPS, inPS float64) {
+	pv, had := c.prev[key]
 	if !had {
-		c.prev[label] = prevSample{at: now, outTotal: m.OutTotal, inTotal: m.InTotal}
+		c.prev[key] = prevSample{at: now, outTotal: m.OutTotal, inTotal: m.InTotal}
 		return 0, 0
 	}
 	dt := now.Sub(pv.at).Seconds()
@@ -318,7 +321,7 @@ func (c *Collector) rates(label string, m *provider.Metrics, now time.Time) (out
 	}
 	outPS = ema(pv.outEMA, rawOut)
 	inPS = ema(pv.inEMA, rawIn)
-	c.prev[label] = prevSample{
+	c.prev[key] = prevSample{
 		at: now, outTotal: m.OutTotal, inTotal: m.InTotal,
 		outEMA: outPS, inEMA: inPS,
 	}
@@ -375,11 +378,11 @@ func (r *timedRing) copy() []float64 {
 	return out
 }
 
-func (c *Collector) ring(m map[string]*timedRing, label string) *timedRing {
-	r, ok := m[label]
+func (c *Collector) ring(m map[string]*timedRing, key string) *timedRing {
+	r, ok := m[key]
 	if !ok {
 		r = &timedRing{}
-		m[label] = r
+		m[key] = r
 	}
 	return r
 }

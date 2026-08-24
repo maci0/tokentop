@@ -21,6 +21,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
+	"tokentop/internal/agentwatch"
 	"tokentop/internal/bearer"
 	"tokentop/internal/collector"
 	"tokentop/internal/core"
@@ -44,6 +45,7 @@ func main() {
 		interval  = flag.Duration("interval", time.Second, "poll interval")
 		ingestArg = flag.String("ingest", "127.0.0.1:8420", "agent event ingest listen address")
 		noIngest  = flag.Bool("no-ingest", false, "disable the agent event HTTP endpoint")
+		noAgents  = flag.Bool("no-agents", false, "do not watch AI coding agents running on this machine")
 		once      = flag.Bool("once", false, "render one frame and exit (non-interactive)")
 		frames    = flag.Int("frames", 2, "with --once: snapshots to accumulate before rendering")
 		noReload  = flag.Bool("no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
@@ -184,6 +186,14 @@ func main() {
 				}
 			}
 		}()
+	}
+
+	// Agents running on this machine, read from the transcripts they already
+	// write. This is the counterpart to the HTTP endpoint below: it needs no
+	// cooperation from the agent, so a claude or codex started in a terminal
+	// shows up without anyone wiring tokentop into it.
+	if !*noAgents && recorder != nil {
+		go agentwatch.New(recorder, 0, 0).Run(ctx)
 	}
 
 	if !*noIngest && recorder != nil {

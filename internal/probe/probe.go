@@ -7,23 +7,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"tokentop/internal/bearer"
 	"tokentop/internal/core"
+	"tokentop/internal/httperr"
 )
 
 var client = &http.Client{Timeout: 30 * time.Second}
-
-// errSnippetCap bounds how much of an error response body is quoted into
-// failure messages. Engines explain rejections there ("model not found",
-// bad api key, OOM) and the status line alone does not.
-const errSnippetCap = 256
 
 // defaultProbeTokens sizes a probe when the caller gives no bound: a few
 // dozen tokens are plenty to time first-token latency and decode rate.
@@ -214,22 +208,7 @@ func postJSON(ctx context.Context, url string, body []byte) (*http.Response, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4*errSnippetCap))
-		msg := fmt.Sprintf("%s: http %s", url, resp.Status)
-		if s := errSnippet(b); s != "" {
-			msg += ": " + s
-		}
-		return nil, errors.New(msg)
+		return nil, httperr.Status(url, resp)
 	}
 	return resp, nil
-}
-
-// errSnippet collapses raw bytes to at most errSnippetCap runes on one line.
-func errSnippet(b []byte) string {
-	s := strings.Join(strings.Fields(string(b)), " ")
-	r := []rune(s)
-	if len(r) > errSnippetCap {
-		r = r[:errSnippetCap]
-	}
-	return string(r)
 }
