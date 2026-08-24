@@ -33,8 +33,12 @@ func init() {
 		if len(idents) == 0 {
 			return nil
 		}
-		applyIOAccelStats(idents)
-		return idents
+		// Hand out a copy: samples are published to the UI goroutine, and a
+		// later Sample overlaying live ioreg numbers onto the shared identity
+		// slice would data-race with a render of an earlier snapshot.
+		devs := append([]core.GPUDevice(nil), idents...)
+		applyIOAccelStats(devs)
+		return devs
 	}
 }
 
