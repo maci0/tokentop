@@ -250,6 +250,58 @@ func TestRunEmitsUntilCancel(t *testing.T) {
 	}
 }
 
+// Run warms the vitals cache before its first emit, so the (potentially
+// seconds-slow) sampler - GPU vendor CLIs especially - never runs inside
+// emit's c.mu critical section: ingest handlers and probe launches must stay
+// live throughout startup.
+func TestRunWarmsSysCacheBeforeFirstEmit(t *testing.T) {
+	c := New(nil, time.Hour)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	c.SetSysFn(func() core.SysSample {
+		calls.Add(1)
+		<-release // hold the sampler as long as a hung vendor CLI would
+		return core.SysSample{MemTotal: 5}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := make(chan core.Snapshot)
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx, ch) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for calls.Load() == 0 { // warm-up sampling is now in flight
+		if time.Now().After(deadline) {
+			t.Fatal("Run never invoked the sys sampler")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	rec := make(chan struct{})
+	go func() { c.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "liveness"}); close(rec) }()
+	select {
+	case <-rec:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RecordAgent blocked behind Run's warm-up sampling")
+	}
+
+	close(release) // let warm-up finish so Run can reach its first emit
+	select {
+	case snap := <-ch:
+		if snap.Sys == nil || snap.Sys.MemTotal != 5 {
+			t.Fatalf("first snapshot missing warmed vitals: %+v", snap.Sys)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not emit after warm-up")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}
+
 func TestAgentEventRing(t *testing.T) {
 	c := New(nil, time.Second)
 	for i := 0; i < core.AgentHistoryLen+5; i++ {

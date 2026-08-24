@@ -432,6 +432,48 @@ func TestConnectFailsOnSilentHost(t *testing.T) {
 	}
 }
 
+// A host that sends part of its banner and then stalls must also be cut by
+// the handshake deadline: the bound may lift only once the banner terminator
+// arrived. A peer trickling one byte and going dark would otherwise hang
+// Connect forever - x/crypto/ssh consults neither our context nor any
+// deadline of its own during the version exchange.
+func TestConnectFailsOnPartialBanner(t *testing.T) {
+	withKnownHosts(t)
+	old := bannerTimeout
+	bannerTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { bannerTimeout = old })
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lis.Close() })
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, err := lis.Accept()
+		if err == nil {
+			fmt.Fprint(c, "SSH-2.0-trickle") // no newline, then silence
+			accepted <- c                    // hold TCP open
+		}
+	}()
+	t.Cleanup(func() {
+		select {
+		case c := <-accepted:
+			c.Close()
+		default:
+		}
+	})
+
+	start := time.Now()
+	_, err = Connect(t.Context(), testTarget(t, lis.Addr().(*net.TCPAddr).Port))
+	if err == nil {
+		t.Fatal("partial-banner host must fail Connect")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("partial-banner host took %v to fail, want ~bannerTimeout", d)
+	}
+}
+
 func TestClientRunFailureCarriesStderr(t *testing.T) {
 	withKnownHosts(t)
 	srv := newTestSSHServer(t, "", 0)

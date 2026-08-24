@@ -62,6 +62,62 @@ func TestIngestAcceptsEvents(t *testing.T) {
 	}
 }
 
+// Offset-less RFC 3339 stamps (Python datetime.isoformat() without tzinfo,
+// hand-rolled harnesses) decode as UTC: encoding/json alone would reject
+// them and drop every event queued behind the bad one in the same batch.
+// Offset-aware stamps keep their zone; all forms must land on the instant.
+func TestIngestAcceptsNaiveTimestampsAsUTC(t *testing.T) {
+	rec := &memRecorder{}
+	s, err := New("127.0.0.1:0", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	defer s.Close()
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"py","ts":"2026-01-02T03:04:05"}`+"\n"+
+			`{"agent":"py","ts":"2026-01-02T03:04:05.123456"}`+"\n"+
+			`{"agent":"rfc","ts":"2026-01-02T05:04:05+02:00"}`+"\n")
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != 3 {
+		t.Fatalf("events = %d, want 3", len(rec.evs))
+	}
+	want := time.Date(2026, 1, 2, 3, 4, 5, 123456000, time.UTC)
+	if got := rec.evs[0].At; !got.Equal(want.Truncate(time.Second)) || got.Location() != time.UTC {
+		t.Errorf("naive stamp = %v (%v), want 03:04:05 UTC", got, got.Location())
+	}
+	if got := rec.evs[1].At; !got.Equal(want) {
+		t.Errorf("naive fractional stamp = %v, want %v", got, want)
+	}
+	if got := rec.evs[2].At; !got.Equal(want.Truncate(time.Second)) {
+		t.Errorf("+02:00 stamp = %v, want same instant as %v", got, want)
+	}
+}
+
+// A ts that is neither RFC 3339 nor an offset-less variant stays a hard
+// error so sender bugs surface instead of silently becoming "now".
+func TestIngestRejectsGarbageTimestamp(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events", `{"agent":"x","ts":"yesterday"}`)
+	if resp != http.StatusBadRequest {
+		t.Fatalf("garbage ts status = %d, want 400", resp)
+	}
+	if len(rec.evs) != 0 {
+		t.Fatal("garbage-timestamped event recorded")
+	}
+}
+
 func TestIngestDefaultsAndBadJSON(t *testing.T) {
 	rec := &memRecorder{}
 	s, _ := New("127.0.0.1:0", rec)

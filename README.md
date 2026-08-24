@@ -124,11 +124,24 @@ Password auth for ssh targets: interactive prompt, or `TOKENTOP_SSH_PASSWORD`.
 ## Build & test
 
 ```
-go test ./...
-go build -o tokentop ./cmd/tokentop
+make help                          # every task, one line each
+make build                         # host binary, version-stamped
+make demo                          # build, then run the simulated fleet
+make test                          # all tests, -race -shuffle=on
+make ci                            # exactly what CI gates on before merging
+go test ./internal/ui              # one package while iterating
+go test ./internal/core -run TestSanitizeTextPreservesUTF8   # one test
+```
+
+Cross-compiles (no cgo anywhere):
+
+```
 GOOS=darwin GOARCH=arm64 go build -o tokentop-macos ./cmd/tokentop
 GOOS=windows GOARCH=amd64 go build -o tokentop.exe ./cmd/tokentop
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, the edit-test loop,
+and what CI runs.
 
 Releases: push a tag `v*` and GitHub Actions attaches binaries for
 linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, plus a

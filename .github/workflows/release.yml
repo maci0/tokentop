@@ -25,6 +25,8 @@ jobs:
 
       - name: build all platforms
         id: build
+        env:
+          LDFLAGS: "-s -w -X main.version=${GITHUB_REF_NAME#v}"
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
@@ -41,7 +43,7 @@ jobs:
             name="tokentop_${VERSION}_${goos}_${goarch}${ext}"
             echo "building $name"
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-              go build -trimpath -ldflags "-s -w" -o "$OUT/$name" ./cmd/tokentop
+              go build -trimpath -ldflags "$LDFLAGS" -o "$OUT/$name" ./cmd/tokentop
             ( cd "$OUT" && sha256sum "$name" >> checksums.txt )
           done
           ( cd "$OUT" && tar czf "tokentop_${VERSION}_checksums.tar.gz" checksums.txt && rm checksums.txt )

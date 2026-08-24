@@ -81,18 +81,29 @@ var currentUser = func() string {
 // shrink it.
 var bannerTimeout = 15 * time.Second
 
-// handshakeConn enforces bannerTimeout until the server sends its first
-// bytes, then lifts it permanently: interactive password auth inside
-// NewClientConn may legitimately take as long as the user needs.
+// handshakeConn enforces bannerTimeout until the remote sshd's version
+// banner is complete (its terminator, a newline, has been read), then lifts
+// it permanently: interactive password auth inside NewClientConn may
+// legitimately take as long as the user needs. Lifting on any byte instead
+// would let a host that trickles part of the banner and stalls hang Connect
+// forever - x/crypto/ssh consults neither our context nor any deadline of its
+// own during the version exchange.
 type handshakeConn struct {
 	net.Conn
-	once sync.Once
+	lift  sync.Once
+	sawNL bool
 }
 
 func (c *handshakeConn) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
-	if n > 0 {
-		c.once.Do(func() { c.Conn.SetDeadline(time.Time{}) })
+	if !c.sawNL {
+		// The server identification string is the first thing a compliant
+		// sshd sends and always ends in LF (RFC 4253); x/crypto/ssh itself
+		// refuses banners without one, so this fires exactly once.
+		if bytes.IndexByte(b[:n], '\n') >= 0 {
+			c.sawNL = true
+			c.lift.Do(func() { c.Conn.SetDeadline(time.Time{}) })
+		}
 	}
 	return n, err
 }
