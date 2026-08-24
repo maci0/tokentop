@@ -36,6 +36,7 @@ test: ## run all tests with the race detector
 
 .PHONY: cover
 cover: ## test coverage summary per package
+	mkdir -p $(DIST)
 	$(GO) test -race -coverprofile=$(DIST)/coverage.out ./... && \
 		$(GO) tool cover -func=$(DIST)/coverage.out | tail -1
 

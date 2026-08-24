@@ -3,3 +3,4 @@
 *.exe
 *.test
 *.out
+.scratch/
