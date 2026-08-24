@@ -428,18 +428,20 @@ func (m Model) renderSystem() string {
 }
 
 // hostSegments adds CPU model, OS·kernel and driver versions to the strip.
+// All values can originate from another host (ssh vitals) or vendor tooling,
+// so they pass the terminal sanitizer.
 func hostSegments(sy *core.SysSample) []string {
 	if sy == nil {
 		return nil
 	}
 	var segs []string
 	if sy.CPUModel != "" {
-		segs = append(segs, dim(shorten(sy.CPUModel, 22)))
+		segs = append(segs, dim(shorten(core.SanitizeText(sy.CPUModel), 22)))
 	}
 	if sy.OsName != "" || sy.Kernel != "" {
-		osPart := sy.OsName
+		osPart := core.SanitizeText(sy.OsName)
 		if sy.Kernel != "" {
-			osPart = strings.TrimSpace(osPart + " · " + sy.Kernel)
+			osPart = strings.TrimSpace(osPart + " · " + core.SanitizeText(sy.Kernel))
 		}
 		segs = append(segs, dim(shorten(osPart, 34)))
 	}
@@ -583,14 +585,14 @@ func (m Model) providersBody(w, h int) string {
 		if !p.OK {
 			dot = dotBad
 		}
-		model := shorten(p.PrimaryModel(), w-15)
+		model := shorten(core.SanitizeText(p.PrimaryModel()), w-15)
 		line1 := dot + " " + kindBadge(p.Kind) + " " + styleValue.Render(model)
 		if p.Version != "" {
-			line1 += " " + dim("v"+shorten(p.Version, 12))
+			line1 += " " + dim("v" + shorten(core.SanitizeText(p.Version), 12))
 		}
 		b.WriteString(clip(line1, w) + "\n")
 		if !p.OK {
-			b.WriteString(styleBad.Render("  "+clip(shorten(p.Err, w-3), w-3)) + "\n")
+			b.WriteString(styleBad.Render("  " + clip(shorten(core.SanitizeText(p.Err), w-3), w-3)) + "\n")
 		} else {
 			kvg := GaugeBar(p.KVPct, clampi(w-26, 4, 14), kvHeat)
 			stats := fmt.Sprintf("▲%s ▼%s r%d w%d",
@@ -608,7 +610,7 @@ func (m Model) gaugesBody(w, h int) string {
 		if !p.OK {
 			continue
 		}
-		name := styleDim.Render(clip(shorten(p.Label, w-6), w-6))
+		name := styleDim.Render(clip(shorten(core.SanitizeText(p.Label), w-6), w-6))
 		kv := "kv  " + GaugeBar(p.KVPct, clampi(w-10, 4, 20), kvHeat)
 		third := procLine(p, w)
 		row := clip(name+"\n"+kv+"\n"+third, w)
@@ -669,7 +671,7 @@ func (m Model) probesBody(w, h int) string {
 		if !p.OK {
 			icon, st = "✗", styleBad
 		}
-		line := st.Render(icon) + " " + styleDim.Render(shorten(p.Model, w-18)) +
+		line := st.Render(icon) + " " + styleDim.Render(shorten(core.SanitizeText(p.Model), w-18)) +
 			" " + fmtRate(p.TokPS) + "/s " + dim("ttft") + " " + fmtMs(p.TTFTms)
 		out += clip(line, w) + "\n"
 		shown++
@@ -730,16 +732,16 @@ func feedLine(ev core.AgentEvent) string {
 	case "note":
 		st = styleWarn
 	}
-	name := shorten(ev.Agent, 16)
+	name := shorten(core.SanitizeText(ev.Agent), 16)
 	tok := fmt.Sprintf("↑%s ↓%s", fmtCount(ev.PromptTokens), fmtCount(ev.OutputTokens))
 	parts := []string{
 		styleDim.Render(ev.At.Format("15:04:05")),
 		st.Render(icon + " " + name),
-		styleDim.Render(shorten(ev.Model, 20)),
+		styleDim.Render(shorten(core.SanitizeText(ev.Model), 20)),
 		tok,
 	}
 	if ev.Note != "" {
-		parts = append(parts, styleWarn.Render(shorten(ev.Note, 28)))
+		parts = append(parts, styleWarn.Render(shorten(core.SanitizeText(ev.Note), 28)))
 	}
 	return strings.Join(parts, "  ")
 }
@@ -1031,25 +1033,10 @@ func clip(s string, w int) string {
 	return shorten(strip(s), w)
 }
 
-// strip removes ANSI escapes so clip can cut safely.
-func strip(s string) string {
-	var b strings.Builder
-	inEsc := false
-	for _, r := range s {
-		if inEsc {
-			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
-				inEsc = false
-			}
-			continue
-		}
-		if r == '\x1b' {
-			inEsc = true
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
+// strip removes ANSI escapes and control characters so clip can cut safely.
+// Untrusted strings (engine-supplied names, agent events) must never reach
+// the raw terminal; SanitizeText is the same guard applied at render time.
+func strip(s string) string { return core.SanitizeText(s) }
 
 func padTo(s string, w int) string {
 	for lipgloss.Width(s) < w {

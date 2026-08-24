@@ -70,7 +70,13 @@ func (s *Server) Serve() error {
 
 func (s *Server) Close() error { return s.srv.Close() }
 
+// maxEventBody caps one POST (single object or NDJSON stream). Legit events
+// are tiny; without a cap a client can stream unbounded bytes into the
+// decode loop for as long as the connection stays up.
+const maxEventBody = 1 << 20
+
 func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxEventBody)
 	dec := json.NewDecoder(r.Body)
 	defer r.Body.Close()
 	n := 0
@@ -86,18 +92,18 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		if ev.Agent == "" {
 			ev.Agent = "anonymous"
 		}
-		ev.Agent = clampField(ev.Agent, 64)
-		ev.Model = clampField(ev.Model, 128)
-		ev.Note = clampField(ev.Note, 512) // free-form fields are capped so one giant event cannot dominate the retained feed
+		// Event fields are attacker-shaped text (any local process or peer
+		// able to reach this endpoint): strip terminal escape sequences and
+		// control characters before the values are stored and later rendered.
+		ev.Agent = clampField(core.SanitizeText(ev.Agent), 64)
+		ev.Model = clampField(core.SanitizeText(ev.Model), 128)
+		ev.Note = clampField(core.SanitizeText(ev.Note), 512) // free-form fields are capped so one giant event cannot dominate the retained feed
 		switch ev.Kind {
 		case "":
 			ev.Kind = "turn"
 		case "turn", "tool", "error", "note":
 		default:
-			ev.Kind = strings.ToLower(ev.Kind)
-			if len(ev.Kind) > 24 {
-				ev.Kind = ev.Kind[:24]
-			}
+			ev.Kind = clampField(strings.ToLower(ev.Kind), 24)
 		}
 		if ev.At.IsZero() {
 			ev.At = time.Now()
