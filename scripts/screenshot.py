@@ -3,6 +3,8 @@
 
 Usage: screenshot.py <capture.txt> <out.png> [scale] [cols] [rows]
 
+Dependencies are declared in scripts/requirements.txt (pyte, pillow).
+
 The capture must come from `tmux capture-pane -e -p` (one line per row,
 escape sequences preserved). Rendering uses the same monospace family the
 dashboard targets (Meslo LG), on the Catppuccin Mocha base the TUI paints.
