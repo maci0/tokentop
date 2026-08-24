@@ -14,12 +14,18 @@ import (
 
 type fakeProvider struct {
 	label string
+	addr  string // defaults to "fake://<label>"
 	m     *provider.Metrics
 	err   error
 }
 
 func (f *fakeProvider) Label() string { return f.label }
-func (f *fakeProvider) Addr() string  { return "fake://" + f.label }
+func (f *fakeProvider) Addr() string {
+	if f.addr != "" {
+		return f.addr
+	}
+	return "fake://" + f.label
+}
 func (f *fakeProvider) Poll(context.Context) (*provider.Metrics, error) {
 	return f.m, f.err
 }
@@ -164,6 +170,60 @@ func TestProbeAllSkipsWhenNoModelKnown(t *testing.T) {
 	c.ProbeAll() // must not panic or block; no model known yet
 	if len(c.probes) != 0 {
 		t.Fatalf("unexpected probes: %d", len(c.probes))
+	}
+}
+
+// Probes complete concurrently and can finish out of launch order; the
+// retained ring must still be chronological or the probe chart anchors its
+// window on a stale sample and drops newer ones.
+func TestRecordProbeKeepsChronologicalOrder(t *testing.T) {
+	c := New(nil, time.Second)
+	base := time.Now()
+	order := []time.Duration{time.Second, 5 * time.Second, 2 * time.Second, 0, 9 * time.Second}
+	for _, d := range order {
+		c.RecordProbe(core.ProbeSample{At: base.Add(d), TokPS: 1})
+	}
+	for i := 1; i < len(c.probes); i++ {
+		if c.probes[i].At.Before(c.probes[i-1].At) {
+			t.Fatalf("probe ring not sorted at %d: %v", i, c.probes)
+		}
+	}
+	if !c.probes[len(c.probes)-1].At.Equal(base.Add(9 * time.Second)) {
+		t.Fatal("newest probe is not last")
+	}
+}
+
+// Two instances of the same engine kind share a display label ("llama.cpp"
+// for every llama.cpp server); their rate baselines and histories must be
+// keyed by endpoint so counters never mix across engines.
+func TestPerProviderStateKeyedByEndpoint(t *testing.T) {
+	m1 := &provider.Metrics{OutTotal: 100, Models: []core.ModelInfo{{Name: "m"}}}
+	m2 := &provider.Metrics{OutTotal: 500, Models: []core.ModelInfo{{Name: "m"}}}
+	ch := make(chan core.Snapshot, 1)
+	c := New([]provider.Provider{
+		&fakeProvider{label: core.KindLlamaCPP, addr: "http://127.0.0.1:8080", m: m1},
+		&fakeProvider{label: core.KindLlamaCPP, addr: "http://127.0.0.1:8081", m: m2},
+	}, time.Second)
+
+	get := func() map[string]float64 {
+		c.emit(context.Background(), ch)
+		snap := <-ch
+		out := map[string]float64{}
+		for _, p := range snap.Providers {
+			out[p.Addr] = p.OutTokPS
+		}
+		return out
+	}
+
+	get()             // seed both baselines
+	m1.OutTotal = 200 // only engine :8080 generated tokens since emit #1
+
+	rates := get()
+	if rates["http://127.0.0.1:8080"] <= 10 {
+		t.Fatalf(":8080 rate = %v, want > 10 (its own counter moved)", rates)
+	}
+	if rates["http://127.0.0.1:8081"] != 0 {
+		t.Fatalf(":8081 rate = %v, want 0 (its counter did not move)", rates)
 	}
 }
 

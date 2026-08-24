@@ -6,6 +6,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 
@@ -219,6 +220,10 @@ func (s *Source) RecordAgent(ev core.AgentEvent) {
 
 func (s *Source) addProbe(p core.ProbeSample) {
 	s.probes = append(s.probes, p)
+	// Consumers assume newest-last ordering; keep the ring sorted by time.
+	sort.SliceStable(s.probes, func(i, j int) bool {
+		return s.probes[i].At.Before(s.probes[j].At)
+	})
 	if len(s.probes) > core.ProbeHistoryLen {
 		s.probes = s.probes[len(s.probes)-core.ProbeHistoryLen:]
 	}

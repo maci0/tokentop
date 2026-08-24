@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"net/url"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -46,7 +47,7 @@ type Collector struct {
 	histOut    map[string]*timedRing
 	histIn     map[string]*timedRing
 	prev       map[string]prevSample
-	lastModel  map[string]string // label -> model to probe
+	lastModel  map[string]string // endpoint -> model to probe
 	ttftEngine map[string]float64
 	kvPct      map[string]float64
 	agents     []core.AgentEvent
@@ -242,6 +243,14 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 			Kind:  kindOf(p),
 			Addr:  p.Addr(),
 		}
+		// Per-provider state is keyed by endpoint, not display label: labels
+		// repeat across instances of the same engine kind (two local
+		// llama.cpp servers both answer to "llama.cpp"), and shared rate
+		// baselines or histories would mix their counters.
+		key := ps.Addr
+		if key == "" {
+			key = ps.Label
+		}
 		if r.err != nil {
 			ps.Err = r.err.Error()
 		} else {
@@ -260,22 +269,22 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 			}
 			if r.m.HasKV {
 				ps.KVPct = r.m.KVPct
-				c.kvPct[ps.Label] = ps.KVPct
+				c.kvPct[key] = ps.KVPct
 			} else {
-				ps.KVPct = c.kvPct[ps.Label]
+				ps.KVPct = c.kvPct[key]
 			}
 			if len(r.m.Models) > 0 {
-				c.lastModel[ps.Label] = r.m.Models[0].Name
+				c.lastModel[key] = r.m.Models[0].Name
 			}
-			outPS, inPS := c.rates(ps.Label, r.m, now)
+			outPS, inPS := c.rates(key, r.m, now)
 			ps.OutTokPS = outPS
 			ps.InTokPS = inPS
-			c.ring(c.histOut, ps.Label).push(outPS, now, c.interval)
-			c.ring(c.histIn, ps.Label).push(inPS, now, c.interval)
+			c.ring(c.histOut, key).push(outPS, now, c.interval)
+			c.ring(c.histIn, key).push(inPS, now, c.interval)
 		}
 		// ring() (not a bare map index): a provider whose first poll failed
 		// has no history yet, and indexing the map there would deref nil.
-		outR, inR := c.ring(c.histOut, ps.Label), c.ring(c.histIn, ps.Label)
+		outR, inR := c.ring(c.histOut, key), c.ring(c.histIn, key)
 		ps.OutHist, ps.OutT0 = outR.copy(), outR.t0
 		ps.InHist, ps.InT0 = inR.copy(), inR.t0
 		snap.Providers = append(snap.Providers, ps)
@@ -353,11 +362,16 @@ func (c *Collector) RecordAgent(ev core.AgentEvent) {
 	}
 }
 
-// RecordProbe stores a probe sample.
+// RecordProbe stores a probe sample. Probes complete concurrently and can
+// finish out of launch order, but every consumer (probe charts, the "last"
+// readout) assumes newest-last ordering: keep the ring sorted by timestamp.
 func (c *Collector) RecordProbe(s core.ProbeSample) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.probes = append(c.probes, s)
+	sort.SliceStable(c.probes, func(i, j int) bool {
+		return c.probes[i].At.Before(c.probes[j].At)
+	})
 	if len(c.probes) > core.ProbeHistoryLen {
 		c.probes = c.probes[len(c.probes)-core.ProbeHistoryLen:]
 	}
@@ -370,7 +384,11 @@ func (c *Collector) ProbeAll() {
 	c.mu.Lock()
 	var targets []probe.Request
 	for _, p := range c.providers {
-		if model := c.lastModel[p.Label()]; model != "" {
+		key := p.Addr()
+		if key == "" {
+			key = p.Label()
+		}
+		if model := c.lastModel[key]; model != "" {
 			targets = append(targets, probe.Request{Kind: kindOf(p), Base: p.Addr(), Model: model})
 		}
 	}

@@ -113,6 +113,7 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 --ingest ADDR     agent event listen address (default 127.0.0.1:8420)
 --no-ingest       disable the event endpoint
 --once            render one frame and exit
+--frames N        with --once: snapshots to accumulate before rendering
 --seed N          demo RNG seed
 ```
 
