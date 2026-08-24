@@ -128,6 +128,21 @@ func TestMinimalViewRendersRates(t *testing.T) {
 	}
 }
 
+// A down engine cannot be signaled by the dot's color alone (WCAG 1.4.1):
+// the minimal strip must say "down" and keep the error reason visible.
+func TestMinimalViewNamesDownEngines(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	nm, _ := m.Update(snapMsg(core.Snapshot{Providers: []core.ProviderSnapshot{
+		{Label: "vllm", OK: false, Err: "connection refused"},
+	}}))
+	m = nm.(Model)
+	m.w, m.h, m.ready = 40, 10, true
+	out := strip(m.View())
+	if !strings.Contains(out, "vllm") || !strings.Contains(out, "down") || !strings.Contains(out, "connection refused") {
+		t.Errorf("minimal view hides engine failure:\n%s", out)
+	}
+}
+
 // feedLine must render event timestamps in the viewer's zone: ingest events
 // carry sender-supplied RFC 3339 stamps whose offset (or absent offset,
 // decoded as UTC) is otherwise shown as-is.

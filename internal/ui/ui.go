@@ -809,7 +809,16 @@ func (m Model) renderMinimal() string {
 		if !p.OK {
 			st = styleBad
 		}
-		b.WriteString(st.Render("●") + " " + p.Label + " " + fmtRate(p.OutTokPS) + " tok/s\n")
+		line := st.Render("●") + " " + core.SanitizeText(p.Label) + " " + fmtRate(p.OutTokPS) + " tok/s"
+		if !p.OK {
+			// The dot's color alone must not carry engine state: name the
+			// failure in text and surface the reason the full view shows.
+			line += " " + st.Render("down")
+			if msg := strings.TrimSpace(core.SanitizeText(p.Err)); msg != "" {
+				line += " " + dim(shorten(msg, 32))
+			}
+		}
+		b.WriteString(line + "\n")
 	}
 	return b.String()
 }
