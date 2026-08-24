@@ -347,22 +347,22 @@ func (r *timedRing) push(v float64, now time.Time, interval time.Duration) {
 	}
 	if len(r.buf) < core.HistoryLen { // filling: keep appending in order
 		r.buf = append(r.buf, v)
-		if len(r.buf) == 1 {
-			r.t0 = now
+	} else {
+		if r.head == core.HistoryLen { // just filled: oldest lives at index 0
+			r.head = 0
 		}
-		return
+		r.buf[r.head] = v // overwrite the oldest sample
+		r.head++
+		if r.head == core.HistoryLen {
+			r.head = 0
+		}
 	}
-	if r.head == core.HistoryLen { // just filled: oldest lives at index 0
-		r.head = 0
-	}
-	r.buf[r.head] = v // overwrite the oldest sample
-	r.head++
-	if r.head == core.HistoryLen {
-		r.head = 0
-	}
-	if !r.t0.IsZero() {
-		r.t0 = r.t0.Add(interval) // oldest sample slid off
-	}
+	// Anchor hist[0] to this push instead of sliding it one interval per
+	// sample: pushes are not guaranteed evenly spaced (a scrape may take up
+	// to PollTimeout, and a stalled emit lets ticks coalesce), and a slid t0
+	// would drift behind wall-clock time forever, shifting the whole chart
+	// axis into the past. Even spacing reproduces the slide exactly.
+	r.t0 = now.Add(-time.Duration(len(r.buf)-1) * interval)
 }
 
 // copy returns the samples in insertion order (oldest first), detached from

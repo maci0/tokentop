@@ -113,16 +113,31 @@ func TestSnapshotCarriesAgentsAndProbes(t *testing.T) {
 	t.Fatal("no agent/probe activity within deadline")
 }
 
-// Sub-second poll intervals must still slide t0 forward on ring wrap; the
-// whole-second truncation used previously pinned t0 and skewed the time axis.
+// Sub-second poll intervals must still anchor t0 correctly; the whole-second
+// truncation used previously pinned t0 and skewed the time axis.
 func TestAdvanceT0SubSecondCadence(t *testing.T) {
 	start := time.Now()
-	if t0 := advanceT0(time.Time{}, 1, start, 500*time.Millisecond); !t0.Equal(start) {
+	if t0 := anchorT0(1, start, 500*time.Millisecond); !t0.Equal(start) {
 		t.Fatalf("first-sample t0 = %v, want %v", t0, start)
 	}
-	next := advanceT0(start, core.HistoryLen, start.Add(500*time.Millisecond), 500*time.Millisecond)
-	if !next.Equal(start.Add(500 * time.Millisecond)) {
-		t.Fatalf("wrapped t0 = %v, want %v", next, start.Add(500*time.Millisecond))
+	next := anchorT0(core.HistoryLen, start.Add(500*time.Millisecond), 500*time.Millisecond)
+	want := start.Add(500 * time.Millisecond).Add(-time.Duration(core.HistoryLen-1) * 500 * time.Millisecond)
+	if !next.Equal(want) {
+		t.Fatalf("wrapped t0 = %v, want %v", next, want)
+	}
+}
+
+// A stalled consumer coalesces ticks, so frames arrive more than one cadence
+// apart. Re-anchoring must place the newest sample at its true timestamp
+// instead of letting the axis lag wall-clock time by every lost interval.
+func TestAnchorT0RecoversFromGap(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	got := anchorT0(4, now, time.Second)
+	if !got.Equal(now.Add(-3 * time.Second)) {
+		t.Fatalf("t0 after gap = %v, want %v", got, now.Add(-3*time.Second))
+	}
+	if got := anchorT0(0, now, time.Second); !got.IsZero() {
+		t.Fatalf("empty history t0 = %v, want zero", got)
 	}
 }
 
