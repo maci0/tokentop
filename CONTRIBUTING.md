@@ -3,11 +3,18 @@
 ## Prerequisites
 
 - Go, at the version pinned in `go.mod` (the toolchain downloads the right
-  one automatically if your `go` is newer).
+  one automatically if your `go` is newer). CI installs the same version via
+  `go-version-file: go.mod`.
 - A C compiler (`gcc` or `clang`) for `go test -race`; plain builds and
   cross-compiles are pure Go and need nothing else.
-- No vendor libraries, services, or databases: everything is stdlib plus the
-  modules in `go.mod`, fetched by the normal Go toolchain.
+- No services or databases: everything is stdlib plus the modules in
+  `go.mod`. One caveat: agent watching imports
+  `github.com/maci0/gauntlet-go/agentusage`, code shared with gauntlet that
+  is not published yet, so `go.mod` `replace`s it with a local checkout at
+  `/home/maci/gauntlet-go`. Building and testing require that path to exist;
+  if your gauntlet checkout lives elsewhere, point the `replace` line at the
+  bottom of `go.mod` at it. Until that module is published, hosted CI fails
+  at module resolution for the same reason.
 
 ## Quickstart
 

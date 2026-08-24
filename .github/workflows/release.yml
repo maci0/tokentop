@@ -7,6 +7,9 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -14,7 +17,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: stable
+          go-version-file: go.mod
           cache: true
 
       - name: vet before shipping
@@ -46,6 +49,11 @@ jobs:
               go build -trimpath -ldflags "$LDFLAGS" -o "$OUT/$name" ./cmd/tokentop
             ( cd "$OUT" && sha256sum "$name" >> checksums.txt )
           done
+          ( cd "$OUT" && sha256sum -c checksums.txt )
+          # smoke test the host-platform artifact: proves the binary runs and
+          # carries the release version, not the default stamp
+          echo "smoke test: tokentop_${VERSION}_linux_amd64"
+          test "$("./dist/tokentop_${VERSION}_linux_amd64" --version)" = "tokentop $VERSION"
           ( cd "$OUT" && tar czf "tokentop_${VERSION}_checksums.tar.gz" checksums.txt && rm checksums.txt )
 
       - name: generate dependency sbom

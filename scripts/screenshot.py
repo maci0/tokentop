@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Render a tmux ANSI capture (SGR truecolor/256/8) to a PNG screenshot.
 
-Usage: screenshot.py <capture.txt> <out.png> [scale]
+Usage: screenshot.py <capture.txt> <out.png> [scale] [cols] [rows]
 
 The capture must come from `tmux capture-pane -e -p` (one line per row,
 escape sequences preserved). Rendering uses the same monospace family the
 dashboard targets (Meslo LG), on the Catppuccin Mocha base the TUI paints.
+Set TOKENTOP_SCREENSHOT_FONT to a regular-weight .ttf when no Meslo build
+is installed where the script looks.
 """
 
+import glob
 import os
 import re
 import sys
@@ -19,8 +22,15 @@ ANSI_RE = re.compile(rb"\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|
 
 BG = (30, 30, 46)  # #1e1e2e, matches internal/ui/theme.go cBase
 FG_DEFAULT = (205, 214, 244)  # #cdd6f4
-FONT_PATH = "/usr/share/fonts/TTF/MesloLGMDZNerdFont-Regular.ttf"
-FONT_BOLD = "/usr/share/fonts/TTF/MesloLGMDZNerdFont-Bold.ttf"
+
+# Font roots cover the common layouts; exact subdirectories vary by distro.
+FONT_ROOTS = (
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    os.path.expanduser("~/.local/share/fonts"),
+    "/Library/Fonts",
+    os.path.expanduser("~/Library/Fonts"),
+)
 
 # The 16 ANSI colors as SGR 30-37/90-97, tuned to the dashboard's palette.
 ANSI16 = {
@@ -44,6 +54,33 @@ def sgr_rgb(color):
         return None
     r, g, b = color
     return (clamp8(r), clamp8(g), clamp8(b))
+
+
+def _search(pattern):
+    hits = []
+    for root in FONT_ROOTS:
+        hits.extend(sorted(glob.glob(os.path.join(root, "**", pattern), recursive=True)))
+    return hits
+
+
+def resolve_fonts():
+    """Return (regular, bold) ttf paths for the dashboard's font family.
+
+    TOKENTOP_SCREENSHOT_FONT pins an explicit regular-weight face; its Bold
+    sibling is used when present. Otherwise the standard font roots are
+    searched, preferring a Nerd Font build of Meslo.
+    """
+    if override := os.environ.get("TOKENTOP_SCREENSHOT_FONT"):
+        if not os.path.isfile(override):
+            sys.exit(f"TOKENTOP_SCREENSHOT_FONT: no such file: {override}")
+        sibling = override.replace("Regular", "Bold")
+        bold = sibling if os.path.isfile(sibling) else override
+        return override, bold
+    regular = _search("Meslo*Nerd*[Rr]egular*.ttf") or _search("Meslo*.ttf")
+    if not regular:
+        return None, None
+    bold = (_search("Meslo*Nerd*[Bb]old*.ttf") or regular)[:1]
+    return regular[0], bold[0]
 
 
 def main():
@@ -82,8 +119,14 @@ def main():
     cell_w = 9 * scale
     cell_h = 19 * scale
     font_size = 16 * scale
-    font = ImageFont.truetype(FONT_PATH, font_size)
-    font_bold = ImageFont.truetype(FONT_BOLD, font_size)
+    font_path, font_bold_path = resolve_fonts()
+    if font_path is None:
+        sys.exit(
+            "no Meslo Nerd Font found; install one or set "
+            "TOKENTOP_SCREENSHOT_FONT to a regular-weight .ttf"
+        )
+    font = ImageFont.truetype(font_path, font_size)
+    font_bold = ImageFont.truetype(font_bold_path, font_size)
 
     img = Image.new("RGB", (cols * cell_w, rows * cell_h), BG)
     draw = ImageDraw.Draw(img)
