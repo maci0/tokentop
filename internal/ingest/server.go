@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -75,8 +76,43 @@ func (s *Server) Close() error { return s.srv.Close() }
 // decode loop for as long as the connection stays up.
 const maxEventBody = 1 << 20
 
+// maxEventLifetime and bodyIdleTimeout bound how long one POST may hold the
+// connection. The byte cap above limits volume, not time: a peer that sends
+// headers and then drips bytes (or goes silent mid-body) would otherwise pin
+// an fd and a goroutine apiece until it finishes, and IdleTimeout does not
+// apply mid-request. The absolute deadline caps total lifetime; each
+// successful read extends the deadline up to that end, so slow-but-alive
+// NDJSON streams keep working while silent ones are reaped. Both are vars so
+// tests can shrink them.
+var (
+	maxEventLifetime = 10 * time.Minute
+	bodyIdleTimeout  = time.Minute
+)
+
+// progressBody arms the read deadline before every read: no progress within
+// bodyIdleTimeout, or past the absolute end, surfaces as an i/o timeout from
+// Decode. Deadline setting is best effort; on ResponseWriters without
+// support the body degrades to volume-only capping.
+type progressBody struct {
+	io.ReadCloser
+	rc    *http.ResponseController
+	until time.Time
+}
+
+func (b *progressBody) Read(p []byte) (int, error) {
+	next := time.Now().Add(bodyIdleTimeout)
+	if next.After(b.until) {
+		next = b.until
+	}
+	_ = b.rc.SetReadDeadline(next)
+	return b.ReadCloser.Read(p)
+}
+
 func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxEventBody)
+	rc := http.NewResponseController(w)
+	until := time.Now().Add(maxEventLifetime)
+	_ = rc.SetReadDeadline(until) // covers reads before the first progress extension
+	r.Body = http.MaxBytesReader(w, &progressBody{ReadCloser: r.Body, rc: rc, until: until}, maxEventBody)
 	dec := json.NewDecoder(r.Body)
 	defer r.Body.Close()
 	n := 0
@@ -85,6 +121,10 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		if err := dec.Decode(&ev); err != nil {
 			if n > 0 && errors.Is(err, io.EOF) {
 				break // clean end of stream after at least one event
+			}
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				http.Error(w, "request stalled", http.StatusRequestTimeout)
+				return
 			}
 			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 			return
@@ -111,7 +151,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			ev.Kind = "turn"
 		case "turn", "tool", "error", "note":
 		default:
-			ev.Kind = clampField(strings.ToLower(ev.Kind), 24)
+			ev.Kind = clampField(core.SanitizeText(strings.ToLower(ev.Kind)), 24)
 		}
 		if ev.At.IsZero() {
 			ev.At = time.Now()
