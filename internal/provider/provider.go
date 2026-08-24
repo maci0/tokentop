@@ -1,6 +1,8 @@
-// Package provider implements discovery and metric scraping for common
-// local inference backends: Ollama, vLLM, llama.cpp-server and any
-// OpenAI-compatible HTTP server.
+// Package provider implements discovery and metric scraping for local
+// inference backends: Ollama, vLLM, SGLang, TRT-LLM/Triton, llama.cpp,
+// LM Studio, MLX, KoboldCpp and further engines fingerprinted by their HTTP
+// surface, plus a generic OpenAI-compatible fallback. Metric scraping reads
+// Prometheus /metrics where engines publish it.
 package provider
 
 import (
