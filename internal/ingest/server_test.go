@@ -192,6 +192,77 @@ func TestIngestClampsNegativeTokenCounts(t *testing.T) {
 	}
 }
 
+// An empty ts means "absent": every other event field defaults when empty,
+// so an empty string must not abort the stream with 400 while null and a
+// missing field both decode to "stamp on arrival".
+func TestIngestTreatsEmptyTimestampAsAbsent(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"a","ts":""}`+"\n"+`{"agent":"b","ts":"   "}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != 2 {
+		t.Fatalf("events = %d, want 2", len(rec.evs))
+	}
+	for i, ev := range rec.evs {
+		if ev.At.IsZero() {
+			t.Errorf("event %d: empty ts not stamped", i)
+		}
+	}
+}
+
+// The 202 acknowledgment carries a JSON body, so it must advertise
+// application/json like every other JSON response from this server,
+// leaving clients nothing to sniff.
+func TestIngestAckContentType(t *testing.T) {
+	s, _ := New("127.0.0.1:0", &memRecorder{})
+	go s.Serve()
+	defer s.Close()
+
+	resp, err := http.Post("http://"+s.Addr()+"/v1/events", "application/json",
+		strings.NewReader(`{"agent":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if got := resp.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("ack content-type = %q, want application/json", got)
+	}
+}
+
+// The GET hint is the schema documentation senders see first; it must list
+// every accepted field, including ts.
+func TestIngestHintListsAllFields(t *testing.T) {
+	s, _ := New("127.0.0.1:0", &memRecorder{})
+	go s.Serve()
+	defer s.Close()
+
+	resp, err := http.Get("http://" + s.Addr() + "/v1/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"ts", "agent", "kind", "model", "prompt_tokens", "output_tokens", "note"} {
+		if !strings.Contains(string(body), field) {
+			t.Errorf("hint omits accepted field %s: %s", field, body)
+		}
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	s, _ := New("127.0.0.1:0", &memRecorder{})
 	go s.Serve()
