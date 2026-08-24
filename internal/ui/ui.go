@@ -206,9 +206,11 @@ func (m Model) systemStripRows() int {
 
 // sectionHeights splits the body into exact inner heights for the throughput
 // chart, the mid-row panels and the agent feed. Fixed chrome is computed from
-// the header, chart titles/borders, system strip, feed title and footer.
+// the header, blank spacer, four panel titles, box borders, system strip and
+// footer; the reserve below must cover all of it or the frame overflows the
+// pane and the header scrolls off.
 func (m Model) sectionHeights() (outH, midIn, feedIn int) {
-	f := m.h - 13 - m.systemStripRows()
+	f := m.h - 15 - m.systemStripRows()
 	if f < 10 {
 		f = 10
 	}

@@ -115,6 +115,8 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 --once            render one frame and exit
 --frames N        with --once: snapshots to accumulate before rendering
 --seed N          demo RNG seed
+--no-hot-reload   disable restart-on-rebuild while running
+--version         print version and exit
 ```
 
 Password auth for ssh targets: interactive prompt, or `TOKENTOP_SSH_PASSWORD`.

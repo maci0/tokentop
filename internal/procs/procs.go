@@ -1,5 +1,5 @@
 // Package procs discovers local inference engines by inspecting running
-// processes rather than guessing ports. Everything comes from procfs/sysfs,
+// processes rather than guessing ports. Everything comes from procfs,
 // ps(1) or Win32 CIM - no vendor libraries.
 package procs
 
