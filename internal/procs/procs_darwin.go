@@ -20,7 +20,9 @@ func init() {
 func listDarwin() ([]raw, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "ps", "-axo", "pid=,%cpu=,rss=,command=").Output()
+	cmd := exec.CommandContext(ctx, "ps", "-axo", "pid=,%cpu=,rss=,command=")
+	cmd.WaitDelay = listPipeGrace
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}

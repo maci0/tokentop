@@ -22,6 +22,12 @@ import (
 
 const runTimeout = 2500 * time.Millisecond
 
+// pipeGrace bounds Output's wait on the command's output pipes after the
+// process exits or is killed by the context deadline: a grandchild inheriting
+// stdout (nested shells, CLI wrappers) would otherwise hold the read end
+// open past every deadline and pin the sampler's caller indefinitely.
+const pipeGrace = 500 * time.Millisecond
+
 // platformExtras lets GOOS-specific files contribute devices (amdgpu sysfs
 // on Linux, system_profiler on macOS).
 var platformExtras func(ctx context.Context) []core.GPUDevice
@@ -47,7 +53,9 @@ func lookup(name string) (string, bool) {
 func run(ctx context.Context, path string, args ...string) ([]byte, bool) {
 	c, cancel := context.WithTimeout(ctx, runTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(c, path, args...).Output()
+	cmd := exec.CommandContext(c, path, args...)
+	cmd.WaitDelay = pipeGrace
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, false
 	}

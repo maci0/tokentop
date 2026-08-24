@@ -29,8 +29,10 @@ type cimProc struct {
 func listWindows() ([]raw, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command",
-		`Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine,WorkingSetSize | ConvertTo-Json -Compress`).Output()
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command",
+		`Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine,WorkingSetSize | ConvertTo-Json -Compress`)
+	cmd.WaitDelay = listPipeGrace
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
