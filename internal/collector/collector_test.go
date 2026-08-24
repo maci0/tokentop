@@ -132,6 +132,23 @@ func TestHistoryRingDoesNotGrowBuffer(t *testing.T) {
 	}
 }
 
+// Pushes are not guaranteed one cadence apart: a scrape can take up to
+// PollTimeout and coalesced ticks widen gaps further. t0 must re-anchor to
+// the real push time (newest sample at now) or the chart's absolute time
+// axis drifts into the past by every lost interval, permanently.
+func TestHistoryRingRetimesAfterGap(t *testing.T) {
+	r := &timedRing{}
+	base := time.Unix(1_000_000, 0)
+	for i := 0; i < 5; i++ {
+		r.push(float64(i), base.Add(time.Duration(i)*time.Second), time.Second)
+	}
+	r.push(5, base.Add(9*time.Second), time.Second) // 4s stall, tick coalesced
+	want := base.Add(9 * time.Second).Add(-5 * time.Second)
+	if !r.t0.Equal(want) {
+		t.Fatalf("t0 after gap = %v, want %v", r.t0, want)
+	}
+}
+
 func TestEmitSnapshotShape(t *testing.T) {
 	fp := &fakeProvider{label: "testprov", m: &provider.Metrics{
 		Models: []core.ModelInfo{{Name: "m1"}}, Running: 2,

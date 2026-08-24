@@ -132,7 +132,7 @@ func (s *Source) frame(now time.Time) {
 		in := clamp((b.inBase*wave+burst*4)*jitter, 0, 20000)
 		s.histOut[b.label] = ring(s.histOut[b.label], out)
 		s.histIn[b.label] = ring(s.histIn[b.label], in)
-		s.t0[b.label] = advanceT0(s.t0[b.label], len(s.histOut[b.label]), now, s.interval)
+		s.t0[b.label] = anchorT0(len(s.histOut[b.label]), now, s.interval)
 
 		target := 45 + 40*math.Sin(s.t/14+float64(i)) + s.rng.NormFloat64()*3
 		s.kv[i] += (clamp(target, 3, 99) - s.kv[i]) * 0.15
@@ -308,15 +308,14 @@ func ring(h []float64, v float64) []float64 {
 	return append(h, v)
 }
 
-// advanceT0 tracks the timestamp of hist[0], sliding forward one cadence on
-// ring wrap so the UI can place samples on an absolute time axis (mirrors
-// the collector).
-func advanceT0(t0 time.Time, length int, now time.Time, cadence time.Duration) time.Time {
-	if t0.IsZero() {
-		return now
+// anchorT0 timestamps hist[0] so the UI can place every sample on an
+// absolute time axis (mirrors the collector): the newest sample landed at
+// now, earlier entries sit one cadence apart behind it. Recomputing each
+// frame keeps the axis pinned to real time even when ticks coalesce after a
+// stalled consumer, where sliding t0 forward one cadence would lag forever.
+func anchorT0(length int, now time.Time, cadence time.Duration) time.Time {
+	if length <= 0 {
+		return time.Time{}
 	}
-	if length >= core.HistoryLen {
-		return t0.Add(cadence)
-	}
-	return t0
+	return now.Add(-time.Duration(length-1) * cadence)
 }
