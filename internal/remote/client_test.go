@@ -502,3 +502,44 @@ func TestClientHostKeyChangeRefused(t *testing.T) {
 		t.Fatalf("changed host key must be refused, got: %v", err)
 	}
 }
+
+// connLost tags connection-death errors so callers can distinguish a dead
+// tunnel from a transient hiccup; the original cause must stay unwrappable.
+func TestConnLostClassification(t *testing.T) {
+	cases := []struct {
+		msg  string
+		lost bool
+	}{
+		{"EOF", true},
+		{"ssh: session closed", true},
+		{"connection lost mid-read", true},
+		{"dial tcp: connection refused", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		in := errors.New(c.msg)
+		got := connLost(in)
+		if has := strings.Contains(got.Error(), "ssh connection lost"); has != c.lost {
+			t.Errorf("connLost(%q) tagged=%v, want %v", c.msg, has, c.lost)
+		}
+		if !errors.Is(got, in) {
+			t.Errorf("connLost(%q) dropped the wrapped cause", c.msg)
+		}
+	}
+}
+
+// stderrTail appends a bounded tail of remote stderr to command failures;
+// nothing beyond 300 bytes may ride along.
+func TestStderrTailTruncatesToTail(t *testing.T) {
+	if got := stderrTail("   \n "); got != "" {
+		t.Errorf("blank stderr = %q, want empty", got)
+	}
+	if got := stderrTail("short"); got != ": short" {
+		t.Errorf("short stderr = %q", got)
+	}
+	got := stderrTail(strings.Repeat("x", 400))
+	want := ": " + strings.Repeat("x", 300)
+	if got != want {
+		t.Errorf("tail length = %d, want %d (300-byte cap)", len(got), len(want))
+	}
+}

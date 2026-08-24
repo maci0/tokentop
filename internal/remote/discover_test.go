@@ -84,3 +84,43 @@ func TestVitalsScript(t *testing.T) {
 		t.Errorf("vitalsScript has %d section marks, want 6 (7 sections)", n)
 	}
 }
+
+// Discover must sweep a remote host end to end: the listening-port sweep
+// (from the remote /proc tree, or the active probe where it is hidden) has
+// to see the sshd's own port, since that listener demonstrably exists.
+func TestDiscoverSweepsOverConnection(t *testing.T) {
+	withKnownHosts(t)
+	srv := newTestSSHServer(t, "", 0)
+	defer srv.Close()
+
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer cli.Close()
+
+	d, err := Discover(t.Context(), cli, []int{11434, srv.Port()})
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	var found bool
+	for _, p := range d.Listening {
+		if p == srv.Port() {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("listening = %v, want it to contain sshd port %d", d.Listening, srv.Port())
+	}
+}
+
+// probeScript is the fallback when /proc/net/tcp is unreadable; pin its
+// shape so a drift cannot silently break discovery on hardened hosts.
+func TestProbeScriptShape(t *testing.T) {
+	s := probeScript([]int{11434, 8080})
+	for _, want := range []string{"for p in 11434 8080", "/dev/tcp/127.0.0.1/$p", "nc -z"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("probeScript missing %q:\n%s", want, s)
+		}
+	}
+}

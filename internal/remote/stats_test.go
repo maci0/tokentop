@@ -1,6 +1,8 @@
 package remote
 
 import (
+	"context"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -156,5 +158,60 @@ func TestSplitSectionsConsecutiveEmpty(t *testing.T) {
 	}
 	if strings.TrimSpace(secs[2]) != "data" {
 		t.Errorf("section 2 = %q, want data", secs[2])
+	}
+}
+
+// Run must actually poll over the wire: against the in-process sshd it
+// samples real host vitals via the vitals script, stamps freshness so Merge
+// accepts them, tags the host, and stops promptly on cancel.
+func TestRunPollsAndMergesRemoteVitals(t *testing.T) {
+	withKnownHosts(t)
+	srv := newTestSSHServer(t, "", 0)
+	defer srv.Close()
+
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer cli.Close()
+
+	s := &Stats{Client: cli}
+	var into core.SysSample
+	s.Merge(&into) // never polled: must not touch the sample
+	if into.RemoteHost != "" {
+		t.Fatal("merge before any poll changed the sample")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() { defer close(runDone); s.Run(ctx, 10*time.Millisecond) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s.mu.Lock()
+		polled := !s.at.IsZero()
+		s.mu.Unlock()
+		if polled {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("poll never recorded a successful vitals sample")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+
+	s.Merge(&into)
+	if into.RemoteHost != "127.0.0.1" {
+		t.Errorf("merged sample not tagged with remote host: %+v", into)
+	}
+	if runtime.GOOS == "linux" && into.MemTotal == 0 {
+		t.Errorf("linux remote must yield memory vitals: %+v", into)
 	}
 }
