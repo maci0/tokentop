@@ -340,10 +340,7 @@ func (m Model) systemStripRows() int {
 // the frame overflows the pane and bubbletea clips it from the top, hiding
 // the header. Minimums reshuffle the split but never change the sum.
 func (m Model) sectionHeights() (outH, midIn, feedIn int) {
-	f := m.h - 17 - m.systemStripRows()
-	if f < 10 {
-		f = 10
-	}
+	f := max(m.h-17-m.systemStripRows(), 10)
 	outH = clampi(int(float64(f)*0.42), 3, 99)
 	feedIn = clampi(int(float64(f)*0.22), 2, 12)
 	midIn = f - outH - feedIn
@@ -445,11 +442,10 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 	spans := make([]time.Duration, w)
 	total := time.Duration(0)
 	maxLevel := spanCap(w)
-	for j := 0; j < w; j++ { // j=0 oldest … w-1 newest
-		level := (w - 1 - j) / block
-		if level > maxLevel { // wider shifts would overflow the span sums
-			level = maxLevel
-		}
+	for j := range w { // j=0 oldest … w-1 newest
+		level := min((w-1-j)/block,
+			// wider shifts would overflow the span sums
+			maxLevel)
 		spans[j] = time.Second << level
 		total += spans[j]
 	}
@@ -802,7 +798,8 @@ func (m Model) probesTitle() string {
 func (m Model) probesBody(w, h int) string {
 	vals := probeSeries(m.snap, w, m.chartCadence())
 	chartH := clampi(h-3-len(m.snap.Providers), 2, 8)
-	out := BrailleChart(vals, w, chartH, ChartStyle{Heat: heatColor, FadeAge: true}) + "\n"
+	var out strings.Builder
+	out.WriteString(BrailleChart(vals, w, chartH, ChartStyle{Heat: heatColor, FadeAge: true}) + "\n")
 	shown := 0
 	for i := len(m.snap.Probes) - 1; i >= 0 && shown < 2; i-- {
 		p := m.snap.Probes[i]
@@ -812,14 +809,14 @@ func (m Model) probesBody(w, h int) string {
 		}
 		line := st.Render(icon) + " " + styleDim.Render(shorten(core.SanitizeText(p.Model), w-18)) +
 			" " + fmtRate(p.TokPS) + "/s " + dim("ttft") + " " + fmtMs(p.TTFTms)
-		out += clip(line, w) + "\n"
+		out.WriteString(clip(line, w) + "\n")
 		shown++
 	}
 	if len(m.snap.Probes) == 0 {
-		out += dim("press ") + styleInfo.Render("p") + dim(" to fire a probe") + "\n"
-		out += dim("--probe N: auto mode")
+		out.WriteString(dim("press ") + styleInfo.Render("p") + dim(" to fire a probe") + "\n")
+		out.WriteString(dim("--probe N: auto mode"))
 	}
-	return out
+	return out.String()
 }
 
 func (m Model) renderFeed() string {

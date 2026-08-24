@@ -55,6 +55,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: vet ${{ matrix.goos }}/${{ matrix.goarch }} (platform-specific files)
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go vet ./...
       - name: compile ${{ matrix.goos }}/${{ matrix.goarch }}
         env:
           GOOS: ${{ matrix.goos }}

@@ -306,7 +306,7 @@ func runOnce(cfg ui.Config, ch <-chan core.Snapshot, n int) {
 		wait = d
 	}
 	var snap core.Snapshot
-	for i := 0; i < n; i++ { // several ticks so charts carry some history
+	for range n { // several ticks so charts carry some history
 		select {
 		case snap = <-ch:
 		case <-time.After(wait):

@@ -164,7 +164,7 @@ func extractVersionField(body string) string {
 // _sum and _count families verbatim.
 func ParseProm(text string) map[string]float64 {
 	fam := map[string]float64{}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

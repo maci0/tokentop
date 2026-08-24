@@ -155,7 +155,7 @@ func TestSourceConcurrentAccess(t *testing.T) {
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			s.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "x"})
 			s.ProbeAll()
 			time.Sleep(time.Millisecond)

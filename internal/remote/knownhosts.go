@@ -61,7 +61,7 @@ func readKnownHosts(path string) (map[string]string, error) {
 		return nil, err
 	}
 	out := map[string]string{}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -98,8 +98,8 @@ func short(s string) string {
 // fingerprintOf renders the stored key's SHA-256 fingerprint; unknown shapes
 // degrade to a short hash of the raw text.
 func fingerprintOf(line string) string {
-	fields := strings.Fields(line)
-	for _, f := range fields {
+	fields := strings.FieldsSeq(line)
+	for f := range fields {
 		if strings.HasPrefix(f, "AAAA") {
 			if k, _, _, _, err := ssh.ParseAuthorizedKey([]byte("ssh-ed25519 " + f)); err == nil {
 				return ssh.FingerprintSHA256(k)

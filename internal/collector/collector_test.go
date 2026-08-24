@@ -96,7 +96,7 @@ func TestRatesHonorDirectThroughput(t *testing.T) {
 func TestHistoryRingCap(t *testing.T) {
 	r := &timedRing{}
 	t0 := time.Now()
-	for i := 0; i < core.HistoryLen+10; i++ {
+	for i := range core.HistoryLen + 10 {
 		r.push(float64(i), t0.Add(time.Duration(i)*time.Second), time.Second)
 	}
 	vals := r.copy()
@@ -120,7 +120,7 @@ func TestHistoryRingCap(t *testing.T) {
 // its lifetime instead of sliding a slice (which reallocs on every push).
 func TestHistoryRingDoesNotGrowBuffer(t *testing.T) {
 	r := &timedRing{}
-	for i := 0; i < core.HistoryLen*3; i++ {
+	for i := range core.HistoryLen * 3 {
 		r.push(float64(i), time.Unix(int64(i), 0), time.Second)
 	}
 	if cap(r.buf) != core.HistoryLen {
@@ -139,7 +139,7 @@ func TestHistoryRingDoesNotGrowBuffer(t *testing.T) {
 func TestHistoryRingRetimesAfterGap(t *testing.T) {
 	r := &timedRing{}
 	base := time.Unix(1_000_000, 0)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		r.push(float64(i), base.Add(time.Duration(i)*time.Second), time.Second)
 	}
 	r.push(5, base.Add(9*time.Second), time.Second) // 4s stall, tick coalesced
@@ -183,8 +183,7 @@ func TestEmitUsesCachedSysSample(t *testing.T) {
 		calls.Add(1)
 		return core.SysSample{MemTotal: 7}
 	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	c.startSysPoller(ctx)
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -229,7 +228,7 @@ func TestRunEmitsUntilCancel(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); c.Run(ctx, ch) }()
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		select {
 		case snap := <-ch:
 			if len(snap.Providers) != 1 || snap.Providers[0].Label != "run" {
@@ -304,7 +303,7 @@ func TestRunWarmsSysCacheBeforeFirstEmit(t *testing.T) {
 
 func TestAgentEventRing(t *testing.T) {
 	c := New(nil, time.Second)
-	for i := 0; i < core.AgentHistoryLen+5; i++ {
+	for range core.AgentHistoryLen + 5 {
 		c.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "a"})
 	}
 	if len(c.agents) != core.AgentHistoryLen {
@@ -472,8 +471,7 @@ func TestConcurrentRecordProbeEmit(t *testing.T) {
 // waits to deliver a snapshot. Regression for sending under the lock.
 func TestEmitBlockedSendDoesNotPinMu(t *testing.T) {
 	col := New(nil, time.Hour) // no providers: emit parks on the send at once
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	ch := make(chan core.Snapshot) // unbuffered: the send blocks until consumed
 	go col.emit(ctx, ch)
 

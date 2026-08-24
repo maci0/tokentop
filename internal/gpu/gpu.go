@@ -139,7 +139,7 @@ func sampleXPU(ctx context.Context, xpu string) []core.GPUDevice {
 func ParseNvidiaSMI(b []byte) []core.GPUDevice {
 	const fixedTail = 6
 	var devs []core.GPUDevice
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

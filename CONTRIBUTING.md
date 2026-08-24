@@ -60,6 +60,7 @@ build automatically (hot reload); pass `--no-hot-reload` to disable.
 | `make check` | gofmt -s + vet |
 | `make ci` | everything CI gates on: fmt, vet, govulncheck, race tests |
 | `make fmt` | rewrite files with gofmt -s |
+| `make fix` | apply `go fix` modernization autofixes, then gofmt |
 
 ## Before opening a PR
 
@@ -67,15 +68,18 @@ CI (`.github/workflows/ci.yml`) runs gofmt -s and `govulncheck ./...` on
 Linux only (both are platform-independent), `go vet ./...` and
 `go test -race -shuffle=on ./...` on Linux, macOS and Windows, plus
 cross-compiles of linux/amd64, linux/arm64, darwin/amd64,
-darwin/arm64 and windows/amd64. Everything except the three-OS matrix is one
-command locally:
+darwin/arm64 and windows/amd64. Each cross-compile job also runs
+`go vet ./...` under its GOOS/GOARCH, so platform-specific files get the
+same static analysis as the host build. Everything except the three-OS
+matrix is one command locally:
 
 ```
 make ci
 ```
 
 Keep platform-specific code behind build tags or runtime checks; the
-cross-compile job catches code that only builds on the author's OS.
+cross-compile job catches code that only builds, or only vets cleanly, on
+the author's OS.
 
 ## Releases
 

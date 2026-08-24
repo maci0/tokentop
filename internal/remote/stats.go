@@ -195,7 +195,7 @@ func parseGPUs(section string) []core.GPUDevice {
 
 // firstLine returns the first non-blank line of s.
 func firstLine(s string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if t := strings.TrimSpace(line); t != "" {
 			return t
 		}
@@ -209,7 +209,7 @@ func firstLine(s string) string {
 func splitSections(out string) []string {
 	var secs []string
 	var cur strings.Builder
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.TrimSpace(line) == sectionMark {
 			secs = append(secs, cur.String())
 			cur.Reset()

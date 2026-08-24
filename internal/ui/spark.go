@@ -80,7 +80,7 @@ func fadeClamped(c lipgloss.Color, f, min float64) lipgloss.Color {
 	// fadeColor is monotonic (less factor = darker = lower ratio), so the
 	// shallowest factor still above the floor can be bisected.
 	lo, hi := f, 1.0
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		mid := (lo + hi) / 2
 		if r, ok := contrastRatio(lipgloss.Color(fadeColor(c, mid)), cBase); ok && r >= min {
 			hi = mid
@@ -113,12 +113,12 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 	}
 	cache := map[cacheKey]string{}
 	rows := make([]strings.Builder, h)
-	for cy := 0; cy < h; cy++ {
-		for cx := 0; cx < w; cx++ {
+	for cy := range h {
+		for cx := range w {
 			frac := clamp01(cols[cx] / peak)
 			pattern := 0
 			level := frac * float64(dotH)
-			for sr := 0; sr < 4; sr++ {
+			for sr := range 4 {
 				dy := cy*4 + sr
 				if float64(dotH-dy) <= level {
 					pattern |= int(brailleBits[sr][0]) | int(brailleBits[sr][1])
@@ -162,10 +162,7 @@ func GaugeBar(pct float64, w int, heat func(float64) lipgloss.Color) string {
 		w = 3
 	}
 	pct = clamp01(pct/100) * 100
-	filled := int(pct / 100 * float64(w))
-	if filled > w {
-		filled = w
-	}
+	filled := min(int(pct/100*float64(w)), w)
 	st := lipgloss.NewStyle().Foreground(heat(pct))
 	bar := st.Render(strings.Repeat("━", filled)) + styleDim.Render(strings.Repeat("─", w-filled))
 	return bar + " " + fmt.Sprintf("%.0f%%", pct)

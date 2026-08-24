@@ -4,7 +4,6 @@
 package agentwatch
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,8 +68,7 @@ func TestWatchesARunningAgent(t *testing.T) {
 
 	rec := &recorder{}
 	w := New(rec, 200*time.Millisecond, 100*time.Millisecond)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go w.Run(ctx)
 
 	// Give discovery a chance to find the process, then let the agent "spend".
@@ -114,8 +112,7 @@ func TestForgetsExitedAgents(t *testing.T) {
 	}
 
 	w := New(&recorder{}, 100*time.Millisecond, time.Hour)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go w.Run(ctx)
 
 	// Scoped to this process: a developer machine usually has real agents
@@ -150,8 +147,7 @@ func TestSilentAgentProducesNoEvents(t *testing.T) {
 
 	rec := &recorder{}
 	w := New(rec, 100*time.Millisecond, 50*time.Millisecond)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go w.Run(ctx)
 
 	time.Sleep(700 * time.Millisecond)

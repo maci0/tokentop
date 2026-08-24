@@ -103,7 +103,7 @@ func prettyOSName() string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if k, v, ok := strings.Cut(line, "="); ok && k == "PRETTY_NAME" {
 			return strings.Trim(v, `"`)
 		}
@@ -130,14 +130,14 @@ func linuxUptime() time.Duration {
 // parseNvidiaVersion extracts "Driver Version: 550.54.14" and the trailing
 // "CUDA Version: 12.4" from /proc/driver/nvidia/version.
 func parseNvidiaVersion(text string) (driver, cuda string) {
-	for _, line := range strings.Split(text, "\n") {
-		if i := strings.Index(line, "Driver Version:"); i >= 0 {
-			fields := strings.Fields(line[i+len("Driver Version:"):])
+	for line := range strings.SplitSeq(text, "\n") {
+		if _, after, ok := strings.Cut(line, "Driver Version:"); ok {
+			fields := strings.Fields(after)
 			if len(fields) > 0 {
 				driver = fields[0]
 			}
-			if j := strings.Index(line, "CUDA Version:"); j >= 0 {
-				cfields := strings.Fields(line[j+len("CUDA Version:"):])
+			if _, after, ok := strings.Cut(line, "CUDA Version:"); ok {
+				cfields := strings.Fields(after)
 				if len(cfields) > 0 {
 					cuda = cfields[0]
 				}
@@ -206,7 +206,7 @@ func cpuModelLinux() string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if k, v, ok := strings.Cut(line, ":"); ok && strings.HasPrefix(strings.TrimSpace(k), "model name") {
 			return strings.TrimSpace(v)
 		}

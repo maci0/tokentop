@@ -62,7 +62,7 @@ func Sample() core.SysSample {
 // ParseMeminfo fills memory fields from the Linux /proc/meminfo format.
 func ParseMeminfo(b []byte, s *core.SysSample) {
 	vals := map[string]uint64{}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		k, v, ok := cutMeminfoLine(line)
 		if ok {
 			vals[k] = v
@@ -88,8 +88,8 @@ func satSub(a, b uint64) uint64 {
 
 // utsField converts a NUL-padded Utsname char array to a string.
 func utsField(b []byte) string {
-	if i := bytes.IndexByte(b, 0); i >= 0 {
-		return string(b[:i])
+	if before, _, ok := bytes.Cut(b, []byte{0}); ok {
+		return string(before)
 	}
 	return string(b)
 }
