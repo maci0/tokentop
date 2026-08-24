@@ -522,6 +522,8 @@ func shortVendor(v string) string {
 		return "amd"
 	case "intel":
 		return "intel"
+	case "apple":
+		return "apple"
 	default:
 		return "gpu"
 	}

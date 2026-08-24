@@ -381,6 +381,39 @@ func TestFmtDurMinuteRollover(t *testing.T) {
 	}
 }
 
+// Vendor tags must cover every vendor the samplers emit (gpu.go vendorOrder,
+// gpu_darwin's apple devices): an uncovered variant degrades to the anonymous
+// "gpu" tag and the strip loses the vendor identity it already carries.
+func TestShortVendorCoversKnownVendors(t *testing.T) {
+	cases := map[string]string{
+		"nvidia": "nv",
+		"amd":    "amd",
+		"intel":  "intel",
+		"apple":  "apple",
+		"acme":   "gpu", // unknown vendors stay anonymous
+	}
+	for v, want := range cases {
+		if got := shortVendor(v); got != want {
+			t.Errorf("shortVendor(%q) = %q, want %q", v, got, want)
+		}
+	}
+}
+
+// Every engine kind the core model defines must have a badge style; a
+// missing entry silently downgrades that backend's row to dim text.
+func TestKindStylesCoverCoreKinds(t *testing.T) {
+	for _, k := range []string{
+		core.KindOllama, core.KindVLLM, core.KindLlamaCPP, core.KindOpenAI,
+		core.KindSGLang, core.KindTRTLLM, core.KindMLX, core.KindLMStudio,
+		core.KindKoboldCPP, core.KindLocalAI, core.KindTGI, core.KindLiteLLM,
+		core.KindGPUStack, core.KindLemonade, core.KindOmniRoute,
+	} {
+		if _, ok := kindStyles[k]; !ok {
+			t.Errorf("kindStyles missing %q", k)
+		}
+	}
+}
+
 // Sample spacing on the compressed timescale must follow the poll cadence,
 // not an assumed 1s: --interval 2s covers twice the wall-clock window.
 func TestTimedSeriesHonorsCadence(t *testing.T) {

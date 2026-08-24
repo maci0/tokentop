@@ -60,7 +60,11 @@ var (
 		"litellm":   lipgloss.NewStyle().Foreground(cLavender),
 		"gpustack":  lipgloss.NewStyle().Foreground(cTeal),
 		"lemonade":  lipgloss.NewStyle().Foreground(cYellow),
-		"demo":      lipgloss.NewStyle().Foreground(cPink),
+		// Routing proxies share lavender (litellm); OmniRoute is detected
+		// via its X-OmniRoute-Route-Class header and must not fall through
+		// to the dim unknown-kind badge.
+		"omnirouter": lipgloss.NewStyle().Foreground(cLavender),
+		"demo":       lipgloss.NewStyle().Foreground(cPink),
 	}
 
 	panelStyle = lipgloss.NewStyle().
