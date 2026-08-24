@@ -114,7 +114,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		m.clock = time.Time(msg)
+		// A paused frame must be genuinely still: the header clock is the
+		// only element that kept changing every second, churning the screen
+		// for anyone pausing to read it with a screen reader or magnifier.
+		if !m.paused {
+			m.clock = time.Time(msg)
+		}
 		// Engines that never answer (no known model yet, all down) would
 		// leave the "probing…" marker up forever without this bail-out.
 		if !m.probeReq.IsZero() && time.Since(m.probeReq) > 15*time.Second {

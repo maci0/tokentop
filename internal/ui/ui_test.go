@@ -690,3 +690,53 @@ func batchCmds(cmd tea.Cmd) []tea.Cmd {
 	}
 	return []tea.Cmd(batch)
 }
+
+// Pause is a stability affordance for screen-reader and magnifier users:
+// while paused nothing on screen may keep moving, and the header clock was
+// the one element still churning every second.
+func TestPauseFreezesHeaderClock(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	nm, _ := m.Update(snapMsg(core.Snapshot{
+		Providers: []core.ProviderSnapshot{{Label: "ollama", OK: true}},
+	}))
+	m = nm.(Model)
+	m.w, m.h, m.ready = 110, 36, true
+	t0 := time.Date(2026, 8, 25, 12, 0, 0, 0, time.Local)
+	nm, _ = m.Update(tickMsg(t0))
+	m = nm.(Model)
+	if out := strip(m.View()); !strings.Contains(out, "12:00:00") {
+		t.Fatalf("header clock missing before pause:\n%s", out)
+	}
+
+	nm, _ = m.Update(keyMsg(" "))
+	m = nm.(Model)
+	later := t0.Add(11 * time.Second)
+	nm, _ = m.Update(tickMsg(later))
+	m = nm.(Model)
+	if out := strip(m.View()); strings.Contains(out, "12:00:11") {
+		t.Error("paused frame kept ticking the clock")
+	}
+
+	nm, _ = m.Update(keyMsg(" "))
+	m = nm.(Model)
+	nm, _ = m.Update(tickMsg(later))
+	m = nm.(Model)
+	if out := strip(m.View()); !strings.Contains(out, "12:00:11") {
+		t.Error("resumed frame did not pick the clock back up")
+	}
+}
+
+// The BACKENDS panel must mark down engines by more than color (WCAG 1.4.1):
+// the ✗ glyph matches the probe feed's convention and survives greyscale.
+func TestBackendsPanelMarksDownEnginesWithoutColor(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	nm, _ := m.Update(snapMsg(core.Snapshot{Providers: []core.ProviderSnapshot{
+		{Label: "vllm", OK: false, Err: "connection refused"},
+	}}))
+	m = nm.(Model)
+	m.w, m.h, m.ready = 110, 36, true
+	out := strip(m.View())
+	if !strings.Contains(out, "✗") || !strings.Contains(out, "connection refused") {
+		t.Errorf("down engine lacks shape marker or error text:\n%s", out)
+	}
+}

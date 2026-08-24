@@ -124,6 +124,29 @@ loudly.
 | `t` | toggle compressed timescale + grid |
 | `?` | help |
 
+## Accessibility
+
+tokentop is usable without a mouse, without color vision, and with assistive
+technology:
+
+- **Keyboard only** - every action has a key (table above); nothing requires
+  pointing or clicking, and `?` always shows the full key map.
+- **Pause freezes everything** - `space` stops the streaming data and the
+  header clock, so a still frame can be read at leisure with a screen reader
+  or magnifier.
+- **Status never rides on color alone** - down engines show `✗` plus their
+  error text, probes show `✓`/`✗`, gauges print their percentage, and the
+  engine count is spelled out numerically in the header.
+- **Non-visual output** - `--once` prints one plain frame and exits instead
+  of running the full-screen UI; a live-repainting dashboard defeats most
+  screen readers, so the static frame is the intended path. Pair it with
+  `TOKENTOP_COLUMNS` / `TOKENTOP_LINES` for a fixed size.
+- **Tested contrast** - unit tests hold the palette to WCAG 2.2 AA: text
+  colors at >= 4.5:1 on the background, and chart marks at >= 3:1 even at
+  the deepest point of the age fade (`internal/ui/theme_test.go`).
+- **No color** - `NO_COLOR` strips styling as usual; layout and text carry
+  the same information without it.
+
 ## Flags
 
 ```
