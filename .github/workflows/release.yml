@@ -17,6 +17,9 @@ jobs:
           go-version: stable
           cache: true
 
+      - name: vet before shipping
+        run: go vet ./...
+
       - name: test before shipping
         run: go test -race ./...
 
