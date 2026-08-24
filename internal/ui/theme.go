@@ -69,7 +69,7 @@ var (
 
 	panelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#45475a")).
+			BorderForeground(cBorder).
 			Padding(0, 1)
 
 	helpStyle = lipgloss.NewStyle().

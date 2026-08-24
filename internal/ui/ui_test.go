@@ -168,6 +168,14 @@ func TestShortenAndClip(t *testing.T) {
 	if got := clip(styled, 6); got != "hello…" {
 		t.Errorf("clip styled = %q", got)
 	}
+	// Wide glyphs count two cells: the result must never render wider than n.
+	wide := "世界世界世界"
+	if got := shorten(wide, 5); lipgloss.Width(got) > 5 {
+		t.Errorf("shorten wide = %q renders %d cells, want <= 5", got, lipgloss.Width(got))
+	}
+	if got := clip(wide, 6); lipgloss.Width(got) > 6 || !strings.HasSuffix(got, "…") {
+		t.Errorf("clip wide = %q (width %d)", got, lipgloss.Width(got))
+	}
 }
 
 func TestFmtRateAndCount(t *testing.T) {
@@ -427,5 +435,29 @@ func TestTimedSeriesHonorsCadence(t *testing.T) {
 	}
 	if !tv[0].t.Equal(t0) || !tv[1].t.Equal(t0.Add(2*time.Second)) {
 		t.Fatalf("timestamps %v..%v, want %v..%v", tv[0].t, tv[1].t, t0, t0.Add(2*time.Second))
+	}
+}
+
+// GPU names and driver strings can originate on a remote host (ssh vitals
+// relay nvidia-smi output verbatim); they must pass the terminal sanitizer
+// like every other externally sourced value in the host strip.
+func TestGPUSegmentSanitizesName(t *testing.T) {
+	g := core.GPUDevice{Vendor: "nvidia", Index: 0, Name: "A\x1b[31mB"} // no VRAM: name row renders
+	out := gpuSegment(g)
+	if strings.ContainsRune(strip(out), '\x1b') {
+		t.Errorf("gpuSegment leaked escape bytes: %q", strip(out))
+	}
+	if !strings.Contains(strip(out), "AB") {
+		t.Errorf("gpuSegment lost model name: %q", strip(out))
+	}
+}
+
+func TestHostSegmentsSanitizeDrivers(t *testing.T) {
+	sy := &core.SysSample{Drivers: map[string]string{"nv\x1b]0;title": "5\x1b[35m50"}}
+	segs := hostSegments(sy)
+	for _, s := range segs {
+		if strings.ContainsRune(strip(s), '\x1b') {
+			t.Errorf("hostSegments leaked escape bytes: %q", strip(s))
+		}
 	}
 }

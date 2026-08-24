@@ -70,9 +70,9 @@ func TestParseRocmSMI(t *testing.T) {
 
 func TestParseXpuDiscoveryAndMetrics(t *testing.T) {
 	disc := []byte(`{"devices":[{"device_id":0,"device_name":"Intel(R) Arc(TM) A770"},{"device_id":1,"device_name":"Intel(R) Data Center GPU Max"}]}`)
-	order, names := parseXpuDiscovery(disc)
-	if len(order) != 2 || names[1] != "Intel(R) Data Center GPU Max" {
-		t.Fatalf("discovery parse: %+v %+v", order, names)
+	order := parseXpuDiscovery(disc)
+	if len(order) != 2 || order[1].Name != "Intel(R) Data Center GPU Max" {
+		t.Fatalf("discovery parse: %+v", order)
 	}
 	metrics := []byte(`{"device_id":"0","metrics":{
 		"gpu_utilization":{"values":[63.5]},
@@ -89,7 +89,7 @@ func TestParseXpuDiscoveryAndMetrics(t *testing.T) {
 	}
 
 	bare := []byte(`[{"device_id":3,"device_name":"iGPU"}]`)
-	order, _ = parseXpuDiscovery(bare)
+	order = parseXpuDiscovery(bare)
 	if len(order) != 1 || order[0].ID != 3 {
 		t.Errorf("bare array discovery: %+v", order)
 	}

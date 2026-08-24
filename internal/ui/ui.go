@@ -38,8 +38,7 @@ type Model struct {
 	help            bool
 	clock           time.Time
 	maxAgg          float64
-	prevAgg         float64
-	trendUp         bool
+	lastAgg         float64 // most recent aggregate output rate across engines
 	chartCompressed bool
 }
 
@@ -55,7 +54,7 @@ func StaticFrame(cfg Config, s core.Snapshot, w, h int) string {
 	m.ready = true
 	m.clock = time.Now()
 	if agg := aggOut(s); agg > 0 {
-		m.prevAgg = agg
+		m.lastAgg = agg
 		m.maxAgg = agg
 	}
 	return m.View()
@@ -94,8 +93,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapMsg:
 		if !m.paused {
 			agg := aggOut(core.Snapshot(msg))
-			m.trendUp = agg >= m.prevAgg
-			m.prevAgg = agg
+			m.lastAgg = agg
 			if agg > m.maxAgg {
 				m.maxAgg = agg
 			}
@@ -177,7 +175,7 @@ func (m Model) renderHeader() string {
 	}
 	segs = append(segs, st.Render(fmt.Sprintf("%s %d/%d engines", strip(dot), up, tot)))
 
-	outV := styleValue.Foreground(heatColor(norm(m.prevAgg, m.maxAgg))).Render("▲ " + fmtRate(m.prevAgg))
+	outV := styleValue.Foreground(heatColor(norm(m.lastAgg, m.maxAgg))).Render("▲ " + fmtRate(m.lastAgg))
 	inV := styleInfo.Render("▼ " + fmtRate(aggIn(m.snap)))
 	segs = append(segs, outV+" "+dim("tok/s out"), inV+" "+dim("in"))
 
@@ -264,7 +262,7 @@ func (m Model) outSeries(w int, cadence time.Duration) ([]float64, map[int]bool)
 }
 
 func (m Model) throughputTitle() string {
-	title := "THROUGHPUT " + styleHot.Render("▲ "+fmtRate(m.prevAgg)+" tok/s") + dim("  decode")
+	title := "THROUGHPUT " + styleHot.Render("▲ "+fmtRate(m.lastAgg)+" tok/s") + dim("  decode")
 	if m.chartCompressed {
 		title += dim(" · compressed ←") + styleInfo.Render("t")
 	}
@@ -309,11 +307,11 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 	end := tv[len(tv)-1].t
 	spans := make([]time.Duration, w)
 	total := time.Duration(0)
-	cap := spanCap(w)
+	maxLevel := spanCap(w)
 	for j := 0; j < w; j++ { // j=0 oldest … w-1 newest
 		level := (w - 1 - j) / block
-		if level > cap { // wider shifts would overflow the span sums
-			level = cap
+		if level > maxLevel { // wider shifts would overflow the span sums
+			level = maxLevel
 		}
 		spans[j] = time.Second << level
 		total += spans[j]
@@ -357,11 +355,11 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 // window, inside a time.Duration: past it the leftward timescale stops
 // doubling instead of wrapping negative and collapsing the chart's buckets.
 func spanCap(w int) int {
-	cap := 63 - bits.Len64(uint64(w)*uint64(time.Second))
-	if cap < 0 {
+	maxLevel := 63 - bits.Len64(uint64(w)*uint64(time.Second))
+	if maxLevel < 0 {
 		return 0
 	}
-	return cap
+	return maxLevel
 }
 
 // chartCadence is the sampling interval charts are drawn at.
@@ -401,7 +399,7 @@ func (m Model) renderSystem() string {
 				" "+dim(humanBytesShort(sy.MemUsed)+"/"+humanBytesShort(sy.MemTotal)))
 		if sy.SwapTotal > 0 {
 			swPct := float64(sy.SwapUsed) / float64(sy.SwapTotal) * 100
-			st := lipgloss.NewStyle().Foreground(tempColor(swPct * 1.2))
+			st := lipgloss.NewStyle().Foreground(memHeat(swPct))
 			vitals = append(vitals, dim("swp ")+st.Render(fmt.Sprintf("%.0f%%", swPct)))
 		}
 		if sy.Load1 > 0 || sy.Load5 > 0 {
@@ -470,7 +468,7 @@ func hostSegments(sy *core.SysSample) []string {
 		sort.Strings(keys)
 		var parts []string
 		for _, k := range keys {
-			parts = append(parts, k+" "+sy.Drivers[k])
+			parts = append(parts, core.SanitizeText(k)+" "+core.SanitizeText(sy.Drivers[k]))
 		}
 		segs = append(segs, styleInfo.Render(shorten(strings.Join(parts, " · "), 40)))
 	}
@@ -495,7 +493,8 @@ func gpuSegment(g core.GPUDevice) string {
 	case g.MemTotal > 0:
 		b.WriteString(dim(humanBytesShort(g.MemUsed) + "/" + humanBytesShort(g.MemTotal)))
 	case g.Name != "":
-		b.WriteString(dim(shorten(g.Name, 16)))
+		// Model names can come from a remote host's nvidia-smi output.
+		b.WriteString(dim(shorten(core.SanitizeText(g.Name), 16)))
 	}
 	if g.PowerW > 0 {
 		b.WriteString(" " + styleWarn.Render(fmt.Sprintf("%.0fW", g.PowerW)))
@@ -633,6 +632,7 @@ func procLine(p core.ProviderSnapshot, w int) string {
 	if bytes > 0 {
 		parts = append(parts, "mem "+humanBytes(bytes))
 	} else if len(p.Models) > 0 && p.Models[0].CtxMax > 0 {
+		// CtxMax is a token count; ~2 bytes/token turns it into a KV-byte estimate.
 		parts = append(parts, "ctx "+humanBytesShort(p.Models[0].CtxMax*2)+"tok")
 	}
 	if p.ProcRSS > 0 {

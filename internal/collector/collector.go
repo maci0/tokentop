@@ -23,12 +23,11 @@ const (
 )
 
 type prevSample struct {
-	at        time.Time
-	outTotal  float64
-	inTotal   float64
-	outEMA    float64
-	inEMA     float64
-	hasTotals bool
+	at       time.Time
+	outTotal float64
+	inTotal  float64
+	outEMA   float64
+	inEMA    float64
 }
 
 type Collector struct {
@@ -242,14 +241,10 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 			Kind:  kindOf(p),
 			Addr:  p.Addr(),
 		}
-		// Per-provider state is keyed by endpoint, not display label: labels
-		// repeat across instances of the same engine kind (two local
-		// llama.cpp servers both answer to "llama.cpp"), and shared rate
-		// baselines or histories would mix their counters.
-		key := ps.Addr
-		if key == "" {
-			key = ps.Label
-		}
+		// Per-provider state is keyed by endpoint, not display label (see
+		// providerKey): labels repeat across instances of the same engine
+		// kind, and shared baselines or histories would mix their counters.
+		key := providerKey(p)
 		if r.err != nil {
 			ps.Err = r.err.Error()
 		} else {
@@ -301,8 +296,8 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 // rates derives smoothed tok/s deltas since the previous sample.
 func (c *Collector) rates(label string, m *provider.Metrics, now time.Time) (outPS, inPS float64) {
 	pv, had := c.prev[label]
-	if !had || !pv.hasTotals {
-		c.prev[label] = prevSample{at: now, outTotal: m.OutTotal, inTotal: m.InTotal, hasTotals: true}
+	if !had {
+		c.prev[label] = prevSample{at: now, outTotal: m.OutTotal, inTotal: m.InTotal}
 		return 0, 0
 	}
 	dt := now.Sub(pv.at).Seconds()
@@ -322,7 +317,7 @@ func (c *Collector) rates(label string, m *provider.Metrics, now time.Time) (out
 	inPS = ema(pv.inEMA, rawIn)
 	c.prev[label] = prevSample{
 		at: now, outTotal: m.OutTotal, inTotal: m.InTotal,
-		outEMA: outPS, inEMA: inPS, hasTotals: true,
+		outEMA: outPS, inEMA: inPS,
 	}
 	return outPS, inPS
 }
@@ -411,6 +406,16 @@ func (c *Collector) RecordProbe(s core.ProbeSample) {
 	}
 }
 
+// providerKey is the per-provider state key: the endpoint when known, else
+// the display label. Endpoints are unique per instance; labels repeat across
+// instances of the same engine kind.
+func providerKey(p provider.Provider) string {
+	if addr := p.Addr(); addr != "" {
+		return addr
+	}
+	return p.Label()
+}
+
 // ProbeAll launches one probe against every known backend, asynchronously.
 // Probes ride the Run context so shutdown cancels in-flight generations
 // instead of leaving them running for the client's full timeout.
@@ -418,11 +423,7 @@ func (c *Collector) ProbeAll() {
 	c.mu.Lock()
 	var targets []probe.Request
 	for _, p := range c.providers {
-		key := p.Addr()
-		if key == "" {
-			key = p.Label()
-		}
-		if model := c.lastModel[key]; model != "" {
+		if model := c.lastModel[providerKey(p)]; model != "" {
 			targets = append(targets, probe.Request{Kind: kindOf(p), Base: p.Addr(), Model: model})
 		}
 	}
