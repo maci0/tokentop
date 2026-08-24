@@ -112,7 +112,7 @@ func sampleXPU(ctx context.Context, xpu string) []core.GPUDevice {
 	if !ok {
 		return nil
 	}
-	discs, names := parseXpuDiscovery(out)
+	discs := parseXpuDiscovery(out)
 	var devs []core.GPUDevice
 	for _, d := range discs {
 		if len(devs) >= 4 { // bound process spawns on multi-GPU nodes
@@ -124,7 +124,7 @@ func sampleXPU(ctx context.Context, xpu string) []core.GPUDevice {
 		}
 		if dev, ok3 := parseXpuMetrics(mo, d.ID); ok3 {
 			dev.Vendor = "intel"
-			dev.Name = names[d.ID]
+			dev.Name = d.Name
 			devs = append(devs, dev)
 		}
 	}
@@ -230,7 +230,7 @@ type xpuDevice struct {
 
 // parseXpuDiscovery reads `xpu-smi discovery -j` output. Accepts either a
 // bare device array or an object wrapping one.
-func parseXpuDiscovery(b []byte) ([]xpuDevice, map[int]string) {
+func parseXpuDiscovery(b []byte) []xpuDevice {
 	type device struct {
 		DeviceID   int    `json:"device_id"`
 		DeviceName string `json:"device_name"`
@@ -248,15 +248,13 @@ func parseXpuDiscovery(b []byte) ([]xpuDevice, map[int]string) {
 	case json.Unmarshal(b, &bare) == nil:
 		list = bare
 	default:
-		return nil, nil
+		return nil
 	}
-	names := map[int]string{}
-	var order []xpuDevice
+	order := make([]xpuDevice, 0, len(list))
 	for _, d := range list {
-		names[d.DeviceID] = d.DeviceName
 		order = append(order, xpuDevice{ID: d.DeviceID, Name: d.DeviceName})
 	}
-	return order, names
+	return order
 }
 
 // parseXpuMetrics reads `xpu-smi metrics -d N -j`; values arrive as

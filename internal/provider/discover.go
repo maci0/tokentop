@@ -200,8 +200,7 @@ func Identify(ctx context.Context, base string) string {
 	switch {
 	case models == nil:
 		// engines whose OpenAI listing needs auth or lives on another path
-		if bodyOK(ctx, base+"/health/liveliness", "alive") ||
-			bodyOK(ctx, base+"/health/liveliness", "I'm alive!") {
+		if bodyOK(ctx, base+"/health/liveliness", "alive") { // vLLM answers "I'm alive!"
 			return core.KindLiteLLM
 		}
 		return ""
