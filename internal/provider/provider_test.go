@@ -329,3 +329,39 @@ func TestVersionCacheRetriesUntilResolved(t *testing.T) {
 		t.Errorf("server hit %d times, want 4", n)
 	}
 }
+
+// Engines explain rejections in the error body (OOM, bad api key, model
+// not found); poll failures surface in the BACKENDS panel and must carry
+// that text, not just the status code.
+func TestHTTPErrorCarriesEngineBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "{\"error\":\"CUDA out of memory\"}\n")
+	}))
+	defer srv.Close()
+
+	err := getJSON(context.Background(), srv.URL+"/api/ps", &struct{}{})
+	if err == nil || !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "CUDA out of memory") {
+		t.Fatalf("getJSON err = %v, want status plus body snippet", err)
+	}
+
+	_, err = getText(context.Background(), httpClient, srv.URL+"/metrics")
+	if err == nil || !strings.Contains(err.Error(), "CUDA out of memory") {
+		t.Fatalf("getText err = %v, want status plus body snippet", err)
+	}
+}
+
+// The quoted snippet is bounded and single-line so one pathological error
+// page cannot dominate the UI's backend row.
+func TestErrSnippetBoundedAndOneLine(t *testing.T) {
+	got := errSnippet([]byte(strings.Repeat("boom ", 400) + "\r\n\ttail"))
+	if strings.ContainsAny(got, "\n\r\t") {
+		t.Errorf("snippet kept line breaks: %q", got)
+	}
+	if len([]rune(got)) > errSnippetCap {
+		t.Errorf("snippet = %d runes, cap is %d", len([]rune(got)), errSnippetCap)
+	}
+	if got := errSnippet(nil); got != "" {
+		t.Errorf("empty body snippet = %q, want empty", got)
+	}
+}

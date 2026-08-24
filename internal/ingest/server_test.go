@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,34 @@ func TestIngestDefaultsAndBadJSON(t *testing.T) {
 	resp = post(t, base, `{not json`)
 	if resp != http.StatusBadRequest {
 		t.Fatalf("bad json status = %d", resp)
+	}
+}
+
+// A body beyond the size cap is a volume problem, not a JSON problem: it
+// must answer 413 so senders can tell "trim the payload" from "fix the
+// encoding", instead of reading `bad json` on a perfectly encoded stream.
+func TestIngestRejectsOversizedBody(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	// The body must stay well formed up to the cap, or decoding fails with a
+	// syntax error before the limit is ever reached: one event whose string
+	// field runs past maxEventBody trips the size cap mid-value instead.
+	body := `{"agent":"` + strings.Repeat("a", maxEventBody) + `"}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/events", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handlePost(w, r)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d, want 413", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "exceeds") {
+		t.Errorf("body should state the cap, got %q", w.Body.String())
+	}
+	if len(rec.evs) != 0 {
+		t.Fatal("event from oversized body recorded")
 	}
 }
 

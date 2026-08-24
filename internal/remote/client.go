@@ -20,8 +20,9 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// runTimeout bounds one remote command (discovery or vitals poll).
-const runTimeout = 15 * time.Second
+// runTimeout bounds one remote command (discovery or vitals poll). Var so
+// tests can shrink it, like bannerTimeout and the keepalive pacing below.
+var runTimeout = 15 * time.Second
 
 // Client is one long-lived ssh connection carrying everything tokentop needs
 // from a remote host: command sessions for discovery and vitals, plus direct
@@ -244,7 +245,7 @@ func (c *Client) Run(ctx context.Context, script string) (string, error) {
 		return r.out, nil
 	case <-time.After(runTimeout):
 		sess.Close()
-		return "", fmt.Errorf("remote command timed out after %s", runTimeout)
+		return "", fmt.Errorf("remote command timed out after %s%s", runTimeout, stderrTail(stderr.String()))
 	case <-ctx.Done():
 		sess.Close()
 		return "", ctx.Err()

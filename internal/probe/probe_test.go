@@ -2,8 +2,11 @@ package probe
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"tokentop/internal/core"
@@ -78,6 +81,28 @@ func TestRunHTTPError(t *testing.T) {
 	}
 }
 
+// Engines explain rejections in the error body ("model not found", bad api
+// key, OOM); the surfaced Err must carry that text, not just the status.
+func TestRunHTTPErrorCarriesEngineBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, "{\"error\":\"model 'm' not found, try pulling it first\"}")
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if s.OK || s.Err == "" {
+		t.Fatalf("expected failure sample, got %+v", s)
+	}
+	if !strings.Contains(s.Err, "400") {
+		t.Errorf("err missing status: %q", s.Err)
+	}
+	if !strings.Contains(s.Err, "not found") {
+		t.Errorf("err missing engine explanation: %q", s.Err)
+	}
+}
+
 func TestRunEmptyStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("data: [DONE]\n\n"))
@@ -101,5 +126,33 @@ func TestRunOllamaEmptyStream(t *testing.T) {
 	s := Run(context.Background(), Request{Kind: core.KindOllama, Base: srv.URL, Model: "m"})
 	if s.OK || s.Err == "" {
 		t.Fatalf("empty ollama stream should fail, got %+v", s)
+	}
+}
+
+// MaxTokens is an exported request field, but the generation cap must hold
+// at the spender: an absurd caller value is clamped before it reaches the
+// engine, so no configuration can turn a benchmark into an unbounded run.
+func TestRunClampsMaxTokens(t *testing.T) {
+	var gotOpenAI map[string]any
+	openai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotOpenAI)
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer openai.Close()
+	Run(context.Background(), Request{Kind: core.KindVLLM, Base: openai.URL, Model: "m", MaxTokens: 1 << 20})
+	if n := gotOpenAI["max_tokens"]; n != float64(maxProbeTokens) {
+		t.Errorf("openai max_tokens = %v, want clamped %d", n, maxProbeTokens)
+	}
+
+	var gotOllama map[string]any
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotOllama)
+		w.Write([]byte(`{"response":"","done":true}` + "\n"))
+	}))
+	defer ollama.Close()
+	Run(context.Background(), Request{Kind: core.KindOllama, Base: ollama.URL, Model: "m", MaxTokens: -7})
+	opts := gotOllama["options"].(map[string]any)
+	if n := opts["num_predict"]; n != float64(defaultProbeTokens) {
+		t.Errorf("ollama num_predict = %v, want default %d", n, defaultProbeTokens)
 	}
 }

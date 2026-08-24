@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -17,6 +19,20 @@ import (
 )
 
 var client = &http.Client{Timeout: 30 * time.Second}
+
+// errSnippetCap bounds how much of an error response body is quoted into
+// failure messages. Engines explain rejections there ("model not found",
+// bad api key, OOM) and the status line alone does not.
+const errSnippetCap = 256
+
+// defaultProbeTokens sizes a probe when the caller gives no bound: a few
+// dozen tokens are plenty to time first-token latency and decode rate.
+const defaultProbeTokens = 32
+
+// maxProbeTokens is the hard ceiling on one probe's generation. Request is
+// an exported struct, so the cap lives here at the spender: however a future
+// caller configures it, a benchmark can never turn into an unbounded run.
+const maxProbeTokens = 512
 
 const promptText = "Count from one to twenty as words."
 
@@ -30,8 +46,11 @@ type Request struct {
 // Run performs one probe and returns its sample (OK=false with Err set on failure).
 func Run(ctx context.Context, r Request) core.ProbeSample {
 	s := core.ProbeSample{At: time.Now(), Addr: r.Base, Model: r.Model}
-	if r.MaxTokens <= 0 {
-		r.MaxTokens = 32
+	switch {
+	case r.MaxTokens <= 0:
+		r.MaxTokens = defaultProbeTokens
+	case r.MaxTokens > maxProbeTokens:
+		r.MaxTokens = maxProbeTokens
 	}
 	start := time.Now()
 	var (
@@ -195,7 +214,22 @@ func postJSON(ctx context.Context, url string, body []byte) (*http.Response, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		return nil, fmt.Errorf("%s: http %s", url, resp.Status)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4*errSnippetCap))
+		msg := fmt.Sprintf("%s: http %s", url, resp.Status)
+		if s := errSnippet(b); s != "" {
+			msg += ": " + s
+		}
+		return nil, errors.New(msg)
 	}
 	return resp, nil
+}
+
+// errSnippet collapses raw bytes to at most errSnippetCap runes on one line.
+func errSnippet(b []byte) string {
+	s := strings.Join(strings.Fields(string(b)), " ")
+	r := []rune(s)
+	if len(r) > errSnippetCap {
+		r = r[:errSnippetCap]
+	}
+	return string(r)
 }
