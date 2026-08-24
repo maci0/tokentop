@@ -66,6 +66,34 @@ gauntlet so both tools report the same numbers. Agents defined in
 - **Hot reload** - rebuild the binary while it runs and tokentop restarts
   into the fresh build automatically (`--no-hot-reload` to disable).
 
+## Agent feed API
+
+The ingest server runs by default on `127.0.0.1:8420` (`--ingest ADDR` to
+move it, `--no-ingest` to turn it off) and speaks plain HTTP/JSON:
+
+| endpoint | purpose |
+|---|---|
+| `POST /v1/events` | record events; body is one JSON object or an NDJSON stream |
+| `GET /v1/events` | schema hint for humans |
+| `GET /healthz` | liveness probe, answers `ok` |
+
+Event fields are all optional; anything omitted gets the default:
+
+| field | type | default | notes |
+|---|---|---|---|
+| `ts` | RFC 3339 string | arrival instant | offset-less stamps decode as UTC |
+| `agent` | string | `anonymous` | capped at 64 runes |
+| `model` | string | - | capped at 128 runes |
+| `kind` | string | `turn` | known kinds: `turn`, `tool`, `error`, `note`; custom kinds pass through lowercased, capped at 24 runes |
+| `prompt_tokens` / `output_tokens` | integer | `0` | negative values clamp to `0` |
+| `note` | string | - | free-form, capped at 512 runes |
+
+One POST answers `202` with `{"accepted":N}` once every event in the stream
+is recorded, `400` for malformed JSON or a bad `ts`, `408` when a stream
+stalls mid-body, and `413` past the 1 MiB body cap. Error bodies are short
+plain-text reasons; unknown fields are ignored, so harnesses can include
+their own.
+
 ## Zero vendor libraries
 
 Everything comes from procfs/sysfs/sysctl, vendor CLIs it shells out to

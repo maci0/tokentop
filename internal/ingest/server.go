@@ -185,6 +185,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		s.rec.RecordAgent(ev)
 		n++
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	fmt.Fprintf(w, `{"accepted":%d}`+"\n", n)
 }
@@ -207,7 +208,9 @@ type agentEventWire struct {
 // are taken as sent (any zone, sub-second precision); stamps without an
 // offset decode as UTC, matching what senders like Python's
 // datetime.isoformat() emit. Absent or null yields the zero Time, which the
-// caller replaces with the arrival instant.
+// caller replaces with the arrival instant. An empty or whitespace-only
+// string counts as absent, matching the empty-means-default behavior of
+// every other event field.
 func parseEventTime(raw json.RawMessage) (time.Time, error) {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" {
@@ -217,6 +220,9 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, errors.New("ts must be an RFC 3339 string")
 	}
+	if strings.TrimSpace(v) == "" {
+		return time.Time{}, nil
+	}
 	if t, err := time.Parse(time.RFC3339, v); err == nil {
 		return t, nil
 	}
@@ -225,7 +231,7 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintln(w, `{"hint":"POST /v1/events with {agent,kind,model,prompt_tokens,output_tokens,note}"}`)
+	fmt.Fprintln(w, `{"hint":"POST /v1/events with {ts,agent,kind,model,prompt_tokens,output_tokens,note}"}`)
 }
 
 // clampField caps a free-form event field at n runes. Events are retained
