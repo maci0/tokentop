@@ -279,7 +279,9 @@ func TestClientConnectRunForward(t *testing.T) {
 	}
 	fmt.Fprint(lc, "ping")
 	buf := make([]byte, 4)
-	io.ReadFull(lc, buf)
+	if _, err := io.ReadFull(lc, buf); err != nil {
+		t.Fatalf("relay roundtrip read: %v", err)
+	}
 	lc.Close()
 	if string(buf) != "ping" {
 		t.Errorf("relay roundtrip = %q", buf)

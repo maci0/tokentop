@@ -2,13 +2,107 @@ package ui
 
 import (
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"tokentop/internal/core"
 )
+
+type proberFunc func()
+
+func (f proberFunc) ProbeAll() { f() }
+
+func keyMsg(s string) tea.KeyMsg {
+	switch s {
+	case " ":
+		return tea.KeyMsg{Type: tea.KeySpace}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEscape}
+	default:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+	}
+}
+
+// The key map is the product surface: q quits (help first), space freezes the
+// stream so incoming snapshots are dropped rather than merged, p fires
+// probes, t flips the timescale, and a paused frame must advertise itself.
+func TestUpdateKeyMap(t *testing.T) {
+	var probes atomic.Int32
+	m := New(Config{Version: "t", Prober: proberFunc(func() { probes.Add(1) })}, nil)
+	key := func(s string) tea.Cmd {
+		nm, cmd := m.Update(keyMsg(s))
+		m = nm.(Model)
+		return cmd
+	}
+	sendSnap := func(label string) {
+		nm, _ := m.Update(snapMsg(core.Snapshot{Providers: []core.ProviderSnapshot{{Label: label}}}))
+		m = nm.(Model)
+	}
+
+	if key("q") == nil {
+		t.Error("q must return a quit command")
+	}
+
+	key("?")
+	if !m.help {
+		t.Fatal("? did not open help")
+	}
+	if key("q") != nil {
+		t.Error("q with help open must close help, not quit")
+	}
+	if m.help {
+		t.Error("q with help open did not close help")
+	}
+	key("?")
+	if key("esc") != nil {
+		t.Error("esc with help open must close help, not quit")
+	}
+	if m.help {
+		t.Error("esc with help open did not close help")
+	}
+
+	if key(" "); !m.paused {
+		t.Fatal("space did not pause")
+	}
+	sendSnap("late")
+	if len(m.snap.Providers) != 0 {
+		t.Error("paused model absorbed a snapshot")
+	}
+	key(" ")
+	if m.paused {
+		t.Fatal("second space did not resume")
+	}
+	sendSnap("late")
+	if len(m.snap.Providers) != 1 || m.snap.Providers[0].Label != "late" {
+		t.Error("resumed model dropped the snapshot")
+	}
+
+	before := m.chartCompressed
+	key("t")
+	if m.chartCompressed == before {
+		t.Error("t did not toggle the timescale")
+	}
+
+	n := probes.Load()
+	key("p") // the prober fires on its own goroutine
+	deadline := time.Now().Add(time.Second)
+	for probes.Load() == n && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := probes.Load(); got != n+1 {
+		t.Errorf("p fired %d probes, want 1", got-n)
+	}
+
+	m.paused = true
+	m.w, m.h, m.ready, m.clock = 110, 36, true, time.Now()
+	if out := m.View(); !strings.Contains(strip(out), "PAUSED") {
+		t.Error("paused frame lacks PAUSED badge")
+	}
+}
 
 func TestLevelCharBounds(t *testing.T) {
 	cases := map[int]rune{-5: ' ', 0: ' ', 4: '▄', 8: '█', 99: '█'}
