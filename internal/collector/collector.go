@@ -306,6 +306,13 @@ func (c *Collector) rates(label string, m *provider.Metrics, now time.Time) (out
 		return 0, 0
 	}
 	dt := now.Sub(pv.at).Seconds()
+	if dt <= 0 {
+		// Zero elapsed time cannot yield a rate: 0/0 is NaN and n/0 is
+		// +Inf, and either would poison this EMA and every later sample
+		// derived from it. Hold the prior rate; keep the older baseline so
+		// the next real interval accounts for these tokens too.
+		return pv.outEMA, pv.inEMA
+	}
 	rawOut := max((m.OutTotal-pv.outTotal)/dt, 0) // clamp on counter reset
 	rawIn := max((m.InTotal-pv.inTotal)/dt, 0)
 	if m.DirectOutPS > 0 { // trust the engine's own tok/s gauge when present

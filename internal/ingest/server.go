@@ -98,6 +98,14 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		ev.Agent = clampField(core.SanitizeText(ev.Agent), 64)
 		ev.Model = clampField(core.SanitizeText(ev.Model), 128)
 		ev.Note = clampField(core.SanitizeText(ev.Note), 512) // free-form fields are capped so one giant event cannot dominate the retained feed
+		// Token counts are unsigned quantities; negative values are junk
+		// from a misbehaving sender and must not enter the retained feed.
+		if ev.PromptTokens < 0 {
+			ev.PromptTokens = 0
+		}
+		if ev.OutputTokens < 0 {
+			ev.OutputTokens = 0
+		}
 		switch ev.Kind {
 		case "":
 			ev.Kind = "turn"

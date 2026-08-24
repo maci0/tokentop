@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -54,6 +55,30 @@ func TestRateCounterResetClampsToZero(t *testing.T) {
 	out, _ := c.rates("p", &provider.Metrics{OutTotal: 5}, time.Now().Add(time.Second))
 	if out != 0 {
 		t.Fatalf("counter reset produced %v, want 0", out)
+	}
+}
+
+// A sample arriving with zero elapsed time cannot produce a rate: 0/0 is NaN
+// and n/0 is +Inf, and the EMA would carry either into every later sample.
+// The rate must hold its prior value and the baseline must stay put so the
+// next real interval still accounts for the tokens seen at the dup timestamp.
+func TestRatesZeroElapsedHoldsPriorRate(t *testing.T) {
+	c := New(nil, time.Second)
+	now := time.Now()
+	c.rates("p", &provider.Metrics{OutTotal: 100}, now)
+	out, _ := c.rates("p", &provider.Metrics{OutTotal: 400}, now.Add(time.Second))
+
+	held, heldIn := c.rates("p", &provider.Metrics{OutTotal: 900}, now.Add(time.Second))
+	if math.IsNaN(held) || math.IsInf(held, 0) {
+		t.Fatalf("zero-elapsed sample produced %v", held)
+	}
+	if held != out || heldIn != 0 {
+		t.Fatalf("zero-elapsed sample moved rates to %v/%v, want %v/0", held, heldIn, out)
+	}
+
+	next, _ := c.rates("p", &provider.Metrics{OutTotal: 1000}, now.Add(2*time.Second))
+	if next <= held { // delta 100 over the full 1s window, not 700
+		t.Fatalf("rate after held sample = %v, want > %v", next, held)
 	}
 }
 
