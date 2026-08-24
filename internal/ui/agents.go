@@ -87,13 +87,17 @@ func agentSummary(rates []agentRate) string {
 			parts = append(parts, dim(fmt.Sprintf("+%d more", len(rates)-3)))
 			break
 		}
+		// Agent names arrive from the ingest endpoint and agent definitions
+		// on disk; they pass the terminal sanitizer like every other
+		// untrusted field (feedLine does the same at render time).
+		name := core.SanitizeText(r.Agent)
 		if r.TokPS > 0 {
-			parts = append(parts, styleValue.Render(r.Agent)+" "+
+			parts = append(parts, styleValue.Render(name)+" "+
 				styleOK.Render(fmtRate(r.TokPS))+dim(" tok/s"))
 			continue
 		}
 		// Measured tokens, but not yet a rate: say so rather than showing 0.
-		parts = append(parts, styleValue.Render(r.Agent)+" "+
+		parts = append(parts, styleValue.Render(name)+" "+
 			dim(fmtCount(r.Tokens)+" tok"))
 	}
 	return strings.Join(parts, dim("  ·  "))
@@ -109,10 +113,12 @@ func (m Model) renderAgentsOnly() string {
 
 	rows := make([]string, 0, len(rates)+1)
 	nameW := 10
-	for _, r := range rates {
-		nameW = max(nameW, len(r.Agent))
+	names := make([]string, len(rates))
+	for i, r := range rates {
+		names[i] = core.SanitizeText(r.Agent)
+		nameW = max(nameW, len(names[i]))
 	}
-	for _, r := range rates {
+	for i, r := range rates {
 		rate := dim("no rate yet")
 		if r.TokPS > 0 {
 			rate = styleValue.Foreground(heatColor(clamp01(r.TokPS / 60))).
@@ -123,7 +129,7 @@ func (m Model) renderAgentsOnly() string {
 			since = styleOK.Render("● live")
 		}
 		rows = append(rows, fmt.Sprintf("  %-*s  %-22s  %10s  %s",
-			nameW, styleValue.Render(r.Agent), rate,
+			nameW, styleValue.Render(names[i]), rate,
 			dim(fmtCount(r.Tokens)+" tok"), since))
 	}
 	if len(rows) == 0 {
