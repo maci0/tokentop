@@ -117,7 +117,11 @@ func main() {
 				fmt.Fprintln(os.Stderr, "tokentop:", err)
 				os.Exit(2)
 			}
-			tgt.KeyFile = *sshKey
+			// Only when set: an empty flag must keep the IdentityFile
+			// resolved from ~/.ssh/config by ParseTarget.
+			if *sshKey != "" {
+				tgt.KeyFile = *sshKey
+			}
 			rp, rsys, rerr := attachRemote(ctx, tgt)
 			if rerr != nil {
 				fmt.Fprintf(os.Stderr, "tokentop: %v\n", rerr)

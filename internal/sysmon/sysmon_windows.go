@@ -16,7 +16,7 @@ var (
 	procGlobalMemoryStatusEx = kernel32.NewProc("GlobalMemoryStatusEx")
 )
 
-// memoryStatusEx mirrors MEMORYSTATUSEX (winmm/memoryapi.h).
+// memoryStatusEx mirrors MEMORYSTATUSEX (memoryapi.h).
 type memoryStatusEx struct {
 	Length               uint32
 	MemoryLoad           uint32
