@@ -70,7 +70,7 @@ func Sample(ctx context.Context) []core.GPUDevice {
 
 	if p, ok := lookup("nvidia-smi"); ok {
 		if out, ok2 := run(ctx, p,
-			"--query-gpu=index,name,temperature.gpu,memory.used,memory.total,utilization.gpu,power.draw,fan.speed,clocks.sm,driver_version,compute_cap",
+			"--query-gpu=index,name,temperature.gpu,memory.used,memory.total,utilization.gpu,power.draw,driver_version",
 			"--format=csv,noheader,nounits"); ok2 {
 			devs = append(devs, ParseNvidiaSMI(out)...)
 		}
@@ -112,10 +112,6 @@ func sampleXPU(ctx context.Context, xpu string) []core.GPUDevice {
 	if !ok {
 		return nil
 	}
-	type disc struct {
-		ID   int
-		Name string
-	}
 	discs, names := parseXpuDiscovery(out)
 	var devs []core.GPUDevice
 	for _, d := range discs {
@@ -136,12 +132,12 @@ func sampleXPU(ctx context.Context, xpu string) []core.GPUDevice {
 }
 
 // ParseNvidiaSMI reads CSV rows of
-// index,name,temp,memused,memtotal,util,power,fan,clocks.sm,driver,compute_cap.
-// The name may contain commas; the last nine fields are always fixed.
+// index,name,temp,memused,memtotal,util,power,driver_version.
+// The name may contain commas; the last six fields are always fixed.
 // Exported so the remote ssh path can parse nvidia-smi output gathered from
 // another host with the exact same rules.
 func ParseNvidiaSMI(b []byte) []core.GPUDevice {
-	const fixedTail = 9
+	const fixedTail = 6
 	var devs []core.GPUDevice
 	for _, line := range strings.Split(string(b), "\n") {
 		line = strings.TrimSpace(line)
@@ -158,27 +154,20 @@ func ParseNvidiaSMI(b []byte) []core.GPUDevice {
 		}
 		name := strings.Join(f[1:len(f)-fixedTail], ",")
 		tail := f[len(f)-fixedTail:]
-		driver := strings.TrimSpace(tail[7])
+		driver := strings.TrimSpace(tail[5])
 		if driver == "[N/A]" {
 			driver = ""
 		}
-		cc := strings.TrimSpace(tail[8])
-		if cc == "[N/A]" {
-			cc = ""
-		}
 		devs = append(devs, core.GPUDevice{
-			Vendor:     "nvidia",
-			Index:      idx,
-			Name:       strings.TrimSpace(name),
-			MilliC:     int(flexF(tail[0]) * 1000),
-			MemUsed:    uint64(flexF(tail[1])) << 20, // MiB
-			MemTotal:   uint64(flexF(tail[2])) << 20,
-			UtilPct:    flexF(tail[3]),
-			PowerW:     flexF(tail[4]),
-			FanRPM:     int(flexF(tail[5])),
-			ClocksSM:   int(flexF(tail[6])),
-			Driver:     driver,
-			ComputeCap: cc,
+			Vendor:   "nvidia",
+			Index:    idx,
+			Name:     strings.TrimSpace(name),
+			MilliC:   int(flexF(tail[0]) * 1000),
+			MemUsed:  uint64(flexF(tail[1])) << 20, // MiB
+			MemTotal: uint64(flexF(tail[2])) << 20,
+			UtilPct:  flexF(tail[3]),
+			PowerW:   flexF(tail[4]),
+			Driver:   driver,
 		})
 	}
 	return devs

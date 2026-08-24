@@ -79,9 +79,6 @@ func (t Target) userHost() string {
 	return t.User + "@" + t.Host
 }
 
-// Addr is host:port in the form host keys are stored under.
-func (t Target) Addr() string { return t.Host + ":" + strconv.Itoa(t.Port) }
-
 // sshConfigEntry is the subset of ~/.ssh/config tokentop understands.
 type sshConfigEntry struct {
 	User         string

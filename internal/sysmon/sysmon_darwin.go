@@ -97,7 +97,7 @@ func parseSwapUsage(s string) (total, used uint64) {
 			last = ""
 			continue
 		}
-		v, _ := splitSizeToken(tok)
+		v := splitSizeToken(tok)
 		if v == 0 {
 			continue
 		}
@@ -112,23 +112,23 @@ func parseSwapUsage(s string) (total, used uint64) {
 }
 
 // splitSizeToken splits "512.00M" into bytes.
-func splitSizeToken(tok string) (uint64, string) {
+func splitSizeToken(tok string) uint64 {
 	if len(tok) < 2 {
-		return 0, ""
+		return 0
 	}
 	unit := strings.ToUpper(string(tok[len(tok)-1]))
 	num, err := strconv.ParseFloat(tok[:len(tok)-1], 64)
 	if err != nil {
-		return 0, unit
+		return 0
 	}
 	switch unit {
 	case "G":
-		return uint64(num * 1024 * 1024 * 1024), unit
+		return uint64(num * 1024 * 1024 * 1024)
 	case "M":
-		return uint64(num * 1024 * 1024), unit
+		return uint64(num * 1024 * 1024)
 	case "K":
-		return uint64(num * 1024), unit
+		return uint64(num * 1024)
 	default:
-		return 0, unit
+		return 0
 	}
 }

@@ -79,14 +79,13 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 	return m, nil
 }
 
-// enrichLMStudio pulls the native /api/v0/models feed: load state and context
-// length that the thin OpenAI listing lacks.
+// enrichLMStudio pulls the native /api/v0/models feed: the full model list
+// and context lengths that the thin OpenAI listing lacks.
 func enrichLMStudio(ctx context.Context, base string, m *Metrics) {
 	var v0 struct {
 		Data []struct {
 			ID         string `json:"id"`
 			Type       string `json:"type"`
-			State      string `json:"state"`
 			MaxContext int64  `json:"max_context_length"`
 		} `json:"data"`
 	}
@@ -98,7 +97,7 @@ func enrichLMStudio(ctx context.Context, base string, m *Metrics) {
 		if d.Type != "" && !strings.EqualFold(d.Type, "llm") {
 			continue // embeddings and friends are noise here
 		}
-		mi := core.ModelInfo{Name: d.ID, State: d.State}
+		mi := core.ModelInfo{Name: d.ID}
 		if d.MaxContext > 0 {
 			mi.CtxMax = uint64(d.MaxContext)
 		}
@@ -126,14 +125,14 @@ func enrichLemonade(ctx context.Context, base string, m *Metrics) {
 	case len(h.AllLoaded) > 0:
 		m.Models = m.Models[:0]
 		for _, mm := range h.AllLoaded {
-			mi := core.ModelInfo{Name: mm.ModelName, State: "loaded"}
+			mi := core.ModelInfo{Name: mm.ModelName}
 			if mm.CtxSize > 0 {
 				mi.CtxMax = uint64(mm.CtxSize)
 			}
 			m.Models = append(m.Models, mi)
 		}
 	case h.ModelLoaded != "":
-		m.Models = []core.ModelInfo{{Name: h.ModelLoaded, State: "loaded"}}
+		m.Models = []core.ModelInfo{{Name: h.ModelLoaded}}
 	}
 }
 

@@ -183,18 +183,3 @@ func enginePorts(infos []procs.Info) []int {
 	sort.Ints(out)
 	return out
 }
-
-// Describe renders a discovery summary for logs.
-func (d *Discovery) Describe() string {
-	f := func(ps []int) string {
-		if len(ps) == 0 {
-			return "-"
-		}
-		parts := make([]string, len(ps))
-		for i, p := range ps {
-			parts[i] = strconv.Itoa(p)
-		}
-		return strings.Join(parts, ",")
-	}
-	return fmt.Sprintf("listening[%s] engines[%s]", f(d.Listening), f(d.EnginePorts))
-}

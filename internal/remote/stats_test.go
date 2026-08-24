@@ -25,8 +25,8 @@ AMD Ryzen 9 7950X 16-Core Processor
 %tokentop%
 6.1.0-18-amd64
 %tokentop%
-0, NVIDIA GeForce RTX 4090, 54, 12345, 24564, 97, 410.2, 60, 2520, 550.54.15, 8.9
-1, NVIDIA A100-SXM4-40GB, 61, 30000, 40960, 80, 250.0, [N/A], 1410, 535.104.05, 8.0
+0, NVIDIA GeForce RTX 4090, 54, 12345, 24564, 97, 410.2, 550.54.15
+1, NVIDIA A100-SXM4-40GB, 61, 30000, 40960, 80, 250.0, [N/A]
 `
 
 func TestParseVitals(t *testing.T) {
@@ -66,7 +66,7 @@ func TestParseVitals(t *testing.T) {
 		t.Errorf("gpu[0] = %+v", g0)
 	}
 	g1 := s.GPUs[1]
-	if g1.Name != "NVIDIA A100-SXM4-40GB" || g1.FanRPM != 0 || g1.Driver != "535.104.05" {
+	if g1.Name != "NVIDIA A100-SXM4-40GB" || g1.Driver != "" {
 		t.Errorf("gpu[1] = %+v", g1) // [N/A] fields must degrade to zero values
 	}
 	if s.Drivers["nvidia"] != "550.54.15" {
@@ -108,17 +108,6 @@ func TestStatsMergeFreshnessAndOverlay(t *testing.T) {
 	}
 	if len(into.GPUs) != 2 || into.GPUs[0].Vendor != "nvidia" {
 		t.Errorf("remote GPUs must replace local ones: %+v", into.GPUs)
-	}
-}
-
-func TestDiscoveryDescribe(t *testing.T) {
-	d := &Discovery{Listening: []int{11434}, EnginePorts: []int{5005}}
-	if got, want := d.Describe(), "listening[11434] engines[5005]"; got != want {
-		t.Errorf("Describe() = %q want %q", got, want)
-	}
-	d2 := &Discovery{}
-	if got, want := d2.Describe(), "listening[-] engines[-]"; got != want {
-		t.Errorf("Describe() = %q want %q", got, want)
 	}
 }
 

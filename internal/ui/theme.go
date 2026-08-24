@@ -28,8 +28,6 @@ var (
 )
 
 var (
-	styleBase = lipgloss.NewStyle().Foreground(cText)
-
 	styleTitle = lipgloss.NewStyle().Bold(true).Foreground(cLavender)
 	styleDim   = lipgloss.NewStyle().Foreground(cDim)
 	styleValue = lipgloss.NewStyle().Bold(true).Foreground(cText)

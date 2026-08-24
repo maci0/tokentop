@@ -24,8 +24,6 @@ const (
 	KindKoboldCPP = "koboldcpp"
 	KindLocalAI   = "localai"
 	KindTGI       = "tgi"
-	KindOoba      = "oobabooga" // text-generation-webui
-	KindTabbyAPI  = "tabbyapi"
 	KindLiteLLM   = "litellm"
 	KindGPUStack  = "gpustack"
 	KindLemonade  = "lemonade"   // AMD Ryzen AI server
@@ -35,9 +33,7 @@ const (
 type ModelInfo struct {
 	Name     string `json:"name"`
 	SizeVRAM uint64 `json:"vram_bytes,omitempty"`
-	CtxUsed  uint64 `json:"ctx_used,omitempty"`
 	CtxMax   uint64 `json:"ctx_max,omitempty"`
-	State    string `json:"state,omitempty"` // loaded | loading | not-loaded
 }
 
 // ProviderSnapshot is one observation of an inference backend.
@@ -112,19 +108,15 @@ type TempReading struct {
 // GPUDevice is one accelerator as reported by sysfs/vendor CLIs (no vendor
 // libraries linked).
 type GPUDevice struct {
-	Vendor     string  `json:"vendor"` // nvidia | amd | intel | apple
-	Index      int     `json:"index"`
-	Name       string  `json:"name,omitempty"`
-	MilliC     int     `json:"milli_c"`
-	MemUsed    uint64  `json:"mem_used"`
-	MemTotal   uint64  `json:"mem_total"`
-	UtilPct    float64 `json:"util_pct"`
-	PowerW     float64 `json:"power_w"`
-	FanRPM     int     `json:"fan_rpm,omitempty"`
-	ClocksSM   int     `json:"clock_sm_mhz,omitempty"`
-	Driver     string  `json:"driver,omitempty"`
-	VBios      string  `json:"vbios,omitempty"`
-	ComputeCap string  `json:"compute_cap,omitempty"`
+	Vendor   string  `json:"vendor"` // nvidia | amd | intel | apple
+	Index    int     `json:"index"`
+	Name     string  `json:"name,omitempty"`
+	MilliC   int     `json:"milli_c"`
+	MemUsed  uint64  `json:"mem_used"`
+	MemTotal uint64  `json:"mem_total"`
+	UtilPct  float64 `json:"util_pct"`
+	PowerW   float64 `json:"power_w"`
+	Driver   string  `json:"driver,omitempty"`
 }
 
 // SysSample carries host-level vitals: RAM, swap, load and temperatures.
@@ -160,5 +152,4 @@ type Snapshot struct {
 	Agents    []AgentEvent // newest last
 	Probes    []ProbeSample
 	Sys       *SysSample
-	Paused    bool
 }

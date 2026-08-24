@@ -321,7 +321,9 @@ func (c *Client) relay(l net.Listener, rport int) {
 
 // Close tears down relays and the connection. Safe more than once, and
 // complete even after the connection died on its own: listeners must be
-// reclaimed either way.
+// reclaimed either way. It waits for the keepalive goroutine so no client
+// goroutine outlives the call (and none can observe pacing changes made
+// after teardown).
 func (c *Client) Close() {
 	c.closeMu.Lock()
 	select {
@@ -340,6 +342,7 @@ func (c *Client) Close() {
 
 	c.setErr(nil)
 	c.conn.Close()
+	<-c.keepaliveDone
 }
 
 // watchClose marks abnormal termination when the underlying connection dies

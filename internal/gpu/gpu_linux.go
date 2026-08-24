@@ -46,27 +46,19 @@ func scanAmdSysfs(drmRoot string) []core.GPUDevice {
 		if b, err := os.ReadFile(filepath.Join(dev, "gpu_busy_percent")); err == nil {
 			d.UtilPct, _ = strconv.ParseFloat(strings.TrimSpace(string(b)), 64)
 		}
-		if b, err := os.ReadFile(filepath.Join(dev, "vbios_version")); err == nil {
-			d.VBios = strings.TrimSpace(string(b))
-		}
 		scanAmdHwmon(filepath.Join(dev, "hwmon"), &d)
 		devs = append(devs, d)
 	}
 	return devs
 }
 
-// scanAmdHwmon lifts fan/power/clock readings out of the card's hwmon dir.
+// scanAmdHwmon lifts temperature and power readings out of the card's hwmon
+// dir.
 func scanAmdHwmon(hwmonDir string, d *core.GPUDevice) {
 	matches, _ := filepath.Glob(filepath.Join(hwmonDir, "hwmon*"))
 	for _, h := range matches {
 		if v, ok := readI(h, "temp1_input"); ok && d.MilliC == 0 {
 			d.MilliC = v
-		}
-		if v, ok := readI(h, "fan1_input"); ok && d.FanRPM == 0 {
-			d.FanRPM = v
-		}
-		if v, ok := readI(h, "freq1_input"); ok && d.ClocksSM == 0 {
-			d.ClocksSM = v / 1_000_000 // Hz -> MHz
 		}
 		if b, err := os.ReadFile(filepath.Join(h, "power1_average")); err == nil {
 			if uw, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64); err == nil && uw > 0 {

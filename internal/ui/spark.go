@@ -8,26 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// rampRunes of 9 glyphs: index 0 is empty, 8 fully filled. Each step covers
-// 1/8 cell.
-var rampRunes = []rune(" ▁▂▃▄▅▆▇█")
-
-// LevelChar maps a subcell level (0..8) to its rune.
-func LevelChar(level int) rune {
-	if level < 0 {
-		level = 0
-	}
-	if level > 8 {
-		level = 8
-	}
-	return rampRunes[level]
-}
-
-// Sparkline renders values as one row, width w, uncolored (style the result).
-func Sparkline(vals []float64, w int) string {
-	return AreaChart(vals, w, 1, func(float64) lipgloss.Color { return lipgloss.Color("") })
-}
-
 // tailCols returns exactly w columns carrying the last w values, zero-padded
 // on the left so charts hug the right edge like a scope trace, plus their
 // peak (floored at 1 so an all-zero series still renders).
@@ -47,45 +27,6 @@ func tailCols(vals []float64, w int) ([]float64, float64) {
 	cols := make([]float64, pad+len(vs))
 	copy(cols[pad:], vs)
 	return cols, maxV
-}
-
-// AreaChart renders a multi-row column chart of the last w values scaled to
-// the max, colored per column by heatColor(frac).
-func AreaChart(vals []float64, w, h int, heat func(float64) lipgloss.Color) string {
-	if w <= 0 || h <= 0 {
-		return ""
-	}
-	cols, peak := tailCols(vals, w)
-
-	rows := make([]strings.Builder, h)
-	type cacheKey struct{ band, level int }
-	cache := map[cacheKey]string{}
-	for r := 0; r < h; r++ {
-		base := (h - 1 - r) * 8 // subcell offset of this row's bottom
-		for _, v := range cols {
-			frac := v / peak
-			band := int(frac * 6) // 6 heat bands
-			level := int(frac*float64(h*8)) - base
-			ch := LevelChar(level)
-			key := cacheKey{band, level}
-			s, ok := cache[key]
-			if !ok {
-				style := lipgloss.NewStyle().Foreground(heat(clamp01(frac)))
-				if ch == ' ' {
-					s = style.Render(" ")
-				} else {
-					s = style.Render(string(ch))
-				}
-				cache[key] = s
-			}
-			rows[r].WriteString(s)
-		}
-	}
-	out := make([]string, h)
-	for i := range rows {
-		out[i] = rows[i].String()
-	}
-	return strings.Join(out, "\n")
 }
 
 // brailleBits maps (sub-row, sub-column) within a braille cell to its Unicode

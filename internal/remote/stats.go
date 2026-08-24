@@ -52,7 +52,7 @@ echo ` + sectionMark + `
 uname -r 2>/dev/null
 echo ` + sectionMark + `
 if command -v nvidia-smi >/dev/null 2>&1; then
-  nvidia-smi --query-gpu=index,name,temperature.gpu,memory.used,memory.total,utilization.gpu,power.draw,fan.speed,clocks.sm,driver_version,compute_cap --format=csv,noheader,nounits 2>/dev/null
+  nvidia-smi --query-gpu=index,name,temperature.gpu,memory.used,memory.total,utilization.gpu,power.draw,driver_version --format=csv,noheader,nounits 2>/dev/null
 elif command -v rocm-smi >/dev/null 2>&1; then
   rocm-smi --showtemp --showusemem --showmeminfo vram --showuse --json 2>/dev/null
 fi
