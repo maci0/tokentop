@@ -47,7 +47,6 @@ type Collector struct {
 	histIn     map[string]*timedRing
 	prev       map[string]prevSample
 	lastModel  map[string]string // endpoint -> model to probe
-	ttftEngine map[string]float64
 	kvPct      map[string]float64
 	agents     []core.AgentEvent
 	probes     []core.ProbeSample
@@ -68,7 +67,6 @@ func New(providers []provider.Provider, interval time.Duration) *Collector {
 		histIn:     map[string]*timedRing{},
 		prev:       map[string]prevSample{},
 		lastModel:  map[string]string{},
-		ttftEngine: map[string]float64{},
 		kvPct:      map[string]float64{},
 		started:    time.Now(),
 	}
