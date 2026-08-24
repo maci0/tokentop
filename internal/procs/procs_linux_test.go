@@ -17,9 +17,9 @@ func TestSamplerLinuxTree(t *testing.T) {
 		os.WriteFile(p, []byte(content), 0o644)
 	}
 	// fake ollama: comm-less cmdline NUL-separated; stat with utime+stime
+	// (fields 14,15) and rss in pages (field 24: 512 pages = 2 MiB)
 	write("123/cmdline", "ollama\x00serve\x00--port\x0011434\x00")
-	write("123/stat", "123 (ollama) S 1 1 0 0 -1 0 0 0 0 0 100 50 0 0 0 0")
-	write("123/status", "Name: ollama\nVmRSS:\t 2048 kB\n")
+	write("123/stat", "123 (ollama) S 1 1 0 0 -1 0 0 0 0 0 100 50 0 0 0 0 1 0 0 0 512")
 	// kernel thread without cmdline must be skipped
 	write("456/stat", "456 (kworker/0:1) S 2 0 0 0")
 	// firefox: not an engine
