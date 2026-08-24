@@ -95,11 +95,7 @@ func procCandidateURLs() []string {
 		if p.Engine == "" {
 			continue
 		}
-		port := p.PortHint
-		if port == 0 {
-			port = p.DefPort
-		}
-		if port > 0 {
+		if port := p.ListenPort(); port > 0 {
 			urls = append(urls, fmt.Sprintf("http://127.0.0.1:%d", port))
 		}
 	}
@@ -207,7 +203,7 @@ func Identify(ctx context.Context, base string) string {
 	switch {
 	case models == nil:
 		// engines whose OpenAI listing needs auth or lives on another path
-		if bodyOK(ctx, base+"/health/liveliness", "alive") { // vLLM answers "I'm alive!"
+		if probeContains(ctx, base, "/health/liveliness", "alive") { // vLLM answers "I'm alive!"
 			return core.KindLiteLLM
 		}
 		return ""
@@ -245,12 +241,6 @@ func probeContains(ctx context.Context, base, path string, needles ...string) bo
 		}
 	}
 	return true
-}
-
-// bodyOK reports whether path answers 200 with the substring in its body.
-func bodyOK(ctx context.Context, url, substr string) bool {
-	text, err := getText(ctx, scanClient, url)
-	return err == nil && strings.Contains(strings.ToLower(text), strings.ToLower(substr))
 }
 
 // sglangInfoOK detects SGLang via its native /get_model_info endpoint.

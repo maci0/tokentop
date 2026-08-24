@@ -162,6 +162,16 @@ func ExtractPort(args []string) int {
 	return 0
 }
 
+// ListenPort returns the process's effective listen port: an explicit --port
+// flag on the command line when present, else the matched engine's default.
+// Zero when neither applies (DefPort is only set for engine matches).
+func (i Info) ListenPort() int {
+	if i.PortHint != 0 {
+		return i.PortHint
+	}
+	return i.DefPort
+}
+
 // engineMatcher identifies well-known serving processes. Matching is
 // deliberately conservative to avoid grabbing unrelated processes.
 type engineMatcher struct {
