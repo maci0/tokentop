@@ -214,7 +214,7 @@ func (m Model) renderHeader() string {
 		segs = append(segs, headerSeg{text: dim("up " + fmtDur(m.snap.Uptime)), shed: 50})
 	}
 	if m.snap.Sys != nil && m.snap.Sys.RemoteHost != "" {
-		segs = append(segs, headerSeg{text: styleMagic.Render("via ssh:" + m.snap.Sys.RemoteHost)})
+		segs = append(segs, headerSeg{text: styleMagic.Render("via ssh:" + core.SanitizeText(m.snap.Sys.RemoteHost))})
 	}
 
 	right := ""
