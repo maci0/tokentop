@@ -361,8 +361,8 @@ func (m Model) renderMidRow() string {
 	rw := m.w - pw - gw
 	_, midIn, _ := m.sectionHeights()
 
-	prov := panel("BACKENDS", m.providersBody(pw-4, midIn), pw-4, midIn)
-	gaug := panel("ENGINE STATE", m.gaugesBody(gw-4, midIn), gw-4, midIn)
+	prov := panel("BACKENDS", m.providersBody(pw-4), pw-4, midIn)
+	gaug := panel("ENGINE STATE", m.gaugesBody(gw-4), gw-4, midIn)
 	prb := panel(m.probesTitle(), m.probesBody(rw-4, midIn), rw-4, midIn)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, prov, gaug, prb)
@@ -578,7 +578,7 @@ func fmtTempC(milliC int) string {
 	return fmt.Sprintf("%.0f°", float64(milliC)/1000)
 }
 
-func (m Model) providersBody(w, h int) string {
+func (m Model) providersBody(w int) string {
 	var b strings.Builder
 	for _, p := range m.snap.Providers {
 		dot := dotUp
@@ -588,11 +588,11 @@ func (m Model) providersBody(w, h int) string {
 		model := shorten(core.SanitizeText(p.PrimaryModel()), w-15)
 		line1 := dot + " " + kindBadge(p.Kind) + " " + styleValue.Render(model)
 		if p.Version != "" {
-			line1 += " " + dim("v" + shorten(core.SanitizeText(p.Version), 12))
+			line1 += " " + dim("v"+shorten(core.SanitizeText(p.Version), 12))
 		}
 		b.WriteString(clip(line1, w) + "\n")
 		if !p.OK {
-			b.WriteString(styleBad.Render("  " + clip(shorten(core.SanitizeText(p.Err), w-3), w-3)) + "\n")
+			b.WriteString(styleBad.Render("  "+clip(shorten(core.SanitizeText(p.Err), w-3), w-3)) + "\n")
 		} else {
 			kvg := GaugeBar(p.KVPct, clampi(w-26, 4, 14), kvHeat)
 			stats := fmt.Sprintf("▲%s ▼%s r%d w%d",
@@ -604,7 +604,7 @@ func (m Model) providersBody(w, h int) string {
 	return b.String()
 }
 
-func (m Model) gaugesBody(w, h int) string {
+func (m Model) gaugesBody(w int) string {
 	var b strings.Builder
 	for _, p := range m.snap.Providers {
 		if !p.OK {
@@ -641,9 +641,7 @@ func procLine(p core.ProviderSnapshot, w int) string {
 		}
 		parts = append(parts, rss)
 	}
-	if len(parts) == 0 && p.TTFTms > 0 {
-		parts = append(parts, fmt.Sprintf("ttft %s", fmtMs(p.TTFTms)))
-	} else if p.TTFTms > 0 {
+	if p.TTFTms > 0 {
 		parts = append(parts, "ttft "+fmtMs(p.TTFTms))
 	}
 	if len(parts) == 0 {
