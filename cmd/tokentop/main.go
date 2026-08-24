@@ -33,7 +33,8 @@ import (
 	"tokentop/internal/ui"
 )
 
-const version = "0.1.0"
+// var, not const: release builds stamp it via -ldflags "-X main.version=...".
+var version = "0.1.0"
 
 func main() {
 	var (

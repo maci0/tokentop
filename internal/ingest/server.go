@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -117,8 +118,8 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	n := 0
 	for {
-		var ev core.AgentEvent
-		if err := dec.Decode(&ev); err != nil {
+		var wire agentEventWire
+		if err := dec.Decode(&wire); err != nil {
 			if n > 0 && errors.Is(err, io.EOF) {
 				break // clean end of stream after at least one event
 			}
@@ -136,6 +137,20 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			}
 			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 			return
+		}
+		at, err := parseEventTime(wire.At)
+		if err != nil {
+			http.Error(w, "bad ts: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		ev := core.AgentEvent{
+			At:           at,
+			Agent:        wire.Agent,
+			Model:        wire.Model,
+			Kind:         wire.Kind,
+			PromptTokens: wire.PromptTokens,
+			OutputTokens: wire.OutputTokens,
+			Note:         wire.Note,
 		}
 		if ev.Agent == "" {
 			ev.Agent = "anonymous"
@@ -169,6 +184,40 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusAccepted)
 	fmt.Fprintf(w, `{"accepted":%d}`+"\n", n)
+}
+
+// agentEventWire mirrors core.AgentEvent for decoding, with the timestamp
+// carried raw: encoding/json's time parser demands an explicit offset, so a
+// well-formed but offset-less stamp would abort the whole stream with 400
+// before parseEventTime could apply the UTC default the feed documents.
+type agentEventWire struct {
+	At           json.RawMessage `json:"ts"`
+	Agent        string          `json:"agent"`
+	Model        string          `json:"model"`
+	Kind         string          `json:"kind"`
+	PromptTokens int64           `json:"prompt_tokens"`
+	OutputTokens int64           `json:"output_tokens"`
+	Note         string          `json:"note"`
+}
+
+// parseEventTime decodes an event's ts field. Offset-aware RFC 3339 stamps
+// are taken as sent (any zone, sub-second precision); stamps without an
+// offset decode as UTC, matching what senders like Python's
+// datetime.isoformat() emit. Absent or null yields the zero Time, which the
+// caller replaces with the arrival instant.
+func parseEventTime(raw json.RawMessage) (time.Time, error) {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return time.Time{}, nil
+	}
+	v, err := strconv.Unquote(s)
+	if err != nil {
+		return time.Time{}, errors.New("ts must be an RFC 3339 string")
+	}
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, nil
+	}
+	return time.ParseInLocation("2006-01-02T15:04:05", v, time.UTC)
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {

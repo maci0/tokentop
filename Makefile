@@ -62,6 +62,12 @@ check: ## verify gofmt -s formatting and vet (CI parity)
 		fi
 	$(GO) vet ./...
 
+.PHONY: ci
+ci: ## everything CI runs before merging: fmt, vet, govulncheck, race tests
+	@$(MAKE) check
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+	$(GO) test -race -shuffle=on ./...
+
 .PHONY: clean
 clean: ## remove build artifacts
 	rm -rf $(DIST) $(BINARY) tokentop-dev coverage.out
@@ -80,7 +86,7 @@ test-dist: ## build every release platform without packaging
 		name="$(BINARY)_$(VERSION)_$${goos}_$${goarch}$${ext}"; \
 		echo "building $$name"; \
 		CGO_ENABLED=0 GOOS=$$goos GOARCH=$$goarch \
-			$(GO) build -trimpath -ldflags "-s -w" -o $(DIST)/$$name $(CMD) || exit 1; \
+			$(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(DIST)/$$name $(CMD) || exit 1; \
 	done
 
 .PHONY: install

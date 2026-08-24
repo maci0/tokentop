@@ -85,12 +85,13 @@ func (c *Collector) SetSysFn(fn func() core.SysSample) {
 }
 
 // startSysPoller refreshes host vitals in the background; emit never blocks
-// on it (GPU vendor CLIs can take seconds and would stall every frame).
+// on it (GPU vendor CLIs can take seconds and would stall every frame). Run
+// warms the cache before emitting, so this first pass is a cache hit.
 func (c *Collector) startSysPoller(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(c.interval)
 		defer t.Stop()
-		c.sampleSys(false) // first pass: skip if emit's cold path already sampled
+		c.sampleSys(false) // skip when Run already warmed the cache
 		for {
 			select {
 			case <-ctx.Done():
@@ -178,6 +179,11 @@ func (c *Collector) Run(ctx context.Context, out chan<- core.Snapshot) {
 	c.baseCtx = ctx
 	c.mu.Unlock()
 	c.startProcPoller(ctx)
+	// Warm the vitals cache before the first emit. sysSnapshot's cold
+	// fallback samples inline, and emit holds c.mu across it: a cold sample
+	// there would stall RecordAgent (ingest handlers) and ProbeAll for the
+	// whole sweep, which on GPU hosts includes multi-second vendor CLIs.
+	c.sampleSys(false)
 	c.startSysPoller(ctx)
 	t := time.NewTicker(c.interval)
 	defer t.Stop()
