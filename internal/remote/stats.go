@@ -20,6 +20,11 @@ type Stats struct {
 	mu   sync.Mutex
 	last core.SysSample
 	at   time.Time
+	// loadsValid records whether the latest dump carried usable load
+	// readings. Remotes without /proc/loadavg (macOS, hardened kernels)
+	// still poll successfully, and merging their absent loads would zero
+	// the local readout every frame.
+	loadsValid bool
 }
 
 // sectionMark separates the vitals dump into ordered sections. Chosen to be
@@ -81,7 +86,7 @@ func (s *Stats) poll(ctx context.Context) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	parseVitals(out, &s.last)
+	s.loadsValid = parseVitals(out, &s.last)
 	s.last.RemoteHost = s.Client.Target.Host
 	s.at = time.Now()
 }
@@ -94,7 +99,9 @@ func (s *Stats) Merge(into *core.SysSample) {
 	if s.at.IsZero() || time.Since(s.at) > 20*time.Second {
 		return
 	}
-	into.Load1, into.Load5, into.Load15 = s.last.Load1, s.last.Load5, s.last.Load15
+	if s.loadsValid {
+		into.Load1, into.Load5, into.Load15 = s.last.Load1, s.last.Load5, s.last.Load15
+	}
 	if s.last.MemTotal > 0 {
 		into.MemTotal, into.MemUsed = s.last.MemTotal, s.last.MemUsed
 		into.SwapTotal, into.SwapUsed = s.last.SwapTotal, s.last.SwapUsed
@@ -126,9 +133,12 @@ func (s *Stats) Merge(into *core.SysSample) {
 }
 
 // parseVitals reads the vitalsScript dump: loadavg, meminfo, uptime seconds,
-// CPU model, OS name, kernel release, nvidia-smi CSV, separated by
-// sectionMark lines. Missing sections leave the corresponding fields alone.
-func parseVitals(out string, s *core.SysSample) {
+// CPU model, OS name, kernel release and GPU telemetry (nvidia-smi CSV or
+// rocm-smi JSON), separated by sectionMark lines. Missing sections leave the
+// corresponding fields alone.
+// It reports whether usable load readings were present, so Merge can tell
+// "remote reports no load" from "remote is idle at 0".
+func parseVitals(out string, s *core.SysSample) (loadsOK bool) {
 	sections := splitSections(out)
 	section := func(i int) string {
 		if i >= len(sections) {
@@ -140,6 +150,7 @@ func parseVitals(out string, s *core.SysSample) {
 	if load := firstLine(section(0)); load != "" {
 		if l1, l5, l15 := sysmon.ParseLoadavg(load); l1 > 0 || l5 > 0 || l15 > 0 {
 			s.Load1, s.Load5, s.Load15 = l1, l5, l15
+			loadsOK = true
 		}
 	}
 	if mem := section(1); strings.TrimSpace(mem) != "" {
@@ -170,6 +181,7 @@ func parseVitals(out string, s *core.SysSample) {
 			s.Drivers[devs[0].Vendor] = d
 		}
 	}
+	return loadsOK
 }
 
 // parseGPUs accepts either the nvidia-smi CSV or the rocm-smi JSON flavor of

@@ -3,6 +3,7 @@
 // Escape sequences and control characters in such strings would otherwise be
 // interpreted by the operator's terminal (clipboard hijack via OSC 52, cursor
 // redraw via CSI, title spoofing), the terminal equivalent of XSS.
+
 package core
 
 import (

@@ -40,6 +40,7 @@ type Model struct {
 	maxAgg          float64
 	lastAgg         float64 // most recent aggregate output rate across engines
 	chartCompressed bool
+	probeReq        time.Time // manual probe awaiting its first result
 }
 
 func New(cfg Config, ch <-chan core.Snapshot) Model {
@@ -88,16 +89,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.clock = time.Time(msg)
+		// Engines that never answer (no known model yet, all down) would
+		// leave the "probing…" marker up forever without this bail-out.
+		if !m.probeReq.IsZero() && time.Since(m.probeReq) > 15*time.Second {
+			m.probeReq = time.Time{}
+		}
 		return m, tickClock()
 
 	case snapMsg:
 		if !m.paused {
-			agg := aggOut(core.Snapshot(msg))
+			in := core.Snapshot(msg)
+			agg := aggOut(in)
 			m.lastAgg = agg
 			if agg > m.maxAgg {
 				m.maxAgg = agg
 			}
-			m.snap = core.Snapshot(msg)
+			if n := len(in.Probes); n > 0 && in.Probes[n-1].At.After(m.probeReq) {
+				m.probeReq = time.Time{} // first result landed: hand over to it
+			}
+			m.snap = in
 		}
 		return m, waitSnap(m.ch)
 
@@ -115,6 +125,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p", "P":
 			if m.cfg.Prober != nil {
 				go m.cfg.Prober.ProbeAll()
+				if len(m.snap.Providers) > 0 {
+					m.probeReq = time.Now()
+				}
 			}
 			return m, nil
 		case "t", "T":
@@ -137,7 +150,16 @@ func (m Model) View() string {
 	if m.help {
 		return m.renderHelp()
 	}
-	if m.w < 62 || m.h < 16 {
+	// minDashH is the shortest pane where the full layout still covers its own
+	// chrome (header, titles, borders, footer, one system strip row) plus the
+	// smallest panel split from sectionHeights. Below it - or narrower than
+	// minDashW - a squeezed full frame overflows and bubbletea clips it from
+	// the top, hiding the header; the compact view stays honest instead.
+	const (
+		minDashW = 62
+		minDashH = 30
+	)
+	if m.w < minDashW || m.h < minDashH {
 		return m.renderMinimal()
 	}
 	if len(m.snap.Providers) == 0 {
@@ -162,7 +184,7 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	logo := wordmark()
-	segs := []string{logo, dim("v" + m.cfg.Version)}
+	segs := []headerSeg{{text: logo}, {text: dim("v" + m.cfg.Version), shed: 40}}
 
 	up, tot := m.upCount()
 	dot := dotUp
@@ -173,31 +195,98 @@ func (m Model) renderHeader() string {
 	case up < tot:
 		dot, st = dotWarn, styleWarn
 	}
-	segs = append(segs, st.Render(fmt.Sprintf("%s %d/%d engines", strip(dot), up, tot)))
+	segs = append(segs, headerSeg{text: st.Render(fmt.Sprintf("%s %d/%d engines", strip(dot), up, tot))})
 
 	outV := styleValue.Foreground(heatColor(norm(m.lastAgg, m.maxAgg))).Render("▲ " + fmtRate(m.lastAgg))
 	inV := styleInfo.Render("▼ " + fmtRate(aggIn(m.snap)))
-	segs = append(segs, outV+" "+dim("tok/s out"), inV+" "+dim("in"))
+	segs = append(segs,
+		headerSeg{text: outV + " " + dim("tok/s out"), shed: 10},
+		headerSeg{text: inV + " " + dim("in"), shed: 20},
+	)
 
 	if up > 0 || tot > 0 {
-		segs = append(segs, dim("up "+fmtDur(m.snap.Uptime)))
+		segs = append(segs, headerSeg{text: dim("up " + fmtDur(m.snap.Uptime)), shed: 50})
 	}
 	if m.snap.Sys != nil && m.snap.Sys.RemoteHost != "" {
-		segs = append(segs, styleMagic.Render("via ssh:"+m.snap.Sys.RemoteHost))
+		segs = append(segs, headerSeg{text: styleMagic.Render("via ssh:" + m.snap.Sys.RemoteHost)})
 	}
+
 	right := ""
 	if m.paused {
 		right += styleWarn.Render("‖ PAUSED ") + dim("│ ")
 	}
 	right += styleMagic.Render(m.clock.Format("15:04:05"))
-	return joinSpread(segs, right, m.w)
+	left := fitSegments(segs, m.w-lipgloss.Width(right)-1)
+	return joinSpread(left, right, m.w)
+}
+
+// headerSeg is one header chunk plus how eagerly it yields space on narrow
+// panes: 0 pins the segment, larger numbers shed sooner.
+type headerSeg struct {
+	text string
+	shed int
+}
+
+// fitSegments sheds the highest-numbered segments (rightmost first) until
+// the dim-piped row fits avail cells. When nothing sheddable remains it hard
+// clips as a last resort: even one wrapping cell drags every later frame line
+// out of alignment on terminals narrower than the row.
+func fitSegments(segs []headerSeg, avail int) []string {
+	if avail <= 0 || len(segs) == 0 {
+		return nil
+	}
+	src := make([]headerSeg, len(segs))
+	copy(src, segs)
+	width := func(ss []headerSeg) int {
+		n := 0
+		for i, s := range ss {
+			if i > 0 {
+				n += lipgloss.Width(dim(" │ "))
+			}
+			n += lipgloss.Width(s.text)
+		}
+		return n
+	}
+	for len(src) > 1 && width(src) > avail {
+		worst, idx := 0, -1
+		for i, s := range src {
+			if s.shed >= worst && s.shed > 0 {
+				worst, idx = s.shed, i
+			}
+		}
+		if idx < 0 {
+			break
+		}
+		src = append(src[:idx], src[idx+1:]...)
+	}
+	parts := make([]string, len(src))
+	for i, s := range src {
+		parts[i] = s.text
+	}
+	line := strings.Join(parts, dim(" │ "))
+	if w := lipgloss.Width(line); w > avail {
+		line = clip(line, avail)
+	}
+	return []string{line}
+}
+
+// minIdentH is the shortest pane that still affords a second system strip
+// row; below it identity and sensors yield rather than pushing the frame
+// past the pane edge.
+const minIdentH = 31
+
+// stripTwoRows reports whether the pane affords the system strip's second
+// row. It must agree with renderSystem's row-2 gate or the height budget
+// lies by one row; erring toward fewer rendered rows than budgeted is safe
+// (the leftover becomes padding), the opposite direction overflows.
+func (m Model) stripTwoRows() bool {
+	return m.snap.Sys != nil && m.h >= minIdentH
 }
 
 // systemStripRows is the total height of the system strip: border (2) plus
-// one row of vitals, plus a second identity row when the host reports any.
+// one row of vitals, plus a second identity row when stripTwoRows says so.
 func (m Model) systemStripRows() int {
-	if sy := m.snap.Sys; sy != nil && (sy.CPUModel != "" || sy.OsName != "" ||
-		len(sy.Drivers) > 0 || len(sy.NPUs) > 0 || len(sysCPUTemps(sy)) > 0) {
+	if m.stripTwoRows() {
 		return 4
 	}
 	return 3
@@ -205,21 +294,25 @@ func (m Model) systemStripRows() int {
 
 // sectionHeights splits the body into exact inner heights for the throughput
 // chart, the mid-row panels and the agent feed. Fixed chrome is computed from
-// the header, blank spacer, four panel titles, box borders, system strip and
-// footer; the reserve below must cover all of it or the frame overflows the
-// pane and the header scrolls off.
+// the header, blank spacer, three panel titles, box borders, the prompt chart
+// row, system strip and footer: outH+midIn+feedIn must sum to exactly f or
+// the frame overflows the pane and bubbletea clips it from the top, hiding
+// the header. Minimums reshuffle the split but never change the sum.
 func (m Model) sectionHeights() (outH, midIn, feedIn int) {
-	f := m.h - 15 - m.systemStripRows()
+	f := m.h - 17 - m.systemStripRows()
 	if f < 10 {
 		f = 10
 	}
-	outH = clampi(int(float64(f)*0.42), 4, 99)
-	feedIn = clampi(int(float64(f)*0.22), 3, 12)
+	outH = clampi(int(float64(f)*0.42), 3, 99)
+	feedIn = clampi(int(float64(f)*0.22), 2, 12)
 	midIn = f - outH - feedIn
-	if midIn < 5 {
+	if midIn < 5 { // mid-row panels need room for three detail lines
 		outH -= 5 - midIn
 		midIn = 5
-		outH = max(outH, 3)
+		if outH < 3 { // charts bottomed out: take the rest from the feed
+			feedIn -= 3 - outH
+			outH = 3
+		}
 	}
 	return outH, midIn, feedIn
 }
@@ -263,10 +356,13 @@ func (m Model) outSeries(w int, cadence time.Duration) ([]float64, map[int]bool)
 
 func (m Model) throughputTitle() string {
 	title := "THROUGHPUT " + styleHot.Render("▲ "+fmtRate(m.lastAgg)+" tok/s") + dim("  decode")
-	if m.chartCompressed {
-		title += dim(" · compressed ←") + styleInfo.Render("t")
+	// Advertise the toggle in both modes: the hint only showing while
+	// compressed hid how to get back to the uniform timescale.
+	mode := dim(" · compressed ←")
+	if !m.chartCompressed {
+		mode = dim(" · uniform ←")
 	}
-	return title
+	return title + mode + styleInfo.Render("t")
 }
 
 // timedVal is one sample with its absolute timestamp.
@@ -436,7 +532,7 @@ func (m Model) renderSystem() string {
 
 	row1 := padBlock(joinSpreadLeft(vitals, w), w, 1)
 	row2 := ""
-	if len(ident) > 0 {
+	if len(ident) > 0 && m.stripTwoRows() { // must match systemStripRows' budget
 		row2 = "\n" + padBlock(joinSpreadLeft(ident, w), w, 1)
 	}
 	return panelStyle.Render(row1 + row2)
@@ -617,7 +713,12 @@ func (m Model) gaugesBody(w int) string {
 		b.WriteString(row + "\n\n")
 	}
 	if b.Len() == 0 {
-		return dim("waiting for telemetry…")
+		// No engines yet is genuinely "waiting"; engines present but all
+		// down never resolves, so name it instead of promising telemetry.
+		if len(m.snap.Providers) == 0 {
+			return dim("waiting for telemetry…")
+		}
+		return dim("no healthy engines (see BACKENDS)")
 	}
 	return b.String()
 }
@@ -655,6 +756,11 @@ func (m Model) probesTitle() string {
 	t := "PROBES"
 	if last, ok := m.lastProbe(); ok {
 		t += " " + dim("last") + " " + fmtMs(last.TTFTms) + " " + styleHot.Render(fmtRate(last.TokPS)+"/s")
+	}
+	// Pressing p fires real generations that take seconds: acknowledge the
+	// keypress immediately or it reads as dead until the first result lands.
+	if !m.probeReq.IsZero() {
+		t += "  " + styleWarn.Render("● probing…")
 	}
 	return t
 }
@@ -784,8 +890,10 @@ func (m Model) renderEmpty() string {
 func (m Model) renderHelp() string {
 	rows := [][2]string{
 		{"q / ctrl+c", "quit"},
+		{"esc", "close help / quit"},
 		{"space", "pause / resume streaming"},
 		{"p", "fire synthetic probe at every backend"},
+		{"t", "toggle compressed timescale + grid"},
 		{"?", "toggle this help"},
 		{"", ""},
 		{"--demo", "simulated fleet, zero setup"},
@@ -802,8 +910,16 @@ func (m Model) renderHelp() string {
 	return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, box)
 }
 
+// renderMinimal is the degraded view for panes too small for the dashboard:
+// one line per engine, plus orientation the compact layout must carry on its
+// own because the footer and header are not rendered here.
 func (m Model) renderMinimal() string {
 	var b strings.Builder
+	b.WriteString(dim(clip("enlarge window for the full dashboard", m.w)) + "\n")
+	if len(m.snap.Providers) == 0 {
+		b.WriteString(styleWarn.Render("no inference engines detected") + "\n")
+		b.WriteString(dim(clip("try tokentop --demo or --add URL", m.w)) + "\n")
+	}
 	for _, p := range m.snap.Providers {
 		st := styleOK
 		if !p.OK {
@@ -820,7 +936,12 @@ func (m Model) renderMinimal() string {
 		}
 		b.WriteString(line + "\n")
 	}
-	return b.String()
+	keys := "q quit · space pause · p probe"
+	if m.w >= 52 {
+		keys += " · t timescale"
+	}
+	keys += " · ? help"
+	return b.String() + dim(clip(keys, m.w))
 }
 
 // --- helpers ---------------------------------------------------------------
