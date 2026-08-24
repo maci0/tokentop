@@ -31,13 +31,13 @@ demo: build ## build, then run the simulated fleet
 	./$(BINARY) --demo
 
 .PHONY: test
-test: ## run all tests with the race detector
-	$(GO) test -race ./...
+test: ## run all tests with the race detector, shuffled order
+	$(GO) test -race -shuffle=on ./...
 
 .PHONY: cover
 cover: ## test coverage summary per package
 	mkdir -p $(DIST)
-	$(GO) test -race -coverprofile=$(DIST)/coverage.out ./... && \
+	$(GO) test -race -shuffle=on -coverprofile=$(DIST)/coverage.out ./... && \
 		$(GO) tool cover -func=$(DIST)/coverage.out | tail -1
 
 .PHONY: sbom
