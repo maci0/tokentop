@@ -746,7 +746,9 @@ func feedLine(ev core.AgentEvent) string {
 	name := shorten(core.SanitizeText(ev.Agent), 16)
 	tok := fmt.Sprintf("↑%s ↓%s", fmtCount(ev.PromptTokens), fmtCount(ev.OutputTokens))
 	parts := []string{
-		styleDim.Render(ev.At.Format("15:04:05")),
+		// Event timestamps come from external senders and may carry any
+		// zone (or none, which decodes as UTC); render the viewer's clock.
+		styleDim.Render(ev.At.Local().Format("15:04:05")),
 		st.Render(icon + " " + name),
 		styleDim.Render(shorten(core.SanitizeText(ev.Model), 20)),
 		tok,

@@ -84,7 +84,7 @@ func (s *Sampler) Snapshot() []Info {
 	if err != nil {
 		return nil
 	}
-	dt := now.Sub(s.last).Seconds() // wall time since previous successful poll
+	dt := now.Sub(s.last).Seconds() // elapsed time (monotonic) since previous successful poll
 	s.last = now
 
 	self := pidSelf()
