@@ -34,7 +34,7 @@ tokentop ssh://maci@box    # watch engines on another host
 - **System strip** - RAM/swap/load, CPU model, OS+kernel, GPU driver versions
   (incl. CUDA), NPU enumeration (Intel NPU, AMD XDNA xN, Qualcomm Cloud
   AI100, Apple Neural Engine with chip generation), GPU temp/util/VRAM/
-  power/fans/clocks - on Apple Silicon including live wired-memory and
+  power - on Apple Silicon including live wired-memory and
   utilization from IOAccelerator - and a second identity row for sensors.
 - **Braille charts** - dot-matrix rendering with btop-style fading bloom;
   timescale compresses leftward (`t` toggles) with faint grid marks showing

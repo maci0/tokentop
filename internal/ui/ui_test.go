@@ -128,15 +128,6 @@ func TestMinimalViewRendersRates(t *testing.T) {
 	}
 }
 
-func TestLevelCharBounds(t *testing.T) {
-	cases := map[int]rune{-5: ' ', 0: ' ', 4: '▄', 8: '█', 99: '█'}
-	for in, want := range cases {
-		if got := LevelChar(in); got != want {
-			t.Errorf("LevelChar(%d) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // feedLine must render event timestamps in the viewer's zone: ingest events
 // carry sender-supplied RFC 3339 stamps whose offset (or absent offset,
 // decoded as UTC) is otherwise shown as-is.
@@ -147,34 +138,6 @@ func TestFeedLineRendersEventTimeInLocalZone(t *testing.T) {
 	want := at.Local().Format("15:04:05")
 	if !strings.Contains(line, want) {
 		t.Fatalf("feedLine time = line %q, want it to show local %q", line, want)
-	}
-}
-
-func TestAreaChartShape(t *testing.T) {
-	vals := []float64{1, 2, 3, 4, 5}
-	out := AreaChart(vals, 10, 3, heatColor)
-	rows := strings.Split(out, "\n")
-	if len(rows) != 3 {
-		t.Fatalf("rows = %d", len(rows))
-	}
-	for i, r := range rows {
-		if w := lipgloss.Width(r); w != 10 {
-			t.Errorf("row %d width = %d, want 10", i, w)
-		}
-	}
-	// bottom row must be the fullest
-	if strip(rows[2]) == "" {
-		t.Fatal("bottom row empty")
-	}
-}
-
-func TestAreaChartZeroData(t *testing.T) {
-	out := AreaChart(nil, 8, 2, heatColor)
-	if n := strings.Count(out, "\n") + 1; n != 2 {
-		t.Fatalf("zero-data rows = %d", n)
-	}
-	if strings.Contains(strings.NewReplacer(" ", "", "\n", "").Replace(strip(out)), "█") {
-		t.Fatal("zero data rendered filled cells")
 	}
 }
 

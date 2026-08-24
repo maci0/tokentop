@@ -43,9 +43,8 @@ type testSSHServer struct {
 	hostKey  ssh.Signer
 	password string // empty => publickey-only
 
-	mu      sync.Mutex
-	conns   []net.Conn
-	closers []io.Closer
+	mu    sync.Mutex
+	conns []net.Conn
 }
 
 func newTestSSHServer(t *testing.T, password string, port int) *testSSHServer {

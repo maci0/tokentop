@@ -237,7 +237,7 @@ func TestPollLMStudioEnrichment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []core.ModelInfo{{Name: "qwen", State: "loaded", CtxMax: 8192}}
+	want := []core.ModelInfo{{Name: "qwen", CtxMax: 8192}}
 	if len(m.Models) != 1 || m.Models[0] != want[0] {
 		t.Fatalf("models = %+v, want %+v (non-llm filtered, v0 feed wins)", m.Models, want)
 	}
@@ -267,7 +267,7 @@ func TestPollLemonadeEnrichment(t *testing.T) {
 	if m.Version != "9.3.3" {
 		t.Errorf("version = %q, want 9.3.3", m.Version)
 	}
-	want := []core.ModelInfo{{Name: "Llama-3.2-1B", State: "loaded", CtxMax: 4096}}
+	want := []core.ModelInfo{{Name: "Llama-3.2-1B", CtxMax: 4096}}
 	if len(m.Models) != 1 || m.Models[0] != want[0] {
 		t.Fatalf("models = %+v, want %+v", m.Models, want)
 	}

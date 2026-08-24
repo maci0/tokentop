@@ -20,9 +20,6 @@ func TestScanAmdSysfs(t *testing.T) {
 	write("card0/device/gpu_busy_percent", "73")
 	write("card0/device/hwmon/hwmon5/temp1_input", "58000")
 	write("card0/device/hwmon/hwmon5/power1_average", "150000000")
-	write("card0/device/hwmon/hwmon5/fan1_input", "1200")
-	write("card0/device/hwmon/hwmon5/freq1_input", "2100000000")
-	write("card0/device/vbios_version", "113-D702PI-047")
 	write("card0/device/product_name", "AMD Radeon PRO W7900\n")
 	write("card1/device/error", "not an amdgpu") // no mem_info files -> skipped
 
@@ -36,7 +33,7 @@ func TestScanAmdSysfs(t *testing.T) {
 		d.Name != "AMD Radeon PRO W7900" {
 		t.Errorf("amdgpu device: %+v", d)
 	}
-	if d.FanRPM != 1200 || d.ClocksSM != 2100 || d.PowerW != 150 || d.VBios == "" {
+	if d.PowerW != 150 {
 		t.Errorf("hwmon extras: %+v", d)
 	}
 }

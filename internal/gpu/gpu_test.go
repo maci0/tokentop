@@ -6,9 +6,9 @@ import (
 	"tokentop/internal/core"
 )
 
-const nvidiaCSV = `0, NVIDIA GeForce RTX 4090, 65, 12345, 24564, 98, 350.51, 40, 2520, 550.54.14, 8.9
-1, NVIDIA A100-SXM4-80GB, 71, 64000, 81920, 42, 275.00, N/A, 1410, 535.104.05, 8.0
-2, Some, Name With Commas, 55, 100, 200, [N/A], [N/A], [N/A], [N/A], [N/A], [N/A]
+const nvidiaCSV = `0, NVIDIA GeForce RTX 4090, 65, 12345, 24564, 98, 350.51, 550.54.14
+1, NVIDIA A100-SXM4-80GB, 71, 64000, 81920, 42, 275.00, [N/A]
+2, Some, Name With Commas, 55, 100, 200, [N/A], [N/A], [N/A]
 `
 
 func TestParseNvidiaSMI(t *testing.T) {
@@ -26,8 +26,11 @@ func TestParseNvidiaSMI(t *testing.T) {
 	if d.UtilPct != 98 || d.PowerW != 350.51 {
 		t.Errorf("util/power = %v/%v", d.UtilPct, d.PowerW)
 	}
-	if d.FanRPM != 40 || d.ClocksSM != 2520 || d.Driver != "550.54.14" || d.ComputeCap != "8.9" {
+	if d.Driver != "550.54.14" {
 		t.Errorf("extended fields: %+v", d)
+	}
+	if devs[1].Driver != "" { // "[N/A]" degrades to empty
+		t.Errorf("driver N/A handling: %+v", devs[1])
 	}
 	if devs[2].Name != "Some, Name With Commas" || devs[2].PowerW != 0 ||
 		devs[2].UtilPct != 0 || devs[2].Driver != "" {
