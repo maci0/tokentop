@@ -18,6 +18,7 @@ package agentwatch
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -178,7 +179,7 @@ func (w *Watcher) read() {
 func note(p agentusage.Process, thinking int) string {
 	s := shortDir(p.Dir)
 	if thinking > 0 {
-		s += " · " + itoa(thinking) + " reasoning"
+		s += " · " + strconv.Itoa(thinking) + " reasoning"
 	}
 	return s
 }
@@ -196,16 +197,4 @@ func shortDir(dir string) string {
 		}
 	}
 	return dir
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }

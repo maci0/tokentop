@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -176,7 +177,7 @@ func TestShortDirKeepsTheIdentifyingPart(t *testing.T) {
 
 func usageLine(cwd string, out int) string {
 	return `{"type":"assistant","cwd":"` + cwd +
-		`","message":{"usage":{"output_tokens":` + itoa(out) + `}}}`
+		`","message":{"usage":{"output_tokens":` + strconv.Itoa(out) + `}}}`
 }
 
 func appendLine(t *testing.T, path, line string) {
