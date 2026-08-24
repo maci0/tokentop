@@ -152,8 +152,8 @@ func ExtractPort(args []string) int {
 					return p
 				}
 			}
-			if strings.HasPrefix(a, flag+"=") {
-				if p, err := strconv.Atoi(strings.TrimPrefix(a, flag+"=")); err == nil {
+			if after, ok := strings.CutPrefix(a, flag+"="); ok {
+				if p, err := strconv.Atoi(after); err == nil {
 					return p
 				}
 			}

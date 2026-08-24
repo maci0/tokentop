@@ -113,7 +113,7 @@ func lookupSSHConfig(name string) *sshConfigEntry {
 	entry := &sshConfigEntry{}
 	matched := false
 	inBlock := false
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		key, val, ok := cutConfigField(line)
 		if !ok {
 			continue
@@ -121,7 +121,7 @@ func lookupSSHConfig(name string) *sshConfigEntry {
 		switch strings.ToLower(key) {
 		case "host":
 			inBlock = false
-			for _, pat := range strings.Fields(val) {
+			for pat := range strings.FieldsSeq(val) {
 				if patternMatch(strings.ToLower(pat), strings.ToLower(name)) {
 					inBlock = true
 					matched = true

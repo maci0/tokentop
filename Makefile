@@ -54,6 +54,11 @@ vet: ## run go vet
 fmt: ## rewrite all Go files with gofmt (including simplifications)
 	gofmt -s -w .
 
+.PHONY: fix
+fix: ## apply go fix modernization autofixes, then gofmt
+	$(GO) fix ./...
+	gofmt -s -w .
+
 .PHONY: check
 check: ## verify gofmt -s formatting and vet (CI parity)
 	@unformatted=$$(gofmt -s -l .); \

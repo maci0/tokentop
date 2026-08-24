@@ -134,10 +134,7 @@ func padTo(s string, w int) string {
 func joinSpread(left, right string, width int) string {
 	lw := lipgloss.Width(left)
 	rw := lipgloss.Width(right)
-	gap := width - lw - rw
-	if gap < 1 {
-		gap = 1
-	}
+	gap := max(width-lw-rw, 1)
 	return left + strings.Repeat(" ", gap) + right
 }
 

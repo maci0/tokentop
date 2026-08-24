@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -164,10 +165,8 @@ func TestPollCarriesBearerAndContextLength(t *testing.T) {
 }
 
 func TestCandidatePortsIncludeOmniRoute(t *testing.T) {
-	for _, p := range CandidatePorts() {
-		if p == 20128 {
-			return
-		}
+	if slices.Contains(CandidatePorts(), 20128) {
+		return
 	}
 	t.Error("20128 missing from candidate ports")
 }
@@ -321,7 +320,7 @@ func TestVersionCacheRetriesUntilResolved(t *testing.T) {
 	if got := vc.fetch(ctx, srv.URL); got != "2.7.1" {
 		t.Fatalf("fetch after recovery = %q, want 2.7.1", got)
 	}
-	for i := 0; i < 3; i++ { // resolved: no further traffic
+	for range 3 { // resolved: no further traffic
 		if got := vc.fetch(ctx, srv.URL); got != "2.7.1" {
 			t.Fatalf("cached fetch = %q, want 2.7.1", got)
 		}

@@ -68,7 +68,7 @@ func Discover(ctx context.Context, c *Client, wellKnown []int) (*Discovery, erro
 		if err != nil {
 			return nil, fmt.Errorf("port probe failed: %w", err) // unreachable host: nothing else will work either
 		}
-		for _, f := range strings.Fields(out) {
+		for f := range strings.FieldsSeq(out) {
 			if p, err := strconv.Atoi(f); err == nil && p > 0 {
 				d.Listening = append(d.Listening, p)
 			}
@@ -90,7 +90,7 @@ const netTCPScript = "(cat /proc/net/tcp 2>/dev/null; cat /proc/net/tcp6 2>/dev/
 // The local address column is hex like 0100007F:2CA6.
 func parseNetTCP(out string) []int {
 	seen := map[int]bool{}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		f := strings.Fields(line)
 		if len(f) < 4 || !strings.HasSuffix(f[0], ":") {
 			continue // header
@@ -148,7 +148,7 @@ exit 0`
 // (engine matching, --port extraction) scan tokens rather than exact paths.
 func parseProcScan(out string) []procs.Info {
 	var infos []procs.Info
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
