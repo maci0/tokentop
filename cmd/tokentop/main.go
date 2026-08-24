@@ -61,6 +61,21 @@ func main() {
 	}
 	log.SetFlags(0)
 
+	if err := validateFlags(*once, *interval, *probeSecs, *frames); err != nil {
+		fmt.Fprintf(os.Stderr, "tokentop: %v\n", err)
+		os.Exit(2)
+	}
+	warnUnknownEnv()
+
+	// Only when --ingest was given explicitly should an unusable listen
+	// address abort the run; the default-enabled endpoint degrades gracefully.
+	ingestSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "ingest" {
+			ingestSet = true
+		}
+	})
+
 	// Bearer token for gateways that require API keys (OmniRoute et al).
 	// Flag wins; OMNIROUTE_API_KEY / TOKENTOP_BEARER are convenience fallbacks.
 	switch {
@@ -174,6 +189,13 @@ func main() {
 	if !*noIngest && recorder != nil {
 		srv, err := ingest.New(*ingestArg, recorder)
 		if err != nil {
+			if ingestSet {
+				// The operator explicitly asked for this endpoint; continuing
+				// would run the dashboard without the event feed they asked
+				// for, with only a stderr line lost under the alt screen.
+				fmt.Fprintf(os.Stderr, "tokentop: --ingest %s unusable: %v\n", *ingestArg, err)
+				os.Exit(2)
+			}
 			fmt.Fprintf(os.Stderr, "tokentop: ingest disabled (%v)\n", err)
 		} else {
 			feedAddr = srv.Addr()
@@ -260,9 +282,6 @@ func runOnce(cfg ui.Config, ch <-chan core.Snapshot, n int) {
 	if v, err := strconv.Atoi(os.Getenv("TOKENTOP_LINES")); err == nil && v > 20 {
 		h = v
 	}
-	if n < 1 {
-		n = 1
-	}
 	// Snapshots land one poll interval apart, so a slow-polling host needs a
 	// proportionally patient wait: a fixed cap would abort a healthy
 	// --interval 10s run before its second frame ever arrives.
@@ -286,6 +305,50 @@ type flagAddList []string
 
 func (a *flagAddList) String() string     { return strings.Join(*a, ",") }
 func (a *flagAddList) Set(v string) error { *a = append(*a, v); return nil }
+
+// validateFlags rejects out-of-range values at startup instead of letting
+// them be coerced downstream (a non-positive interval silently became 1s
+// inside the collector): a running dashboard that ignores what it was asked
+// to do is a misconfiguration nobody can see.
+func validateFlags(once bool, interval time.Duration, probeSecs, frames int) error {
+	if interval <= 0 {
+		return fmt.Errorf("--interval must be positive, got %s", interval)
+	}
+	if probeSecs < 0 {
+		return fmt.Errorf("--probe must be >= 0 (0 disables auto-probe), got %d", probeSecs)
+	}
+	if once && frames < 1 {
+		return fmt.Errorf("--frames must be >= 1, got %d", frames)
+	}
+	return nil
+}
+
+// tokentopEnvVars are the TOKENTOP_* environment variables this build reads;
+// see also OMNIROUTE_API_KEY, SSH_AUTH_SOCK and the ssh defaults.
+var tokentopEnvVars = map[string]bool{
+	"TOKENTOP_BEARER":       true,
+	"TOKENTOP_SSH_PASSWORD": true,
+	"TOKENTOP_COLUMNS":      true,
+	"TOKENTOP_LINES":        true,
+}
+
+// warnUnknownEnv reports unrecognized TOKENTOP_* variables once at startup:
+// a misspelled knob would otherwise be ignored silently and look like a
+// no-op feature.
+func warnUnknownEnv() {
+	var unknown []string
+	for _, kv := range os.Environ() {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok || !strings.HasPrefix(name, "TOKENTOP_") || tokentopEnvVars[name] {
+			continue
+		}
+		unknown = append(unknown, name)
+	}
+	if len(unknown) > 0 {
+		fmt.Fprintf(os.Stderr, "tokentop: ignoring unknown environment variable(s): %s\n",
+			strings.Join(unknown, ", "))
+	}
+}
 
 // attachRemote connects to an ssh target, discovers engines, relays their
 // ports through the connection and starts remote stats sampling. Everything

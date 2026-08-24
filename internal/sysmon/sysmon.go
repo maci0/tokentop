@@ -4,6 +4,7 @@
 package sysmon
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 	"strings"
@@ -83,6 +84,14 @@ func satSub(a, b uint64) uint64 {
 		return 0
 	}
 	return a - b
+}
+
+// utsField converts a NUL-padded Utsname char array to a string.
+func utsField(b []byte) string {
+	if i := bytes.IndexByte(b, 0); i >= 0 {
+		return string(b[:i])
+	}
+	return string(b)
 }
 
 func cutMeminfoLine(line string) (string, uint64, bool) {

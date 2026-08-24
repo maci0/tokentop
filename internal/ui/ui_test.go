@@ -543,15 +543,15 @@ func TestFitSegmentsShedsByPriority(t *testing.T) {
 		{text: "CCCC", shed: 50},
 		{text: "DDDD"},
 	}
-	if got := strings.Join(fitSegments(segs, 60), "|"); !strings.Contains(got, "CCCC") {
+	if got := fitSegments(segs, 60); !strings.Contains(got, "CCCC") {
 		t.Errorf("wide enough: nothing should be shed: %q", got)
 	}
-	got := strings.Join(fitSegments(segs, 17), "|")
+	got := fitSegments(segs, 17)
 	if strings.Contains(got, "CCCC") || strings.Contains(got, "BBBB") || !strings.Contains(got, "DDDD") {
 		t.Errorf("tight: want CCCC then BBBB shed first, pins kept: %q", got)
 	}
-	if got := fitSegments(segs, 6); lipgloss.Width(got[0]) > 6 || !strings.HasPrefix(got[0], "AAAA") {
-		t.Errorf("overflowing pins must hard-clip from the left: %q", got[0])
+	if got := fitSegments(segs, 6); lipgloss.Width(got) > 6 || !strings.HasPrefix(got, "AAAA") {
+		t.Errorf("overflowing pins must hard-clip from the left: %q", got)
 	}
 }
 

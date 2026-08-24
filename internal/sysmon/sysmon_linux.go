@@ -156,18 +156,6 @@ func sysModuleVersion(module string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// utsField converts a NUL-padded Utsname char array to a string.
-func utsField(b []byte) string {
-	out := make([]byte, 0, len(b))
-	for _, c := range b {
-		if c == 0 {
-			break
-		}
-		out = append(out, byte(c))
-	}
-	return string(out)
-}
-
 // scanAccelDrivers enumerates the accelerator class (/sys/class/accel):
 // NPUs like Intel's NPU, AMD XDNA and Qualcomm Cloud AI100. Same-driver
 // devices collapse into one entry with a count suffix.

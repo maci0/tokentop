@@ -202,7 +202,6 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	snap := core.Snapshot{At: time.Now(), Uptime: time.Since(c.started)}
 
 	type result struct {
-		idx int
 		m   *provider.Metrics
 		err error
 	}
@@ -215,7 +214,7 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 			pctx, cancel := context.WithTimeout(context.Background(), provider.PollTimeout)
 			defer cancel()
 			m, err := p.Poll(pctx)
-			results[i] = result{i, m, err}
+			results[i] = result{m, err}
 		}(i, p)
 	}
 	wg.Wait()
@@ -238,8 +237,8 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	}
 
 	now := time.Now()
-	for _, r := range results {
-		p := c.providers[r.idx]
+	for i, r := range results {
+		p := c.providers[i]
 		ps := core.ProviderSnapshot{
 			Label: p.Label(),
 			Kind:  kindOf(p),
