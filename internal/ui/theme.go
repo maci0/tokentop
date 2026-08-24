@@ -57,8 +57,6 @@ var (
 		"koboldcpp": lipgloss.NewStyle().Foreground(cYellow),
 		"localai":   lipgloss.NewStyle().Foreground(cTeal),
 		"tgi":       lipgloss.NewStyle().Foreground(cGreen),
-		"oobabooga": lipgloss.NewStyle().Foreground(cPeach),
-		"tabbyapi":  lipgloss.NewStyle().Foreground(cMagenta),
 		"litellm":   lipgloss.NewStyle().Foreground(cLavender),
 		"gpustack":  lipgloss.NewStyle().Foreground(cTeal),
 		"lemonade":  lipgloss.NewStyle().Foreground(cYellow),
@@ -66,7 +64,6 @@ var (
 		// via its X-OmniRoute-Route-Class header and must not fall through
 		// to the dim unknown-kind badge.
 		"omnirouter": lipgloss.NewStyle().Foreground(cLavender),
-		"demo":       lipgloss.NewStyle().Foreground(cPink),
 	}
 
 	panelStyle = lipgloss.NewStyle().

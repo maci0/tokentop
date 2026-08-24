@@ -24,7 +24,7 @@ func hostInfoDarwin(s *core.SysSample) {
 	}
 	var un unix.Utsname
 	if err := unix.Uname(&un); err == nil {
-		s.Kernel = utsFieldByte(un.Release[:])
+		s.Kernel = utsField(un.Release[:])
 	}
 	s.HostUptime = boottimeUptime()
 	s.NPUs = appleNPUs()
@@ -57,14 +57,4 @@ func boottimeUptime() time.Duration {
 		return 0
 	}
 	return time.Since(time.Unix(sec, 0))
-}
-
-// utsFieldByte converts a NUL-padded Utsname array to a string.
-func utsFieldByte(b []byte) string {
-	for i, c := range b {
-		if c == 0 {
-			return string(b[:i])
-		}
-	}
-	return strings.TrimSpace(string(b))
 }

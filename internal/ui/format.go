@@ -130,16 +130,15 @@ func padTo(s string, w int) string {
 	return s
 }
 
-// joinSpread places left segments and right segment on one padded line.
-func joinSpread(left []string, right string, width int) string {
-	l := strings.Join(left, dim(" │ "))
-	lw := lipgloss.Width(l)
+// joinSpread places a left segment row and right segment on one padded line.
+func joinSpread(left, right string, width int) string {
+	lw := lipgloss.Width(left)
 	rw := lipgloss.Width(right)
 	gap := width - lw - rw
 	if gap < 1 {
 		gap = 1
 	}
-	return l + strings.Repeat(" ", gap) + right
+	return left + strings.Repeat(" ", gap) + right
 }
 
 // joinSpreadLeft packs segments left-to-right up to w visible cells.

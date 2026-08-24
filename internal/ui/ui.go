@@ -231,9 +231,9 @@ type headerSeg struct {
 // the dim-piped row fits avail cells. When nothing sheddable remains it hard
 // clips as a last resort: even one wrapping cell drags every later frame line
 // out of alignment on terminals narrower than the row.
-func fitSegments(segs []headerSeg, avail int) []string {
+func fitSegments(segs []headerSeg, avail int) string {
 	if avail <= 0 || len(segs) == 0 {
-		return nil
+		return ""
 	}
 	src := make([]headerSeg, len(segs))
 	copy(src, segs)
@@ -267,7 +267,7 @@ func fitSegments(segs []headerSeg, avail int) []string {
 	if w := lipgloss.Width(line); w > avail {
 		line = clip(line, avail)
 	}
-	return []string{line}
+	return line
 }
 
 // minIdentH is the shortest pane that still affords a second system strip
@@ -523,10 +523,10 @@ func (m Model) renderSystem() string {
 	}
 	switch {
 	case sy == nil:
-	case shownTemps == 0 && len(sysGPUs(sy)) == 0 && sy.CPUModel == "" &&
+	case shownTemps == 0 && len(sy.GPUs) == 0 && sy.CPUModel == "" &&
 		len(sy.Drivers) == 0 && sy.OsName == "":
 		ident = append(ident, dim("no sensors found"))
-	case len(sysGPUs(sy)) == 0 && len(sy.Temps) > shownTemps:
+	case len(sy.GPUs) == 0 && len(sy.Temps) > shownTemps:
 		ident = append(ident, dim(fmt.Sprintf("+%d more", len(sy.Temps)-shownTemps)))
 	}
 
@@ -639,13 +639,6 @@ func sysCPUTemps(sy *core.SysSample) []core.TempReading {
 		return cpu
 	}
 	return sy.Temps
-}
-
-func sysGPUs(sy *core.SysSample) []core.GPUDevice {
-	if sy == nil {
-		return nil
-	}
-	return sy.GPUs
 }
 
 func tempColor(celsius float64) lipgloss.Color {

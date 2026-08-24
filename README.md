@@ -123,6 +123,22 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 
 Password auth for ssh targets: interactive prompt, or `TOKENTOP_SSH_PASSWORD`.
 
+## Environment variables
+
+| variable | what it does |
+|---|---|
+| `OMNIROUTE_API_KEY` | bearer token fallback for `--bearer` (checked first) |
+| `TOKENTOP_BEARER` | bearer token fallback for `--bearer` (checked after `OMNIROUTE_API_KEY`) |
+| `TOKENTOP_SSH_PASSWORD` | ssh password for headless runs; otherwise an interactive prompt |
+| `TOKENTOP_COLUMNS` / `TOKENTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20 |
+
+The flag always wins over its env fallback. Prefer an env var over
+`--bearer` for tokens: command-line arguments are visible in process
+listings to every user on the host. Unknown `TOKENTOP_*` variables are
+reported at startup, so a typo fails loudly instead of doing nothing.
+Out-of-range flag values (`--interval 0`, negative `--probe`, `--frames < 1`
+with `--once`) abort with exit code 2 instead of being silently adjusted.
+
 ## Build & test
 
 ```

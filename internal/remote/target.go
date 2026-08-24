@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -170,33 +171,11 @@ func cutConfigField(line string) (key, val string, ok bool) {
 	return k, strings.TrimSpace(rest), true
 }
 
-// patternMatch implements ssh_config glob matching ('*' and '?' only).
+// patternMatch implements ssh_config glob matching ('*' and '?' only),
+// which is exactly path.Match's syntax for separator-free host names.
 func patternMatch(pat, s string) bool {
-	// iterative wildcard match without regexp
-	var pi, si int
-	star := -1
-	mark := 0
-	for si < len(s) {
-		switch {
-		case pi < len(pat) && (pat[pi] == '?' || pat[pi] == s[si]):
-			pi++
-			si++
-		case pi < len(pat) && pat[pi] == '*':
-			star = pi
-			mark = si
-			pi++
-		case star >= 0:
-			pi = star + 1
-			mark++
-			si = mark
-		default:
-			return false
-		}
-	}
-	for pi < len(pat) && pat[pi] == '*' {
-		pi++
-	}
-	return pi == len(pat)
+	matched, err := path.Match(pat, s)
+	return err == nil && matched
 }
 
 func expandTilde(p string) string {
