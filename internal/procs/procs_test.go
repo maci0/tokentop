@@ -63,3 +63,21 @@ func TestSelfIsSkipped(t *testing.T) {
 		}
 	}
 }
+
+// Derived CPU percentages saturate at zero (counter resets must not read as
+// negative load) and cap at 100 cores: many-core boxes legitimately exceed
+// 100% of one core, but a runaway multiplier must stay bounded.
+func TestClampPctBounds(t *testing.T) {
+	cases := map[float64]float64{
+		-1:            0,
+		0:             0,
+		55.5:          55.5,
+		100 * 1024:    100 * 1024,
+		100*1024 + .5: 100 * 1024,
+	}
+	for in, want := range cases {
+		if got := clampPct(in); got != want {
+			t.Errorf("clampPct(%v) = %v, want %v", in, got, want)
+		}
+	}
+}

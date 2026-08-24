@@ -219,6 +219,31 @@ func TestIdentifyLemonade(t *testing.T) {
 	}
 }
 
+// Attach is the --add entry point: identify an explicit URL and wrap it in
+// a provider, or refuse (nil) when nothing recognizable answers.
+func TestAttachIdentifiesOrRefuses(t *testing.T) {
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			w.Write([]byte("sglang:gen_throughput 1\n"))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(engine.Close)
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(plain.Close)
+
+	p := Attach(context.Background(), engine.URL)
+	if p == nil || p.Addr() != engine.URL || p.Label() != core.KindSGLang {
+		t.Fatalf("Attach = %v, want sglang provider at %s", p, engine.URL)
+	}
+	if p := Attach(context.Background(), plain.URL); p != nil {
+		t.Fatalf("unidentifiable server must not attach, got %v", p)
+	}
+}
+
 // discoverBases must identify candidates concurrently yet return providers
 // in candidate order, skipping non-engines.
 func TestDiscoverBasesParallelKeepsOrder(t *testing.T) {

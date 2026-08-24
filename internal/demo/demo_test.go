@@ -2,6 +2,7 @@ package demo
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -23,9 +24,19 @@ func TestDeterministicPerSeed(t *testing.T) {
 		t.Fatalf("provider count mismatch: %d vs %d", len(a.Providers), len(b.Providers))
 	}
 	for i := range a.Providers {
-		if a.Providers[i].OutHist[0] != b.Providers[i].OutHist[0] {
-			t.Fatalf("seeded sources diverged at provider %d", i)
+		pa, pb := a.Providers[i], b.Providers[i]
+		// The first frame carries no wall-clock state: everything a seed
+		// controls must match exactly, across the whole history not just
+		// sample zero.
+		if pa.Label != pb.Label || pa.OutTokPS != pb.OutTokPS || pa.InTokPS != pb.InTokPS ||
+			pa.KVPct != pb.KVPct || pa.Running != pb.Running || pa.Waiting != pb.Waiting ||
+			!reflect.DeepEqual(pa.OutHist, pb.OutHist) || !reflect.DeepEqual(pa.InHist, pb.InHist) {
+			t.Fatalf("seeded sources diverged at provider %d:\n%+v\n%+v", i, pa, pb)
 		}
+	}
+	if a.Sys.MemUsed != b.Sys.MemUsed || a.Sys.Load1 != b.Sys.Load1 ||
+		!reflect.DeepEqual(a.Sys.GPUs, b.Sys.GPUs) {
+		t.Fatalf("seeded vitals diverged:\n%+v\n%+v", a.Sys, b.Sys)
 	}
 }
 

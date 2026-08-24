@@ -58,6 +58,15 @@ func TestUpdateKeyMap(t *testing.T) {
 		t.Error("q with help open did not close help")
 	}
 	key("?")
+	if !m.help {
+		t.Fatal("? did not reopen help")
+	}
+	// Help is a full-screen replacement view: it must actually render its
+	// content, not just flip the flag.
+	m.w, m.h, m.ready = 110, 36, true
+	if out := m.View(); !strings.Contains(strip(out), "pause / resume streaming") {
+		t.Errorf("help view missing key rows:\n%s", out)
+	}
 	if key("esc") != nil {
 		t.Error("esc with help open must close help, not quit")
 	}
@@ -101,6 +110,21 @@ func TestUpdateKeyMap(t *testing.T) {
 	m.w, m.h, m.ready, m.clock = 110, 36, true, time.Now()
 	if out := m.View(); !strings.Contains(strip(out), "PAUSED") {
 		t.Error("paused frame lacks PAUSED badge")
+	}
+}
+
+// Terminals below the minimum geometry degrade to a one-line-per-engine
+// strip; it must still carry each engine's label and live rate.
+func TestMinimalViewRendersRates(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	nm, _ := m.Update(snapMsg(core.Snapshot{Providers: []core.ProviderSnapshot{
+		{Label: "ollama", OK: true, OutTokPS: 42},
+	}}))
+	m = nm.(Model)
+	m.w, m.h, m.ready = 40, 10, true
+	out := strip(m.View())
+	if !strings.Contains(out, "ollama") || !strings.Contains(out, "42") || !strings.Contains(out, "tok/s") {
+		t.Errorf("minimal view missing engine rate:\n%s", out)
 	}
 }
 
