@@ -82,6 +82,31 @@ func TestIngestDefaultsAndBadJSON(t *testing.T) {
 	}
 }
 
+// Token counts are unsigned quantities; a sender pushing negatives must not
+// plant junk values in the retained feed.
+func TestIngestClampsNegativeTokenCounts(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"buggy","prompt_tokens":-500,"output_tokens":-99999999999}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != 1 {
+		t.Fatal("event not recorded")
+	}
+	if rec.evs[0].PromptTokens != 0 || rec.evs[0].OutputTokens != 0 {
+		t.Errorf("negative token counts retained: %+v", rec.evs[0])
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	s, _ := New("127.0.0.1:0", &memRecorder{})
 	go s.Serve()
