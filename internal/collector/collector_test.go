@@ -152,6 +152,42 @@ func TestEmitUsesCachedSysSample(t *testing.T) {
 	}
 }
 
+// Run is the production loop: it must start the background proc+sys pollers,
+// emit one snapshot per interval (including the immediate first frame) and
+// stop promptly on ctx cancellation without stranding the emit goroutine.
+func TestRunEmitsUntilCancel(t *testing.T) {
+	fp := &fakeProvider{label: "run", m: &provider.Metrics{
+		OutTotal: 1, Models: []core.ModelInfo{{Name: "m"}},
+	}}
+	ch := make(chan core.Snapshot)
+	ctx, cancel := context.WithCancel(context.Background())
+	c := New([]provider.Provider{fp}, 5*time.Millisecond)
+	c.SetSysFn(func() core.SysSample { return core.SysSample{MemTotal: 9} })
+
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx, ch) }()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case snap := <-ch:
+			if len(snap.Providers) != 1 || snap.Providers[0].Label != "run" {
+				t.Fatalf("snapshot %d = %+v", i, snap.Providers)
+			}
+			if snap.Sys == nil || snap.Sys.MemTotal != 9 {
+				t.Fatalf("snapshot %d missing sys vitals: %+v", i, snap.Sys)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run stopped emitting snapshots")
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}
+
 func TestAgentEventRing(t *testing.T) {
 	c := New(nil, time.Second)
 	for i := 0; i < core.AgentHistoryLen+5; i++ {

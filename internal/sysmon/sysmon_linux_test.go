@@ -103,4 +103,40 @@ func TestScanAccelDriversCountsDevices(t *testing.T) {
 	if n := npuDisplayName("ivpu"); n != "Intel NPU" {
 		t.Errorf("ivpu alias = %q", n)
 	}
+	if n := npuDisplayName("qaic"); n != "Qualcomm Cloud AI100" {
+		t.Errorf("qaic = %q", n)
+	}
+	if n := npuDisplayName("somethingelse"); n != "somethingelse" {
+		t.Errorf("unknown driver must pass through: %q", n)
+	}
+}
+
+// parseNvidiaVersion feeds the identity row's driver/CUDA readout; pin the
+// accepted layout and the missing-field fallbacks.
+func TestParseNvidiaVersion(t *testing.T) {
+	drv, cuda := parseNvidiaVersion(
+		"NVRM version: NVIDIA UNIX x86_64 Kernel Module  550.54.14  Wed May  1 23:26:36 UTC 2024\n" +
+			"NVRM: Driver Version: 550.54.14         CUDA Version: 12.4\n")
+	if drv != "550.54.14" || cuda != "12.4" {
+		t.Errorf("drv=%q cuda=%q", drv, cuda)
+	}
+	drv, cuda = parseNvidiaVersion("NVRM: Driver Version: 535.104.05\n") // CUDA field absent
+	if drv != "535.104.05" || cuda != "" {
+		t.Errorf("drv=%q cuda=%q, want driver only", drv, cuda)
+	}
+	if drv, cuda := parseNvidiaVersion("no version data here"); drv != "" || cuda != "" {
+		t.Errorf("unrelated text parsed as %q/%q", drv, cuda)
+	}
+}
+
+// utsField must stop at the NUL padding of a Utsname char array.
+func TestUtsField(t *testing.T) {
+	b := make([]byte, 65)
+	copy(b, "6.1.0-18-amd64")
+	if got := utsField(b); got != "6.1.0-18-amd64" {
+		t.Errorf("utsField = %q", got)
+	}
+	if got := utsField(make([]byte, 65)); got != "" {
+		t.Errorf("all-NUL array = %q", got)
+	}
 }
