@@ -46,6 +46,19 @@ func TestParsePromSkipsCommentsAndBuckets(t *testing.T) {
 	}
 }
 
+// The exposition format permits NaN/+Inf values (0/0 gauges on idle engines);
+// one such series must not poison the summed family, or the collector's
+// stored totals keep every derived rate NaN until restart.
+func TestParsePromRejectsNonFinite(t *testing.T) {
+	fam := ParseProm("gen_total{m=\"a\"} 5\ngen_total{m=\"b\"} NaN\ngen_max{m=\"a\"} +Inf\n")
+	if fam["gen_total"] != 5 {
+		t.Fatalf("NaN series poisoned the family sum: %v", fam["gen_total"])
+	}
+	if _, ok := fam["gen_max"]; ok {
+		t.Fatal("+Inf series parsed as data")
+	}
+}
+
 func TestClassifyVLLM(t *testing.T) {
 	var m Metrics
 	classify(ParseProm(vllmFixture), &m)

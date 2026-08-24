@@ -69,9 +69,20 @@ func ParseMeminfo(b []byte, s *core.SysSample) {
 	}
 	total := vals["MemTotal"]
 	s.MemTotal = total << 10 // meminfo reports KiB
-	s.MemUsed = (total - vals["MemAvailable"]) << 10
+	s.MemUsed = satSub(total, vals["MemAvailable"]) << 10
 	s.SwapTotal = vals["SwapTotal"] << 10
-	s.SwapUsed = (vals["SwapTotal"] - vals["SwapFree"]) << 10
+	s.SwapUsed = satSub(vals["SwapTotal"], vals["SwapFree"]) << 10
+}
+
+// satSub subtracts saturating at zero: some ballooning/virtualized kernels
+// transiently report MemAvailable above MemTotal, and the remote vitals path
+// feeds this parser text from another host, so the difference must never
+// wrap to a near-2^64 byte count.
+func satSub(a, b uint64) uint64 {
+	if b >= a {
+		return 0
+	}
+	return a - b
 }
 
 func cutMeminfoLine(line string) (string, uint64, bool) {

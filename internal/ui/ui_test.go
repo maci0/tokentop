@@ -128,6 +128,32 @@ func TestAggHistIgnoresStaleEngine(t *testing.T) {
 	}
 }
 
+// At w=500 the doubling spans overflow a time.Duration partway through the
+// accumulation: total wraps, the bucket walk collapses, and every sample
+// bunches into one middle column leaving the rest of the chart empty.
+func TestCompressSeriesWideTerminalKeepsSamples(t *testing.T) {
+	const w = 500 // wide enough that naive doubling overflows
+	end := time.Unix(1_000_000_000, 0)
+	tv := []timedVal{
+		{t: end.Add(-300 * time.Second), v: 7},
+		{t: end.Add(-time.Second), v: 1},
+	}
+	grid, bounds := compressSeries(tv, w, compressBlock)
+	if len(grid) != w || len(bounds) == 0 {
+		t.Fatalf("grid=%d bounds=%d", len(grid), len(bounds))
+	}
+	sum := 0.0
+	for _, g := range grid {
+		sum += g
+	}
+	if sum != 8 {
+		t.Fatalf("samples lost or bunched on wide chart: sum=%v", sum)
+	}
+	if grid[w-1] != 1 {
+		t.Fatalf("newest sample misplaced: grid[w-1]=%v", grid[w-1])
+	}
+}
+
 func TestProbeSeriesStepHold(t *testing.T) {
 	base := time.Now()
 	s := core.Snapshot{Probes: []core.ProbeSample{

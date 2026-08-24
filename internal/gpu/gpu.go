@@ -185,12 +185,15 @@ func ParseNvidiaSMI(b []byte) []core.GPUDevice {
 }
 
 // flexF parses vendor-CSV numbers, tolerating "[N/A]" / "[Not Supported]".
+// Non-positive results, including text like "nan" that ParseFloat accepts,
+// collapse to zero so no sensor can inject NaN into temps, percentages or
+// watts downstream.
 func flexF(s string) float64 {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "[")
 	s = strings.TrimSuffix(s, "]")
 	v, _ := strconv.ParseFloat(s, 64)
-	if v < 0 {
+	if !(v > 0) { // also catches NaN: every comparison with it is false
 		return 0
 	}
 	return v
