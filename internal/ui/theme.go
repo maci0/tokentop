@@ -2,6 +2,8 @@
 package ui
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"sync"
 
@@ -41,8 +43,12 @@ var (
 	styleHot   = lipgloss.NewStyle().Foreground(cPink)
 	styleMagic = lipgloss.NewStyle().Foreground(cMagenta)
 
-	dotUp   = styleOK.Render("●")
-	dotBad  = styleBad.Render("●")
+	dotUp = styleOK.Render("●")
+	// ✗, not a red ●: down must read without color (WCAG 1.4.1), and it
+	// matches the ✓/✗ convention the probe rows already use.
+	dotBad = styleBad.Render("✗")
+	// Partial-up keeps the dot shape: the header spells the count out
+	// numerically right beside it ("2/3 engines"), so color is redundant.
 	dotWarn = styleWarn.Render("●")
 
 	kindStyles = map[string]lipgloss.Style{
@@ -151,3 +157,39 @@ var wordmark = sync.OnceValue(func() string {
 	}
 	return b.String()
 })
+
+// relLuminance computes the WCAG 2.x relative luminance of a #rrggbb hex
+// color. ok is false for any other encoding (256-color names): callers must
+// treat those as already visible rather than guessing at their brightness.
+func relLuminance(c lipgloss.Color) (lum float64, ok bool) {
+	s := string(c)
+	if len(s) != 7 || s[0] != '#' {
+		return 0, false
+	}
+	var v uint32
+	if _, err := fmt.Sscanf(s[1:], "%06x", &v); err != nil {
+		return 0, false
+	}
+	lin := func(ch uint32) float64 {
+		f := float64(ch) / 255
+		if f <= 0.03928 {
+			return f / 12.92
+		}
+		return math.Pow((f+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(v>>16&0xff) + 0.7152*lin(v>>8&0xff) + 0.0722*lin(v&0xff), true
+}
+
+// contrastRatio returns the WCAG contrast ratio between two colors; ok is
+// false when either side is not #rrggbb (see relLuminance).
+func contrastRatio(a, b lipgloss.Color) (ratio float64, ok bool) {
+	la, oka := relLuminance(a)
+	lb, okb := relLuminance(b)
+	if !oka || !okb {
+		return 0, false
+	}
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05), true
+}

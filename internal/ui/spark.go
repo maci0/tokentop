@@ -62,6 +62,35 @@ func fadeColor(c lipgloss.Color, f float64) string {
 	return fmt.Sprintf("#%02x%02x%02x", r, g, b)
 }
 
+// minGraphicContrast is the WCAG 2.2 AA non-text floor (SC 1.4.11): a
+// data-bearing chart mark must keep at least this ratio against the panel
+// background, bloom or no bloom.
+const minGraphicContrast = 3.0
+
+// fadeClamped blends c toward black by factor f, but never past the darkest
+// point that still meets min contrast against the dashboard background, so
+// the age fade cannot melt data past legibility. Colors that cannot reach
+// the floor at all (non-hex encodings, colors darker than the background)
+// come back at full strength rather than half-hidden.
+func fadeClamped(c lipgloss.Color, f, min float64) lipgloss.Color {
+	out := fadeColor(c, f)
+	if r, ok := contrastRatio(lipgloss.Color(out), cBase); ok && r >= min {
+		return lipgloss.Color(out)
+	}
+	// fadeColor is monotonic (less factor = darker = lower ratio), so the
+	// shallowest factor still above the floor can be bisected.
+	lo, hi := f, 1.0
+	for i := 0; i < 16; i++ {
+		mid := (lo + hi) / 2
+		if r, ok := contrastRatio(lipgloss.Color(fadeColor(c, mid)), cBase); ok && r >= min {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+	return lipgloss.Color(fadeColor(c, hi))
+}
+
 // BrailleChart renders an area chart as braille dot-matrix, btop-style: every
 // terminal cell is a 2x4 dot grid, so a w*h chart resolves w*2 by h*4 dots -
 // far finer than the block ramp. Values fill upward from the baseline. With
@@ -102,7 +131,10 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 			col := heat(frac)
 			if st.FadeAge && frac > 0.02 {
 				f := 0.30 + 0.70*(float64(cx)/float64(max(w-1, 1)))
-				col = lipgloss.Color(fadeColor(col, f))
+				// The oldest columns still carry history: clamp the fade at
+				// the non-text contrast floor instead of letting the bloom
+				// fade them into invisibility for low-vision users.
+				col = fadeClamped(col, f, minGraphicContrast)
 			}
 			k := cacheKey{color: string(col), pattern: pattern}
 			s, ok := cache[k]

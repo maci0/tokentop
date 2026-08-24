@@ -1,50 +1,37 @@
 package ui
 
 import (
-	"fmt"
-	"math"
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-// wcagLuminance parses #rrggbb into its WCAG 2.x relative luminance.
+// wcagLuminance wraps the production luminance math so palette assertions
+// fail loudly on non-hex encodings instead of silently passing them through.
 func wcagLuminance(t testing.TB, c lipgloss.Color) float64 {
 	t.Helper()
-	s := string(c)
-	if len(s) != 7 || s[0] != '#' {
-		t.Fatalf("color %q is not #rrggbb", s)
+	lum, ok := relLuminance(c)
+	if !ok {
+		t.Fatalf("color %q is not #rrggbb", c)
 	}
-	var v uint32
-	if _, err := fmt.Sscanf(s[1:], "%06x", &v); err != nil {
-		t.Fatalf("bad hex %q: %v", s, err)
-	}
-	lin := func(ch uint32) float64 {
-		f := float64(ch) / 255
-		if f <= 0.03928 {
-			return f / 12.92
-		}
-		return math.Pow((f+0.055)/1.055, 2.4)
-	}
-	r, g, b := lin(uint32(v>>16)&0xff), lin(uint32(v>>8)&0xff), lin(uint32(v)&0xff)
-	return 0.2126*r + 0.7152*g + 0.0722*b
+	return lum
 }
 
-// contrastRatio orders two colors and returns their WCAG contrast ratio.
-func contrastRatio(t testing.TB, a, b lipgloss.Color) float64 {
+// contrastRatioT is contrastRatio with a fatal on non-hex input.
+func contrastRatioT(t testing.TB, a, b lipgloss.Color) float64 {
 	t.Helper()
-	la, lb := wcagLuminance(t, a), wcagLuminance(t, b)
-	if la < lb {
-		la, lb = lb, la
+	r, ok := contrastRatio(a, b)
+	if !ok {
+		t.Fatalf("contrast of %q vs %q undefined: not #rrggbb", a, b)
 	}
-	return (la + 0.05) / (lb + 0.05)
+	return r
 }
 
 // Secondary text rides on the base background everywhere: footer key hints,
 // help rows, gauge tracks, unit labels. WCAG 1.4.3 needs 4.5:1 there; the
 // palette must not drift back under it.
 func TestDimTextMeetsAAContrastOnBase(t *testing.T) {
-	if got := contrastRatio(t, cDim, cBase); got < 4.5 {
+	if got := contrastRatioT(t, cDim, cBase); got < 4.5 {
 		t.Errorf("cDim on cBase = %.2f:1, want >= 4.5:1", got)
 	}
 }
@@ -65,8 +52,46 @@ func TestStatusTextMeetsAAContrastOnBase(t *testing.T) {
 		"cLavender": cLavender,
 		"cTeal":     cTeal,
 	} {
-		if got := contrastRatio(t, c, cBase); got < 4.5 {
+		if got := contrastRatioT(t, c, cBase); got < 4.5 {
 			t.Errorf("%s on cBase = %.2f:1, want >= 4.5:1", name, got)
 		}
+	}
+}
+
+// Every heat-ramp color must survive the deepest age fade at or above the
+// WCAG 1.4.11 non-text floor: the oldest chart columns still carry history,
+// and before fadeClamped they measured ~1.3:1 against the background.
+func TestChartFadeHoldsNonTextContrast(t *testing.T) {
+	for name, c := range map[string]lipgloss.Color{
+		"teal":   cTeal,
+		"cyan":   cCyan,
+		"green":  cGreen,
+		"yellow": cYellow,
+		"red":    cRed,
+	} {
+		got := contrastRatioT(t, fadeClamped(c, 0.30, minGraphicContrast), cBase)
+		if got < minGraphicContrast {
+			t.Errorf("%s at max fade = %.2f:1 on cBase, want >= %.1f:1", name, got, minGraphicContrast)
+		}
+	}
+}
+
+// fadeClamped must leave alone everything clamping cannot help: fades that
+// already clear the floor and non-hex encodings; a color darker than the
+// background stays at full strength rather than half-hidden.
+func TestFadeClampPassthrough(t *testing.T) {
+	shallow := string(fadeColor(cYellow, 0.9)) // well above the floor
+	if got := string(fadeClamped(cYellow, 0.9, minGraphicContrast)); got != shallow {
+		t.Errorf("fade already above the floor was altered: %q, want %q", got, shallow)
+	}
+	if got := fadeClamped(lipgloss.Color("21"), 0.5, minGraphicContrast); got != lipgloss.Color("21") {
+		t.Errorf("non-hex color was modified: %q", got)
+	}
+	dark := lipgloss.Color("#101010")
+	if got := fadeClamped(dark, 0.5, minGraphicContrast); got != dark {
+		t.Errorf("unreachable color was modified: %q", got)
+	}
+	if got := string(fadeClamped(cRed, 0.30, minGraphicContrast)); got == string(cRed) {
+		t.Errorf("deep fade did not darken at all: %q", got)
 	}
 }
