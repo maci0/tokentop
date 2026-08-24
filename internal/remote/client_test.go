@@ -451,6 +451,36 @@ func TestClientRunFailureCarriesStderr(t *testing.T) {
 	}
 }
 
+// A remote command exceeding runTimeout must fail promptly with a timeout
+// notice; whatever stderr arrived before the cut rides along so a hung
+// command is diagnosable from the error alone.
+func TestClientRunTimesOutCarriesStderr(t *testing.T) {
+	withKnownHosts(t)
+	old := runTimeout
+	runTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { runTimeout = old })
+
+	srv := newTestSSHServer(t, "", 0)
+	defer srv.Close()
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+
+	start := time.Now()
+	_, err = cli.Run(t.Context(), "echo stalled >&2; sleep 5")
+	if err == nil {
+		t.Fatal("long command should hit runTimeout")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("err = %v, want timeout notice", err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("timeout took %s, deadline not applied", elapsed)
+	}
+}
+
 func TestClientPasswordAuth(t *testing.T) {
 	withKnownHosts(t)
 	srv := newTestSSHServer(t, "secret", 0) // publickey rejected

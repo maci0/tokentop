@@ -126,6 +126,14 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "request stalled", http.StatusRequestTimeout)
 				return
 			}
+			var maxBytes *http.MaxBytesError
+			if errors.As(err, &maxBytes) {
+				// A size failure is not a JSON failure; senders need the
+				// distinction to know trimming (not re-encoding) is the fix.
+				http.Error(w, fmt.Sprintf("event stream exceeds %d byte cap", maxBytes.Limit),
+					http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 			return
 		}

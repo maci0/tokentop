@@ -8,6 +8,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -23,6 +24,11 @@ import (
 
 // PollTimeout bounds a single metrics scrape.
 const PollTimeout = 1500 * time.Millisecond
+
+// errSnippetCap bounds how much of an error response body is quoted into
+// failure messages. Engines explain rejections there ("model not found",
+// bad api key, OOM) and the status line alone does not.
+const errSnippetCap = 256
 
 // Metrics is the raw engine state a single poll yields. Rates are derived by
 // the collector from successive samples.
@@ -48,6 +54,28 @@ type Provider interface {
 
 var httpClient = &http.Client{Timeout: PollTimeout}
 
+// statusErr renders a non-200 response as an error carrying a one-line
+// snippet of the body, so the operator sees the engine's own explanation
+// and not just the code. The body is consumed and must still be closed.
+func statusErr(url string, resp *http.Response) error {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4*errSnippetCap))
+	msg := fmt.Sprintf("%s: http %s", url, resp.Status)
+	if s := errSnippet(b); s != "" {
+		msg += ": " + s
+	}
+	return errors.New(msg)
+}
+
+// errSnippet collapses raw bytes to at most errSnippetCap runes on one line.
+func errSnippet(b []byte) string {
+	s := strings.Join(strings.Fields(string(b)), " ")
+	r := []rune(s)
+	if len(r) > errSnippetCap {
+		r = r[:errSnippetCap]
+	}
+	return string(r)
+}
+
 func getJSON(ctx context.Context, url string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -60,7 +88,7 @@ func getJSON(ctx context.Context, url string, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: http %s", url, resp.Status)
+		return statusErr(url, resp)
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out); err != nil {
 		return fmt.Errorf("%s: %w", url, err)
@@ -82,7 +110,7 @@ func getText(ctx context.Context, c *http.Client, url string) (string, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s: http %s", url, resp.Status)
+		return "", statusErr(url, resp)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
