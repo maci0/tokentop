@@ -46,6 +46,9 @@ jobs:
           done
           ( cd "$OUT" && tar czf "tokentop_${VERSION}_checksums.tar.gz" checksums.txt && rm checksums.txt )
 
+      - name: generate dependency sbom
+        run: make sbom VERSION="${GITHUB_REF_NAME#v}"
+
       - name: publish github release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:

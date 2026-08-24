@@ -40,6 +40,12 @@ cover: ## test coverage summary per package
 	$(GO) test -race -coverprofile=$(DIST)/coverage.out ./... && \
 		$(GO) tool cover -func=$(DIST)/coverage.out | tail -1
 
+.PHONY: sbom
+sbom: ## generate CycloneDX SBOM of all dependencies into dist/
+	mkdir -p $(DIST)
+	$(GO) run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0 \
+		mod -licenses -std -json -output $(DIST)/tokentop-sbom-$(VERSION).cdx.json .
+
 .PHONY: vet
 vet: ## run go vet
 	$(GO) vet ./...

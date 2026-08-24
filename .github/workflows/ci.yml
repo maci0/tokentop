@@ -29,6 +29,9 @@ jobs:
           fi
       - name: vet
         run: go vet ./...
+      - name: govulncheck (linux only; source-level analysis is platform-independent)
+        if: runner.os == 'Linux'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - name: test
         run: go test -race ./...
 
