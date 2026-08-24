@@ -3,6 +3,7 @@ package ui
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -137,3 +138,15 @@ func heatColor(f float64) lipgloss.Color {
 		return cRed
 	}
 }
+
+// wordmark renders the logo with a cyan→pink gradient. Static output:
+// built once, then reused by every frame.
+var wordmark = sync.OnceValue(func() string {
+	letters := []rune("TOKENTOP")
+	colors := []lipgloss.Color{cTeal, cCyan, cBlue, cLavender, cMagenta, cPink, cPeach, cYellow}
+	var b strings.Builder
+	for i, l := range letters {
+		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colors[i%len(colors)]).Render(string(l)))
+	}
+	return b.String()
+})

@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -155,10 +154,12 @@ func (m Model) View() string {
 		m.renderFeed(),
 	)
 	footer := m.renderFooter()
-	if gap := m.h - lipgloss.Height(body) - lipgloss.Height(footer); gap > 0 {
+	// Reserve an explicit row for the footer: concatenating onto unpadded
+	// body made it ride the last content line and wrap past the pane edge.
+	if gap := m.h - lipgloss.Height(body) - lipgloss.Height(footer) - 1; gap > 0 {
 		body += strings.Repeat("\n", gap)
 	}
-	return body + footer
+	return body + "\n" + footer
 }
 
 func (m Model) renderHeader() string {
@@ -550,24 +551,6 @@ func sysGPUs(sy *core.SysSample) []core.GPUDevice {
 	return sy.GPUs
 }
 
-// joinSpreadLeft packs segments left-to-right up to w visible cells.
-func joinSpreadLeft(segs []string, w int) string {
-	var b strings.Builder
-	used := 0
-	for i, s := range segs {
-		seg := dim(" │ ") + s
-		if i == 0 {
-			seg = s
-		}
-		if used+lipgloss.Width(seg) > w {
-			break
-		}
-		b.WriteString(seg)
-		used += lipgloss.Width(seg)
-	}
-	return b.String()
-}
-
 func tempColor(celsius float64) lipgloss.Color {
 	switch {
 	case celsius < 60:
@@ -952,147 +935,3 @@ func probeSeries(s core.Snapshot, w int, cadence time.Duration) []float64 {
 	}
 	return grid
 }
-
-func norm(v, maxV float64) float64 {
-	if maxV <= 0 {
-		return 0
-	}
-	return v / maxV
-}
-
-func fmtRate(v float64) string {
-	switch {
-	case v >= 10000:
-		return fmt.Sprintf("%.0fk", v/1000)
-	case v >= 1000:
-		return fmt.Sprintf("%.1fk", v/1000)
-	case v >= 100:
-		return fmt.Sprintf("%.0f", v)
-	default:
-		return fmt.Sprintf("%.1f", v)
-	}
-}
-
-func fmtCount(n int64) string {
-	switch {
-	case n >= 1000000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	default:
-		return fmt.Sprintf("%d", n)
-	}
-}
-
-func fmtMs(ms float64) string {
-	if ms <= 0 {
-		return "-"
-	}
-	if ms >= 1000 {
-		return fmt.Sprintf("%.2fs", ms/1000)
-	}
-	return fmt.Sprintf("%.0fms", ms)
-}
-
-func fmtDur(d time.Duration) string {
-	d = d.Truncate(time.Second)
-	if d < time.Minute {
-		return d.String()
-	}
-	return fmt.Sprintf("%dm%02ds", d/time.Minute, int(d/time.Second)%60)
-}
-
-func humanBytes(b uint64) string {
-	const g = 1 << 30
-	if b >= g {
-		return fmt.Sprintf("%.1fGiB", float64(b)/g)
-	}
-	return fmt.Sprintf("%.0fMiB", float64(b)/(1<<20))
-}
-
-// humanBytesShort is the compact form used in the system strip.
-func humanBytesShort(b uint64) string {
-	const m = 1 << 20
-	if b >= 10<<30 {
-		return fmt.Sprintf("%.0fG", float64(b)/(1<<30))
-	}
-	if b >= 1<<30 {
-		return fmt.Sprintf("%.1fG", float64(b)/(1<<30))
-	}
-	return fmt.Sprintf("%.0fM", float64(b)/m)
-}
-
-// shorten truncates s to n visible cells with an ellipsis.
-func shorten(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	if n == 1 {
-		return "…"
-	}
-	return string(r[:n-1]) + "…"
-}
-
-// clip hard-cuts a rendered (possibly styled) line to w visible cells.
-// Styling is dropped past the cut; good enough for our own strings.
-func clip(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= w {
-		return s
-	}
-	return shorten(strip(s), w)
-}
-
-// strip removes ANSI escapes and control characters so clip can cut safely.
-// Untrusted strings (engine-supplied names, agent events) must never reach
-// the raw terminal; SanitizeText is the same guard applied at render time.
-func strip(s string) string { return core.SanitizeText(s) }
-
-func padTo(s string, w int) string {
-	for lipgloss.Width(s) < w {
-		s += " "
-	}
-	return s
-}
-
-// joinSpread places left segments and right segment on one padded line.
-func joinSpread(left []string, right string, width int) string {
-	l := strings.Join(left, dim(" │ "))
-	lw := lipgloss.Width(l)
-	rw := lipgloss.Width(right)
-	gap := width - lw - rw
-	if gap < 1 {
-		gap = 1
-	}
-	return l + strings.Repeat(" ", gap) + right
-}
-
-func dim(s string) string { return styleDim.Render(s) }
-
-func clampi(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-// wordmark renders the logo with a cyan→pink gradient. Static output:
-// built once, then reused by every frame.
-var wordmark = sync.OnceValue(func() string {
-	letters := []rune("TOKENTOP")
-	colors := []lipgloss.Color{cTeal, cCyan, cBlue, cLavender, cMagenta, cPink, cPeach, cYellow}
-	var b strings.Builder
-	for i, l := range letters {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colors[i%len(colors)]).Render(string(l)))
-	}
-	return b.String()
-})
