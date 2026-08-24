@@ -152,13 +152,15 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			OutputTokens: wire.OutputTokens,
 			Note:         wire.Note,
 		}
-		if ev.Agent == "" {
-			ev.Agent = "anonymous"
-		}
 		// Event fields are attacker-shaped text (any local process or peer
 		// able to reach this endpoint): strip terminal escape sequences and
 		// control characters before the values are stored and later rendered.
+		// Defaults come after sanitization: a value the sanitizer empties
+		// (pure escape sequences) must not slip past the fallback.
 		ev.Agent = clampField(core.SanitizeText(ev.Agent), 64)
+		if ev.Agent == "" {
+			ev.Agent = "anonymous"
+		}
 		ev.Model = clampField(core.SanitizeText(ev.Model), 128)
 		ev.Note = clampField(core.SanitizeText(ev.Note), 512) // free-form fields are capped so one giant event cannot dominate the retained feed
 		// Token counts are unsigned quantities; negative values are junk
@@ -170,11 +172,12 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			ev.OutputTokens = 0
 		}
 		switch ev.Kind {
-		case "":
-			ev.Kind = "turn"
 		case "turn", "tool", "error", "note":
 		default:
 			ev.Kind = clampField(core.SanitizeText(strings.ToLower(ev.Kind)), 24)
+		}
+		if ev.Kind == "" {
+			ev.Kind = "turn"
 		}
 		if ev.At.IsZero() {
 			ev.At = time.Now()
