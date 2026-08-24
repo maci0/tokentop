@@ -129,4 +129,6 @@ GOOS=windows GOARCH=amd64 go build -o tokentop.exe ./cmd/tokentop
 ```
 
 Releases: push a tag `v*` and GitHub Actions attaches binaries for
-linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64.
+linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, plus a
+CycloneDX SBOM of every dependency (`make sbom`). CI runs `govulncheck` on
+every push; Dependabot keeps go modules and workflow actions current.
