@@ -187,3 +187,154 @@ func TestIdleKeepAliveConnsReaped(t *testing.T) {
 		}
 	}
 }
+
+// kind is attacker-shaped text like every other event field: escape
+// sequences must be stripped before the value enters the retained feed.
+func TestIngestSanitizesCustomKind(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"x","kind":"\u001b]0;pwned\u0007weird"}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != 1 {
+		t.Fatal("event not recorded")
+	}
+	if got := rec.evs[0].Kind; strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, 0x07) {
+		t.Errorf("kind retained escape sequences: %q", got)
+	}
+}
+
+// startPost opens a POST whose body framing allows slow streaming: chunked
+// encoding, terminated by a zero chunk.
+func startPost(t *testing.T, addr string) net.Conn {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(conn, "POST /v1/events HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n", addr)
+	return conn
+}
+
+func sendChunk(t *testing.T, conn net.Conn, data string) {
+	t.Helper()
+	fmt.Fprintf(conn, "%x\r\n%s\r\n", len(data), data)
+}
+
+// readResponse drains until the status line plus any following lines arrive
+// or the deadline expires, returning everything received.
+func readResponse(t *testing.T, conn net.Conn, within time.Duration) string {
+	t.Helper()
+	buf := make([]byte, 8192)
+	var out []byte
+	conn.SetReadDeadline(time.Now().Add(within))
+	for !bytes.Contains(out, []byte("\r\n")) {
+		n, err := conn.Read(buf)
+		out = append(out, buf[:n]...)
+		if err != nil {
+			break
+		}
+	}
+	return string(out)
+}
+
+// A sender that stalls mid-body must not pin the connection: the idle
+// deadline reaps it with a 408 instead of holding fd and goroutine forever.
+func TestIngestReapsStalledBody(t *testing.T) {
+	oldLife, oldIdle := maxEventLifetime, bodyIdleTimeout
+	maxEventLifetime, bodyIdleTimeout = time.Minute, 150*time.Millisecond
+	t.Cleanup(func() { maxEventLifetime, bodyIdleTimeout = oldLife, oldIdle })
+
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	conn := startPost(t, s.Addr())
+	defer conn.Close()
+	sendChunk(t, conn, `{"agent":"slow"`) // valid prefix, then silence
+	resp := readResponse(t, conn, 5*time.Second)
+	if !strings.HasPrefix(resp, "HTTP/1.1 408") {
+		t.Fatalf("stalled body response = %q, want 408", resp)
+	}
+}
+
+// A slow but progressing NDJSON stream stays under the idle deadline and
+// must be accepted in full.
+func TestIngestAcceptsSlowProgressingStream(t *testing.T) {
+	oldLife, oldIdle := maxEventLifetime, bodyIdleTimeout
+	maxEventLifetime, bodyIdleTimeout = 30*time.Second, 500*time.Millisecond
+	t.Cleanup(func() { maxEventLifetime, bodyIdleTimeout = oldLife, oldIdle })
+
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	conn := startPost(t, s.Addr())
+	defer conn.Close()
+	for _, ev := range []string{
+		`{"agent":"drip","prompt_tokens":1}` + "\n",
+		`{"agent":"drip","output_tokens":2}` + "\n",
+	} {
+		sendChunk(t, conn, ev)
+		time.Sleep(100 * time.Millisecond) // well inside the idle window
+	}
+	fmt.Fprint(conn, "0\r\n\r\n") // end of chunks
+	resp := readResponse(t, conn, 5*time.Second)
+	if !strings.HasPrefix(resp, "HTTP/1.1 202") {
+		t.Fatalf("progressing stream response = %q, want 202", resp)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != 2 {
+		t.Fatalf("events = %d, want 2", len(rec.evs))
+	}
+}
+
+// Progress alone must not extend a POST forever: past the absolute lifetime
+// the connection is cut even while bytes keep trickling in.
+func TestIngestCutsBodyPastAbsoluteLifetime(t *testing.T) {
+	oldLife, oldIdle := maxEventLifetime, bodyIdleTimeout
+	maxEventLifetime, bodyIdleTimeout = 300*time.Millisecond, time.Minute // idle longer than life
+	t.Cleanup(func() { maxEventLifetime, bodyIdleTimeout = oldLife, oldIdle })
+
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	conn := startPost(t, s.Addr())
+	defer conn.Close()
+	done := make(chan string, 1)
+	go func() {
+		done <- readResponse(t, conn, 10*time.Second)
+	}()
+	keepalive := time.NewTicker(50 * time.Millisecond) // steady progress
+	defer keepalive.Stop()
+	timeout := time.After(8 * time.Second)
+	for {
+		select {
+		case resp := <-done:
+			if !strings.Contains(resp, "408") {
+				t.Fatalf("lifetime-capped body response = %q, want 408", resp)
+			}
+			return
+		case <-timeout:
+			t.Fatal("absolute lifetime did not bound a progressing body")
+		case <-keepalive.C:
+			sendChunk(t, conn, "\n")
+		}
+	}
+}
