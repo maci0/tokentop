@@ -126,11 +126,11 @@ func Discover(ctx context.Context) []Provider {
 	return discoverBases(ctx, bases)
 }
 
-// discoverBases identifies every candidate concurrently and returns providers
-// for those that answer, preserving candidate order. Each probe cascades
-// several requests with per-request timeouts; probing one at a time would let
-// a single filtered port stall startup by its full timeout chain.
-func discoverBases(ctx context.Context, bases []string) []Provider {
+// IdentifyAll identifies every base concurrently and returns the kinds in
+// input order, "" for bases that match no engine. Each probe cascades several
+// requests with per-request timeouts; probing one at a time would let a
+// single filtered port stall the caller by its full timeout chain.
+func IdentifyAll(ctx context.Context, bases []string) []string {
 	kinds := make([]string, len(bases))
 	var wg sync.WaitGroup
 	for i, base := range bases {
@@ -141,6 +141,13 @@ func discoverBases(ctx context.Context, bases []string) []Provider {
 		}(i, base)
 	}
 	wg.Wait()
+	return kinds
+}
+
+// discoverBases identifies every candidate concurrently and returns providers
+// for those that answer, preserving candidate order.
+func discoverBases(ctx context.Context, bases []string) []Provider {
+	kinds := IdentifyAll(ctx, bases)
 
 	var found []Provider
 	for i, kind := range kinds {

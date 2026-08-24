@@ -18,10 +18,11 @@ tokentop ssh://maci@box    # watch engines on another host
 - **Backends** - every engine found locally or via ssh, with model, version,
   KV-cache pressure, queue depth and throughput. Fingerprinted kinds:
   Ollama, llama.cpp/llamafile/ramalama, vLLM, SGLang, TRT-LLM/Triton,
-  LM Studio, MLX (mlx-lm / LM Studio), KoboldCpp, LocalAI, TGI,
-  text-generation-webui, TabbyAPI, LiteLLM, GPUStack, Lemonade, OmniRoute
-  (auto-detected via its routing header; per-model context windows shown) -
-  plus a generic OpenAI-compatible fallback so nothing is left out.
+  LM Studio, MLX (mlx-lm / LM Studio), KoboldCpp, LocalAI, TGI, LiteLLM,
+  GPUStack, Lemonade, OmniRoute (auto-detected via its routing header;
+  per-model context windows shown) - plus a generic OpenAI-compatible
+  fallback so nothing is left out (text-generation-webui and TabbyAPI are
+  discovered by process/port but identified as generic OpenAI).
 - **Throughput charts** - aggregate decode + prompt tokens/sec as heat-colored
   area charts; engine-published tok/s gauges are trusted when present.
 - **Probes** (`p`, `--probe N`) - tiny streaming generations measuring real
@@ -94,6 +95,7 @@ loudly.
 | key | action |
 |---|---|
 | `q` | quit |
+| `esc` | close help / quit |
 | `space` | pause streaming |
 | `p` | fire probes at every backend |
 | `t` | toggle compressed timescale + grid |

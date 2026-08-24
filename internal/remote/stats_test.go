@@ -83,6 +83,43 @@ func TestParseVitalsPartial(t *testing.T) {
 	}
 }
 
+// A remote that polls fine but publishes no loadavg (macOS, hardened
+// kernels) must not zero the local load readout: Merge overlays fresh data,
+// and without the validity flag every poll would clobber local values with
+// absent ones for as long as the connection stays up.
+func TestMergeKeepsLocalLoadsWithoutRemoteLoadavg(t *testing.T) {
+	var s Stats
+	into := core.SysSample{Load1: 1.5, Load5: 1.2, Load15: 0.9}
+
+	// macOS-shaped dump: no /proc/loadavg section, but CPU model arrives.
+	if loadsOK := parseVitals(vitalsDumpFrom(
+		"", "", "", "Apple M3 Max", "macOS 15.5", "24.5.0", "",
+	), &s.last); loadsOK {
+		t.Fatal("load-less dump reported usable loads")
+	}
+	s.at = time.Now()
+	s.Merge(&into)
+	if into.Load1 != 1.5 || into.Load5 != 1.2 || into.Load15 != 0.9 {
+		t.Errorf("absent remote loads clobbered local ones: %+v", into)
+	}
+	if into.CPUModel != "Apple M3 Max" {
+		t.Errorf("present fields must still merge: %+v", into)
+	}
+
+	// Once the remote does publish loads, they overlay the locals.
+	s.loadsValid = parseVitals(vitalsDumpFrom(
+		"4.0 3.0 2.0", "", "", "Apple M3 Max", "macOS 15.5", "24.5.0", "",
+	), &s.last)
+	if !s.loadsValid {
+		t.Fatal("dump with loads reported none")
+	}
+	s.at = time.Now()
+	s.Merge(&into)
+	if into.Load1 != 4.0 || into.Load5 != 3.0 || into.Load15 != 2.0 {
+		t.Errorf("remote loads not merged: %+v", into)
+	}
+}
+
 func TestStatsMergeFreshnessAndOverlay(t *testing.T) {
 	var s Stats
 	var into core.SysSample

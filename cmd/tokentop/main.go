@@ -263,11 +263,18 @@ func runOnce(cfg ui.Config, ch <-chan core.Snapshot, n int) {
 	if n < 1 {
 		n = 1
 	}
+	// Snapshots land one poll interval apart, so a slow-polling host needs a
+	// proportionally patient wait: a fixed cap would abort a healthy
+	// --interval 10s run before its second frame ever arrives.
+	wait := 5 * time.Second
+	if d := 3 * cfg.PollEvery; d > wait {
+		wait = d
+	}
 	var snap core.Snapshot
 	for i := 0; i < n; i++ { // several ticks so charts carry some history
 		select {
 		case snap = <-ch:
-		case <-time.After(5 * time.Second):
+		case <-time.After(wait):
 			fmt.Fprintln(os.Stderr, "tokentop: timed out waiting for telemetry")
 			os.Exit(1)
 		}
@@ -323,18 +330,8 @@ func attachRemote(ctx context.Context, tgt remote.Target) ([]provider.Provider, 
 	for i, rport := range rports {
 		bases[i] = fmt.Sprintf("http://127.0.0.1:%d", fwd[rport])
 	}
-	// Identify concurrently: each probe chains several requests with
-	// per-request timeouts, and a remote host can forward many candidates.
-	kinds := make([]string, len(bases))
-	var wg sync.WaitGroup
-	for i, base := range bases {
-		wg.Add(1)
-		go func(i int, base string) {
-			defer wg.Done()
-			kinds[i] = provider.Identify(ctx, base)
-		}(i, base)
-	}
-	wg.Wait()
+	// Identify concurrently: provider fans the probes out per candidate.
+	kinds := provider.IdentifyAll(ctx, bases)
 
 	var providers []provider.Provider
 	var skipped []int

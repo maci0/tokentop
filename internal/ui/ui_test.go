@@ -64,8 +64,17 @@ func TestUpdateKeyMap(t *testing.T) {
 	// Help is a full-screen replacement view: it must actually render its
 	// content, not just flip the flag.
 	m.w, m.h, m.ready = 110, 36, true
-	if out := m.View(); !strings.Contains(strip(out), "pause / resume streaming") {
+	out := strip(m.View())
+	if !strings.Contains(out, "pause / resume streaming") {
 		t.Errorf("help view missing key rows:\n%s", out)
+	}
+	// Every key the footer advertises must be documented here too: t was
+	// missing for a long time and users had no discoverable path back from
+	// the compressed timescale.
+	for _, want := range []string{"compressed timescale", "esc"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help view missing %q:\n%s", want, out)
+		}
 	}
 	if key("esc") != nil {
 		t.Error("esc with help open must close help, not quit")
@@ -332,7 +341,7 @@ func TestStaticFrameSystemStrip(t *testing.T) {
 			},
 		},
 	}
-	out := StaticFrame(Config{Version: "t"}, snap, 110, 30)
+	out := StaticFrame(Config{Version: "t"}, snap, 110, 34)
 	plain := strip(out)
 	for _, want := range []string{"SYS", "mem ", "50%", "swp ", "ld ",
 		"nv0 71°", "42%", "20G/80G", "310W"} {
@@ -341,7 +350,7 @@ func TestStaticFrameSystemStrip(t *testing.T) {
 		}
 	}
 	// wider terminals fit the second GPU and CPU temps too
-	wide := strip(StaticFrame(Config{Version: "t"}, snap, 170, 30))
+	wide := strip(StaticFrame(Config{Version: "t"}, snap, 170, 34))
 	for _, want := range []string{"amd0 55°", "8.0G/64G", "64°"} {
 		if !strings.Contains(wide, want) {
 			t.Errorf("wide strip missing %q in:\n%s", want, wide)
@@ -363,7 +372,7 @@ func TestSystemStripSuppressesHwmonGPUDupes(t *testing.T) {
 			GPUs: []core.GPUDevice{{Vendor: "nvidia", Index: 0, MilliC: 70000}},
 		},
 	}
-	out := strip(StaticFrame(Config{Version: "t"}, snap, 110, 30))
+	out := strip(StaticFrame(Config{Version: "t"}, snap, 110, 34))
 	if strings.Contains(out, "edge") {
 		t.Errorf("hwmon GPU temp leaked into strip:\n%s", out)
 	}
@@ -378,7 +387,7 @@ func TestStaticFrameNoSensors(t *testing.T) {
 		Providers: []core.ProviderSnapshot{{Label: "x", Kind: core.KindOllama, OK: true}},
 		Sys:       &core.SysSample{},
 	}
-	out := strip(StaticFrame(Config{Version: "t"}, snap, 110, 30))
+	out := strip(StaticFrame(Config{Version: "t"}, snap, 110, 34))
 	if !strings.Contains(out, "mem n/a") || !strings.Contains(out, "no sensors found") {
 		t.Errorf("empty sys sample not handled:\n%s", out)
 	}
@@ -473,6 +482,140 @@ func TestHostSegmentsSanitizeDrivers(t *testing.T) {
 	for _, s := range segs {
 		if strings.ContainsRune(strip(s), '\x1b') {
 			t.Errorf("hostSegments leaked escape bytes: %q", strip(s))
+		}
+	}
+}
+
+// busySnap packs long labels, identity data, sensors and history so layout
+// tests exercise near-worst-case line widths and heights.
+func busySnap() core.Snapshot {
+	return core.Snapshot{
+		At: time.Now(), Uptime: 90 * time.Second,
+		Providers: []core.ProviderSnapshot{
+			{Label: "ollama", Kind: core.KindOllama, OK: true,
+				Models: []core.ModelInfo{{Name: "llama3:8b-instruct-q5_K_M"}}, Version: "0.12.1",
+				OutTokPS: 42.7, InTokPS: 1200.5, KVPct: 55, Running: 1, Waiting: 2,
+				OutT0: time.Now(), InT0: time.Now(),
+				OutHist: []float64{1, 2, 3}, InHist: []float64{1, 2, 3}},
+			{Label: "vllm", Kind: core.KindVLLM, OK: false, Err: "connection refused"},
+		},
+		Sys: &core.SysSample{
+			MemTotal: 32 << 30, MemUsed: 16 << 30, CPUModel: "AMD Ryzen 9 7950X",
+			OsName: "Fedora Linux", Kernel: "6.11.0",
+			Temps: []core.TempReading{{Label: "Tctl", MilliC: 64000}},
+			GPUs:  []core.GPUDevice{{Vendor: "nvidia", Index: 0, MilliC: 70000}},
+		},
+		Agents: []core.AgentEvent{{At: time.Now(), Agent: "ci-bot", Kind: "turn",
+			PromptTokens: 10, OutputTokens: 5}},
+	}
+}
+
+// The frame must fit its pane exactly: bubbletea clips overflow from the
+// top, which hides the header, and any line wider than the pane wraps and
+// drags every later row out of alignment.
+func TestFrameFitsPaneAtCommonSizes(t *testing.T) {
+	for _, sz := range [][2]int{{62, 30}, {70, 31}, {80, 32}, {100, 34}, {120, 38}, {160, 44}} {
+		w, h := sz[0], sz[1]
+		out := StaticFrame(Config{Version: "0.1.0", IngestAddr: "127.0.0.1:8420"}, busySnap(), w, h)
+		if got := lipgloss.Height(out); got > h {
+			t.Errorf("%dx%d: frame is %d lines, overflows pane", w, h, got)
+		}
+		for i, ln := range strings.Split(out, "\n") {
+			if lw := lipgloss.Width(ln); lw > w {
+				t.Fatalf("%dx%d: line %d renders %d cells, want <= %d:\n%s", w, h, i, lw, w, ln)
+			}
+		}
+	}
+	// The header must survive intact on roomy panes.
+	out := strip(StaticFrame(Config{Version: "t"}, busySnap(), 160, 40))
+	if !strings.Contains(out, "engines") || !strings.Contains(out, "tok/s") {
+		t.Errorf("full header lost on wide pane:\n%s", out)
+	}
+}
+
+// Narrow panes shed decorative header segments before letting the row wrap:
+// uptime goes first, then version, then inbound rate, then outbound; pinned
+// segments are hard-clipped only as a last resort.
+func TestFitSegmentsShedsByPriority(t *testing.T) {
+	segs := []headerSeg{
+		{text: "AAAA"},
+		{text: "BBBB", shed: 40},
+		{text: "CCCC", shed: 50},
+		{text: "DDDD"},
+	}
+	if got := strings.Join(fitSegments(segs, 60), "|"); !strings.Contains(got, "CCCC") {
+		t.Errorf("wide enough: nothing should be shed: %q", got)
+	}
+	got := strings.Join(fitSegments(segs, 17), "|")
+	if strings.Contains(got, "CCCC") || strings.Contains(got, "BBBB") || !strings.Contains(got, "DDDD") {
+		t.Errorf("tight: want CCCC then BBBB shed first, pins kept: %q", got)
+	}
+	if got := fitSegments(segs, 6); lipgloss.Width(got[0]) > 6 || !strings.HasPrefix(got[0], "AAAA") {
+		t.Errorf("overflowing pins must hard-clip from the left: %q", got[0])
+	}
+}
+
+// Pressing p fires generations that take seconds: the keypress must be
+// acknowledged immediately, then hand over once a result lands.
+func TestProbePressAcknowledgesUntilResult(t *testing.T) {
+	m := New(Config{Version: "t", Prober: proberFunc(func() {})}, nil)
+	nm, _ := m.Update(snapMsg(core.Snapshot{Providers: []core.ProviderSnapshot{{Label: "ollama", OK: true}}}))
+	m = nm.(Model)
+	m.w, m.h, m.ready, m.clock = 110, 36, true, time.Now()
+
+	nm, _ = m.Update(keyMsg("p"))
+	m = nm.(Model)
+	if out := strip(m.View()); !strings.Contains(out, "probing") {
+		t.Fatalf("pressing p gave no feedback:\n%s", out)
+	}
+	nm, _ = m.Update(snapMsg(core.Snapshot{
+		Providers: []core.ProviderSnapshot{{Label: "ollama", OK: true}},
+		Probes:    []core.ProbeSample{{At: time.Now().Add(time.Second), OK: true, TokPS: 10, TTFTms: 5}},
+	}))
+	m = nm.(Model)
+	if out := strip(m.View()); strings.Contains(out, "probing") {
+		t.Errorf("probe result did not clear the pending marker:\n%s", out)
+	}
+}
+
+// All backends down: ENGINE STATE must say so instead of promising telemetry
+// that will never arrive.
+func TestEngineStateNamesAllDownEngines(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.snap = core.Snapshot{Providers: []core.ProviderSnapshot{
+		{Label: "a", OK: false}, {Label: "b", OK: false},
+	}}
+	if out := strip(m.gaugesBody(30)); !strings.Contains(out, "no healthy engines") {
+		t.Errorf("gaugesBody hides all-down state: %q", out)
+	}
+	m.snap = core.Snapshot{}
+	if out := strip(m.gaugesBody(30)); !strings.Contains(out, "waiting for telemetry") {
+		t.Errorf("gaugesBody lost the pre-discovery message: %q", out)
+	}
+}
+
+// The compact view stands alone: it must explain why it is compact, how to
+// quit, and what to do when no engines are found (previously a blank pane).
+func TestMinimalViewGuidesRecovery(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	nm, _ := m.Update(snapMsg(core.Snapshot{Providers: []core.ProviderSnapshot{
+		{Label: "ollama", OK: true, OutTokPS: 42},
+	}}))
+	m = nm.(Model)
+	m.w, m.h, m.ready = 40, 12, true
+	out := strip(m.View())
+	for _, want := range []string{"enlarge window", "q quit", "ollama"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("minimal view missing %q:\n%s", want, out)
+		}
+	}
+
+	empty := New(Config{Version: "t"}, nil)
+	empty.w, empty.h, empty.ready = 40, 12, true
+	out = strip(empty.View())
+	for _, want := range []string{"no inference engines detected", "--demo"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("empty minimal view missing %q:\n%s", want, out)
 		}
 	}
 }
