@@ -46,7 +46,9 @@ const identityTimeout = 10 * time.Second
 func appleGPUs() []core.GPUDevice {
 	ctx, cancel := context.WithTimeout(context.Background(), identityTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "system_profiler", "SPDisplaysDataType", "-json").Output()
+	cmd := exec.CommandContext(ctx, "system_profiler", "SPDisplaysDataType", "-json")
+	cmd.WaitDelay = pipeGrace // a hung profiler must not hold the caller past its deadline
+	out, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
