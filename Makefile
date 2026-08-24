@@ -68,7 +68,7 @@ clean: ## remove build artifacts
 
 .PHONY: release
 release: test-dist ## build every release platform into dist/ with checksums
-	@cd $(DIST) && sha256sum $(BINARY)_* > checksums.txt && \
+	@cd $(DIST) && { command -v sha256sum >/dev/null 2>&1 && sha256sum $(BINARY)_* || shasum -a 256 $(BINARY)_*; } > checksums.txt && \
 		tar czf tokentop_$(VERSION)_checksums.tar.gz checksums.txt && rm checksums.txt
 
 .PHONY: test-dist
