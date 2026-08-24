@@ -372,3 +372,27 @@ func TestConcurrentRecordProbeEmit(t *testing.T) {
 		}
 	}
 }
+
+// A consumer stalled on a full channel must not pin c.mu: agent-event
+// recording (ingest HTTP handlers) and probe recording stay live while emit
+// waits to deliver a snapshot. Regression for sending under the lock.
+func TestEmitBlockedSendDoesNotPinMu(t *testing.T) {
+	col := New(nil, time.Hour) // no providers: emit parks on the send at once
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := make(chan core.Snapshot) // unbuffered: the send blocks until consumed
+	go col.emit(ctx, ch)
+
+	time.Sleep(100 * time.Millisecond) // emit is now parked on the blocked send
+
+	done := make(chan struct{})
+	go func() {
+		col.RecordAgent(core.AgentEvent{Agent: "liveness-probe"})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RecordAgent blocked while emit was parked on a channel send")
+	}
+}

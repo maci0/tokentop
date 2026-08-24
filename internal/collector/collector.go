@@ -218,7 +218,6 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	wg.Wait()
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	snap.Agents = append([]core.AgentEvent(nil), c.agents...)
 	snap.Probes = append([]core.ProbeSample(nil), c.probes...)
 	snap.Sys = c.sysSnapshot()
@@ -289,7 +288,11 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 		ps.InHist, ps.InT0 = inR.copy(), inR.t0
 		snap.Providers = append(snap.Providers, ps)
 	}
-	select { // a stalled consumer must not pin the emit past cancellation
+	c.mu.Unlock()
+	// Send outside the critical section: a stalled consumer must neither pin
+	// emit past cancellation nor freeze RecordAgent/RecordProbe/ProbeAll
+	// behind c.mu while this send waits for buffer space.
+	select {
 	case out <- snap:
 	case <-ctx.Done():
 	}
