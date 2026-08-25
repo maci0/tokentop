@@ -187,6 +187,16 @@ func TestPollCarriesBearerAndContextLength(t *testing.T) {
 	defer srv.Close()
 
 	p := NewOpenAICompat(srv.URL, "test", core.KindOmniRoute)
+	// Without an explicit Allow the token must not ride a poll: this
+	// provider was not named by the operator, only built against a URL.
+	if _, err := p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization = %q before Allow, want unset", gotAuth)
+	}
+
+	bearer.Allow(srv.URL)
 	m, err := p.Poll(context.Background())
 	if err != nil {
 		t.Fatal(err)
