@@ -1,0 +1,4 @@
+# Dependencies of scripts/screenshot.py (renders a tmux ANSI capture to PNG).
+# Install into a scratch venv, not the system: uv pip install -r scripts/requirements.txt
+pyte>=0.8.2
+pillow>=10.0
