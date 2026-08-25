@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
-	"github.com/maci0/tokentop/internal/gpu"
-	"github.com/maci0/tokentop/internal/sysmon"
+	"github.com/maci0/toktop/internal/core"
+	"github.com/maci0/toktop/internal/gpu"
+	"github.com/maci0/toktop/internal/sysmon"
 )
 
 // Stats samples host vitals from the remote /proc tree every few seconds and
@@ -29,7 +29,7 @@ type Stats struct {
 
 // sectionMark separates the vitals dump into ordered sections. Chosen to be
 // unlikely to appear in any of the read files.
-const sectionMark = "%tokentop%"
+const sectionMark = "%toktop%"
 
 // vitalsScript dumps load, memory, uptime, CPU model, OS name, kernel and GPU
 // telemetry (NVIDIA via nvidia-smi, AMD via rocm-smi; whichever is present) in

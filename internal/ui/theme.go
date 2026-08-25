@@ -1,4 +1,4 @@
-// Package ui renders the tokentop dashboard.
+// Package ui renders the toktop dashboard.
 package ui
 
 import (
@@ -149,7 +149,7 @@ func heatColor(f float64) lipgloss.Color {
 // wordmark renders the logo with a cyan→pink gradient. Static output:
 // built once, then reused by every frame.
 var wordmark = sync.OnceValue(func() string {
-	letters := []rune("TOKENTOP")
+	letters := []rune("TOKTOP")
 	colors := []lipgloss.Color{cTeal, cCyan, cBlue, cLavender, cMagenta, cPink, cPeach, cYellow}
 	var b strings.Builder
 	for i, l := range letters {

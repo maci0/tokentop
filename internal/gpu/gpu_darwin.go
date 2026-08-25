@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 // Apple GPU support has two halves:

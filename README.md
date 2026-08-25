@@ -1,22 +1,22 @@
-# tokentop
+# toktop
 
 `btop` for AI: a terminal dashboard for LLM inference engines and the agents
 hammering them.
 
 <p align="center">
-  <img src="docs/images/dashboard.png" alt="tokentop dashboard" width="900">
+  <img src="docs/images/dashboard.png" alt="toktop dashboard" width="900">
 </p>
 
 ```
-./tokentop --demo          # simulated fleet, works instantly
-./tokentop                 # auto-discovers local engines (ports + processes)
-tokentop ssh://maci@box    # watch engines on another host
+./toktop --demo          # simulated fleet, works instantly
+./toktop                 # auto-discovers local engines (ports + processes)
+toktop ssh://maci@box    # watch engines on another host
 ```
 
 
 ## AI coding agents
 
-tokentop also watches the coding agents running on this machine, not just
+toktop also watches the coding agents running on this machine, not just
 inference engines. It finds them by process, reads the token counts they
 already write to their own session logs, and shows their throughput beside the
 engines:
@@ -28,13 +28,20 @@ AGENTS  local, read from their own session logs
 ```
 
 `--agents` turns this on. It is off by default because it means scanning this
-machine's processes and reading session files nobody pointed tokentop at:
+machine's processes and reading session files nobody pointed toktop at:
 watching engines you configured does not imply consent to that.
 
 Once asked for, nothing else has to be configured and the agent does not have
-to cooperate: claude, codex, qwen, pi, prime-agent, feynman, clanker, and dsh
-all keep transcripts that carry the provider's own counts. Agents that report
-nothing show no rate rather than a zero.
+to cooperate: claude, codex, qwen, copilot, pi, prime-agent, feynman, clanker,
+and dsh all keep transcripts that carry the provider's own counts. Agents that
+report nothing show no rate rather than a zero.
+
+opencode is the exception: it keeps its sessions in SQLite, so reading it means
+linking a database driver in for one agent. That is gated twice. The `sqlite`
+build tag decides whether the driver is compiled in at all (released binaries
+and `make build` carry it; `make build TAGS=` leaves it out), and `--opencode-db`
+decides whether a binary that has it opens the database. Asking for it in a
+build without the driver says so on stderr rather than reporting a silent zero.
 
 Reading is done by this repo's own `agentusage` package, which gauntlet also
 imports, so both tools report the same numbers. Agents defined in
@@ -67,7 +74,7 @@ imports, so both tools report the same numbers. Agents defined in
 - **Braille charts** - dot-matrix rendering with btop-style fading bloom;
   timescale compresses leftward (`t` toggles) with faint grid marks showing
   where each doubling begins.
-- **Hot reload** - rebuild the binary while it runs and tokentop restarts
+- **Hot reload** - rebuild the binary while it runs and toktop restarts
   into the fresh build automatically (`--no-hot-reload` to disable).
 
 ## Agent feed API
@@ -124,8 +131,8 @@ process command lines.
 Attach anything explicitly:
 
 ```
-tokentop --add http://10.0.0.5:8000        # repeatable
-tokentop ssh://user@host                   # remote engines + host vitals
+toktop --add http://10.0.0.5:8000        # repeatable
+toktop ssh://user@host                   # remote engines + host vitals
 ```
 
 SSH mode is built in (pure Go, no ssh binary needed) and the remote only
@@ -141,7 +148,7 @@ memory, uptime, CPU model, OS, kernel and GPU rows (`nvidia-smi`, or
 Auth tries, in order: `--ssh-key PATH`, keys from `~/.ssh/config`
 (`HostName`, `User`, `Port`, `IdentityFile` are honored), your default
 keys, ssh-agent, and finally a password prompt when stdin is a terminal
-(or set `TOKENTOP_SSH_PASSWORD` for headless runs). Host keys use
+(or set `TOKTOP_SSH_PASSWORD` for headless runs). Host keys use
 trust-on-first-use, stored under your config dir; a changed key is refused
 loudly.
 
@@ -158,7 +165,7 @@ loudly.
 
 ## Accessibility
 
-tokentop is usable without a mouse, without color vision, and with assistive
+toktop is usable without a mouse, without color vision, and with assistive
 technology:
 
 - **Keyboard only** - every action has a key (table above); nothing requires
@@ -172,7 +179,7 @@ technology:
 - **Non-visual output** - `--once` prints one plain frame and exits instead
   of running the full-screen UI; a live-repainting dashboard defeats most
   screen readers, so the static frame is the intended path. Pair it with
-  `TOKENTOP_COLUMNS` / `TOKENTOP_LINES` for a fixed size.
+  `TOKTOP_COLUMNS` / `TOKTOP_LINES` for a fixed size.
 - **Tested contrast** - unit tests hold the palette to WCAG 2.2 AA: text
   colors at >= 4.5:1 on the background, and chart marks at >= 3:1 even at
   the deepest point of the age fade (`internal/ui/theme_test.go`).
@@ -187,7 +194,7 @@ technology:
 ssh://user@host   positional; monitor remote hosts (repeatable)
 --ssh-key PATH    private key for ssh targets (overrides ~/.ssh/config)
 --bearer TOKEN    bearer token sent to engines; OmniRoute API keys etc.
-                  (env: OMNIROUTE_API_KEY, then TOKENTOP_BEARER)
+                  (env: OMNIROUTE_API_KEY, then TOKTOP_BEARER)
 --probe N         auto-probe every N seconds
 --interval D      poll interval (default 1s)
 --ingest ADDR     agent event listen address (default 127.0.0.1:8420)
@@ -200,20 +207,20 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 --help, -h        show usage, examples and environment fallbacks
 ```
 
-Password auth for ssh targets: interactive prompt, or `TOKENTOP_SSH_PASSWORD`.
+Password auth for ssh targets: interactive prompt, or `TOKTOP_SSH_PASSWORD`.
 
 ## Environment variables
 
 | variable | what it does |
 |---|---|
 | `OMNIROUTE_API_KEY` | bearer token fallback for `--bearer` (checked first) |
-| `TOKENTOP_BEARER` | bearer token fallback for `--bearer` (checked after `OMNIROUTE_API_KEY`) |
-| `TOKENTOP_SSH_PASSWORD` | ssh password for headless runs; otherwise an interactive prompt |
-| `TOKENTOP_COLUMNS` / `TOKENTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20 |
+| `TOKTOP_BEARER` | bearer token fallback for `--bearer` (checked after `OMNIROUTE_API_KEY`) |
+| `TOKTOP_SSH_PASSWORD` | ssh password for headless runs; otherwise an interactive prompt |
+| `TOKTOP_COLUMNS` / `TOKTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20 |
 
 The flag always wins over its env fallback. Prefer an env var over
 `--bearer` for tokens: command-line arguments are visible in process
-listings to every user on the host. Unknown `TOKENTOP_*` variables are
+listings to every user on the host. Unknown `TOKTOP_*` variables are
 reported at startup, so a typo fails loudly instead of doing nothing.
 Out-of-range flag values (`--interval 0`, negative `--probe`, `--frames < 1`
 with `--once`) abort with exit code 2 instead of being silently adjusted.
@@ -233,8 +240,8 @@ go test ./internal/core -run TestSanitizeTextPreservesUTF8   # one test
 Cross-compiles (no cgo anywhere):
 
 ```
-GOOS=darwin GOARCH=arm64 go build -o tokentop-macos ./cmd/tokentop
-GOOS=windows GOARCH=amd64 go build -o tokentop.exe ./cmd/tokentop
+GOOS=darwin GOARCH=arm64 go build -o toktop-macos ./cmd/toktop
+GOOS=windows GOARCH=amd64 go build -o toktop.exe ./cmd/toktop
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, the edit-test loop,

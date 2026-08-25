@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/maci0/tokentop/internal/procs"
+	"github.com/maci0/toktop/internal/procs"
 )
 
 // Discovery is the result of one sweep over a remote host.

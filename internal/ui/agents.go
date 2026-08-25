@@ -15,7 +15,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 // agentWindow is how far back a rate looks. Long enough that a pause between
@@ -155,7 +155,7 @@ func (m Model) renderAgentsOnly() string {
 		panel(title, strings.Join(rows, "\n"), w, len(rows)),
 		panel("AGENT FEED", strings.Join(feed, "\n"), w, feedH),
 		"",
-		dim("  no inference engines detected — tokentop --add <url> to attach one"),
+		dim("  no inference engines detected — toktop --add <url> to attach one"),
 	)
 	footer := m.renderFooter()
 	if gap := m.h - lipgloss.Height(body) - lipgloss.Height(footer) - 1; gap > 0 {

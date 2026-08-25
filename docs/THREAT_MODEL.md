@@ -1,4 +1,4 @@
-# tokentop threat model
+# toktop threat model
 
 Living document for the security owner: the whole attack surface on one screen,
 with file references so each claim can be re-verified against code. Individual
@@ -10,7 +10,7 @@ they live and what already stands in their way.
 - **Review cadence:** none scheduled organizationally; re-run whenever an entry
   point, auth path, or bind default changes
 
-Scope: the `tokentop` CLI (single static Go binary) and its deployment
+Scope: the `toktop` CLI (single static Go binary) and its deployment
 artifacts (GitHub Actions workflows, Makefile release targets). Out of scope:
 the vendored-path dependency `github.com/maci0/gauntlet-go` (deps-review owns
 it; agentwatch consumes it at internal/agentwatch/agentwatch.go:78).
@@ -19,8 +19,8 @@ it; agentwatch consumes it at internal/agentwatch/agentwatch.go:78).
 
 | # | Risk | Boundary | Where | State |
 |---|------|----------|-------|-------|
-| 1 | Bearer token sent to every probed/attached endpoint without scoping: any local listener on a scanned port (or any `--add` host) receives `Authorization: Bearer <token>` | engine polling | internal/provider/discover.go:72,289, internal/provider/provider.go:57,79, cmd/tokentop/main.go:123-130 | No mitigation |
-| 2 | Ingest endpoint accepts unauthenticated events from any local process (any network peer if bound non-loopback via `--ingest`); forged telemetry renders as real agents | local processes -> ingest, network -> ingest | internal/ingest/server.go:41-59,112, cmd/tokentop/main.go:46,199 | No authentication; DoS and injection mitigated (see M3-M5) |
+| 1 | Bearer token sent to every probed/attached endpoint without scoping: any local listener on a scanned port (or any `--add` host) receives `Authorization: Bearer <token>` | engine polling | internal/provider/discover.go:72,289, internal/provider/provider.go:57,79, cmd/toktop/main.go:123-130 | No mitigation |
+| 2 | Ingest endpoint accepts unauthenticated events from any local process (any network peer if bound non-loopback via `--ingest`); forged telemetry renders as real agents | local processes -> ingest, network -> ingest | internal/ingest/server.go:41-59,112, cmd/toktop/main.go:46,199 | No authentication; DoS and injection mitigated (see M3-M5) |
 | 3 | Trust-on-first-use accepts a first-contact MITM by design; only key *changes* are refused | operator -> ssh target | internal/remote/knownhosts.go:36-52 | Documented residual risk (README "Auth" section) |
 | 4 | Hot-reload re-execs whatever binary occupies the exe path when its identity changes; PATH-based vendor CLI lookup executes tools from `$PATH` | build -> runtime, host -> process | internal/selfreload/exec_unix.go:10, internal/gpu/gpu.go:42-51 | Gated by filesystem permissions / same-user requirement; `--no-hot-reload` exists |
 | 5 | No audit trail: ingest requests are not logged, nothing is persisted, so a poisoning or token-capture incident cannot be reconstructed after the fact | response readiness | internal/ingest/server.go (no logging anywhere in handler) | Gap (note only here; o11y-review owns log structure) |
@@ -33,18 +33,18 @@ code read at review time.
 What is worth stealing, corrupting, or denying:
 
 - **Engine credentials**: one process-wide bearer token (`internal/bearer/bearer.go:13`),
-  sourced from `--bearer`, `OMNIROUTE_API_KEY`, or `TOKENTOP_BEARER`
-  (cmd/tokentop/main.go:83-90). Grants API access to gateways like OmniRoute.
+  sourced from `--bearer`, `OMNIROUTE_API_KEY`, or `TOKTOP_BEARER`
+  (cmd/toktop/main.go:83-90). Grants API access to gateways like OmniRoute.
 - **SSH credentials**: private keys read from `--ssh-key`, `~/.ssh/config`
   IdentityFile, or `~/.ssh/id_*` defaults (internal/remote/auth.go:18-44), the
   ssh-agent socket (auth.go:161-167), and the password from
-  `TOKENTOP_SSH_PASSWORD` or the terminal prompt (auth.go:89-114).
-- **Host-key pin store**: `os.UserConfigDir()/tokentop/known_hosts`
+  `TOKTOP_SSH_PASSWORD` or the terminal prompt (auth.go:89-114).
+- **Host-key pin store**: `os.UserConfigDir()/toktop/known_hosts`
   (internal/remote/knownhosts.go:16-22). Corrupting it enables a forced
   re-TOFU.
 - **Dashboard integrity**: what the operator sees drives triage decisions.
   Poisoned rows are the main prize of the ingest endpoint.
-- **Operator terminal integrity**: tokentop renders attacker-shaped text
+- **Operator terminal integrity**: toktop renders attacker-shaped text
   (engine model names, remote vitals, event fields) into a TTY; escape-sequence
   injection would hijack clipboard/cursor/title.
 - **Monitoring availability**: the dashboard session itself (low value, bounded
@@ -61,14 +61,14 @@ Every externally reachable input, with its code location:
 1. **Ingest HTTP server** (on by default): `POST /v1/events` (single JSON or
    NDJSON stream), `GET /v1/events`, `GET /healthz`
    (internal/ingest/server.go:48-53). Binds `127.0.0.1:8420` unless `--ingest`
-   says otherwise (cmd/tokentop/main.go:46); any address is accepted, including
+   says otherwise (cmd/toktop/main.go:46); any address is accepted, including
    routable interfaces. Runs in demo mode too (main.go:109-119).
 2. **CLI arguments**: flags including `--bearer` (secret),
    `--ssh-key`, `--add URL` (repeatable), `--ingest ADDR`; positional
-   `ssh://[user@]host[:port]` targets (cmd/tokentop/main.go:41-101).
+   `ssh://[user@]host[:port]` targets (cmd/toktop/main.go:41-101).
 3. **Environment variables**: secrets `OMNIROUTE_API_KEY`,
-   `TOKENTOP_BEARER`, `TOKENTOP_SSH_PASSWORD`; plus `SSH_AUTH_SOCK`,
-   `TOKENTOP_COLUMNS/LINES` (cmd/tokentop/main.go:83-90,338-343;
+   `TOKTOP_BEARER`, `TOKTOP_SSH_PASSWORD`; plus `SSH_AUTH_SOCK`,
+   `TOKTOP_COLUMNS/LINES` (cmd/toktop/main.go:83-90,338-343;
    internal/remote/auth.go:99,161).
 4. **SSH client sessions** (outbound): shell scripts executed on the remote
    for discovery and vitals (internal/remote/discover.go:87,117-129,136-144;
@@ -78,7 +78,7 @@ Every externally reachable input, with its code location:
 5. **Engine HTTP polling** (outbound GET/POST): startup probe of ~18 well-known
    localhost ports (internal/provider/discover.go:22-41), process-derived
    candidates (discover.go:91-103), operator-supplied `--add` URLs, and remote
-   ports discovered over ssh (cmd/tokentop/main.go:407). Probes POST small
+   ports discovered over ssh (cmd/toktop/main.go:407). Probes POST small
    generations to engines (internal/probe/probe.go).
 6. **Agent transcript reading** (local disk): `/proc` walk finds coding-agent
    processes; their transcript files are read every second via the
@@ -91,7 +91,7 @@ Every externally reachable input, with its code location:
 8. **Self hot-reload**: polls the running executable's stat identity and
    re-execs it via `syscall.Exec` with the original argv/environ when changed
    (internal/selfreload/selfreload.go:20-43, exec_unix.go:10;
-   cmd/tokentop/main.go:276).
+   cmd/toktop/main.go:276).
 9. **Local system introspection**: `/proc` and sysctl reads
    (internal/procs/, internal/sysmon/), vendor CLIs executed from `$PATH`:
    nvidia-smi, rocm-smi, xpu-smi (internal/gpu/gpu.go:71-107), system_profiler
@@ -113,13 +113,13 @@ signature step exists.
   (server.go:160-177) but attribution does not. When `--ingest` binds a
   non-loopback address this boundary widens to the network with no additional
   check at bind time.
-- **B2: engine HTTP responses -> tokentop.** Whatever answers on a scanned
+- **B2: engine HTTP responses -> toktop.** Whatever answers on a scanned
   port, a `--add` URL, or a forwarded remote port is treated as an engine:
   its JSON, Prometheus text, version strings, and error bodies flow into
   parsing and rendering. Validation points: body caps (provider.go:66,88),
   NaN/Inf rejection (provider.go:194), render-time sanitization
   (internal/ui/ui.go:683-690,778,851-862).
-- **B3: remote ssh host -> tokentop.** A compromised or hostile ssh target
+- **B3: remote ssh host -> toktop.** A compromised or hostile ssh target
   controls every byte returned by discovery and vitals scripts: `/proc/net/tcp`
   text, cmdline dumps, loadavg/meminfo/CPU/OS/kernel strings, nvidia-smi CSV or
   rocm-smi JSON (stats.go:38-64, discover.go:87-144). Authentication is the ssh
@@ -144,7 +144,7 @@ signature step exists.
   (agentwatch.go:76-78); `PATH` decides which vendor CLIs execute
   (gpu.go:42-51). All three are same-user-writable inputs treated as trusted.
 
-Privilege transitions: tokentop gains no privileges at runtime (no setuid,
+Privilege transitions: toktop gains no privileges at runtime (no setuid,
 no sudo); the ssh connection is the one place code acts with authority beyond
 the local process - it executes shell commands on the remote under the target
 account (client.go:233-264).
@@ -201,7 +201,7 @@ account (client.go:233-264).
 - *Information disclosure*: bearer token exposed to any probed endpoint
   (risk 1); token passed via `--bearer` is visible in process listings -
   README documents the env fallback for exactly this reason (README "Flags"/
-  environment section); `TOKENTOP_SSH_PASSWORD` in the environment is readable
+  environment section); `TOKTOP_SSH_PASSWORD` in the environment is readable
   by same-user processes and inherited by children (auth.go:99).
 - *Tampering*: known_hosts store is plain text in the user config dir, mode
   0600 in a 0700 dir (knownhosts.go:76-85); a same-user writer can reset pins.
@@ -211,7 +211,7 @@ account (client.go:233-264).
   arbitrary code execution as the running user (exec_unix.go:10); substituting
   `nvidia-smi` et al. via `PATH` runs attacker code with user privileges
   (gpu.go:56). Both require write access the user already controls; they matter
-  when tokentop runs with more authority than the attacker has (none today -
+  when toktop runs with more authority than the attacker has (none today -
   noted for future privilege changes).
 
 ## Existing mitigations map
@@ -234,7 +234,7 @@ Controls verified in code, with the threats they cover:
 | Local-only defaults: forward listeners on 127.0.0.1, ingest on 127.0.0.1:8420 | accidental network exposure (B1 widening) | client.go:298; main.go:46 |
 | Remote shell scripts: static bodies, only locally generated integers interpolated; no secret material sent to remote scripts | command injection into remote shell (B3 elevation) | discover.go:87,117-144; stats.go:38-64 |
 | Password prompt gated on TTY; encrypted keys skipped with guidance | credential handling in headless runs (B4) | auth.go:33-44,103-106 |
-| Flag validation exits 2; unknown `TOKENTOP_*` env warned | misconfiguration acting as silent security-relevant behavior change | main.go:66-70,323-334,345-361 |
+| Flag validation exits 2; unknown `TOKTOP_*` env warned | misconfiguration acting as silent security-relevant behavior change | main.go:66-70,323-334,345-361 |
 | Supply chain: govulncheck in CI, Dependabot, SHA-pinned workflow actions, SBOM in releases | vulnerable-dependency drift (deployment surface) | .github/workflows/ci.yml, .github/dependabot.yml, .github/workflows/release.yml, Makefile |
 
 Documentation claims checked against code this pass:
@@ -289,7 +289,7 @@ Recorded as threats with locations; fixes do not happen in this document:
 4. **No per-peer ingest quotas** (Low): bounded per connection (server.go:78-91)
    but not per peer; matters only once risk 2's exposure question is settled.
 5. **Hot-reload and PATH-based tool execution** (risk 4, Low): acceptable for a
-   same-user dev tool; revisit if tokentop ever runs privileged.
+   same-user dev tool; revisit if toktop ever runs privileged.
 
 ## Response readiness (notes only)
 

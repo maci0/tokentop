@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 func collectOne(s *Source) core.Snapshot {

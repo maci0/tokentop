@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 // Prober fires synthetic generation probes on demand.
@@ -180,7 +180,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	if !m.ready {
-		return "\n  ⏳ tokentop is warming up…"
+		return "\n  ⏳ toktop is warming up…"
 	}
 	if m.help {
 		return m.renderHelp()
@@ -927,9 +927,9 @@ func (m Model) renderEmpty() string {
 		dim("scanned localhost :11434 :30000 :8000 :8080 :1234 …"),
 		"",
 		"attach anything openai-compatible:",
-		styleInfo.Render("  tokentop --add http://127.0.0.1:9999"),
+		styleInfo.Render("  toktop --add http://127.0.0.1:9999"),
 		"or preview the dashboard:",
-		styleHot.Render("  tokentop --demo"),
+		styleHot.Render("  toktop --demo"),
 	}
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -970,7 +970,7 @@ func (m Model) renderMinimal() string {
 	b.WriteString(dim(clip("enlarge window for the full dashboard", m.w)) + "\n")
 	if len(m.snap.Providers) == 0 {
 		b.WriteString(styleWarn.Render("no inference engines detected") + "\n")
-		b.WriteString(dim(clip("try tokentop --demo or --add URL", m.w)) + "\n")
+		b.WriteString(dim(clip("try toktop --demo or --add URL", m.w)) + "\n")
 	}
 	for _, p := range m.snap.Providers {
 		st := styleOK

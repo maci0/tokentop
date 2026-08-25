@@ -62,7 +62,7 @@ func keyFileAuth(path string, required bool) (ssh.AuthMethod, error) {
 }
 
 // passwordSource yields a secret at most once per connection attempt chain:
-// TOKENTOP_SSH_PASSWORD for headless runs, otherwise a terminal prompt. It
+// TOKTOP_SSH_PASSWORD for headless runs, otherwise a terminal prompt. It
 // remembers the answer so password and keyboard-interactive mechanisms share
 // it without asking twice, and remembers why no answer was produced so an
 // aborted prompt surfaces as its real cause instead of a generic auth failure.
@@ -74,7 +74,7 @@ type passwordSource struct {
 }
 
 var interactivePassword = func(t Target) (string, error) {
-	fmt.Printf("tokentop: password for %s: ", t.userHost())
+	fmt.Printf("toktop: password for %s: ", t.userHost())
 	b, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	if err != nil {
@@ -96,12 +96,12 @@ func (p *passwordSource) get(t Target) (string, error) {
 		return "", p.err
 	}
 	p.asked = true
-	if v := os.Getenv("TOKENTOP_SSH_PASSWORD"); v != "" {
+	if v := os.Getenv("TOKTOP_SSH_PASSWORD"); v != "" {
 		p.pw = v
 		return v, nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		p.err = fmt.Errorf("no password available (stdin is not a terminal; set TOKENTOP_SSH_PASSWORD)")
+		p.err = fmt.Errorf("no password available (stdin is not a terminal; set TOKTOP_SSH_PASSWORD)")
 		return "", p.err
 	}
 	v, err := interactivePassword(t)

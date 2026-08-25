@@ -1,5 +1,5 @@
 // Package ingest runs a tiny localhost HTTP endpoint so agents, harnesses and
-// scripts can push token-usage events that tokentop renders live.
+// scripts can push token-usage events that toktop renders live.
 package ingest
 
 import (
@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 // Server accepts POST /v1/events (single object or newline-delimited stream)

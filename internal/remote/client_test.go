@@ -25,7 +25,7 @@ import (
 
 // fakePublicKey derives a deterministic ed25519-backed ssh.PublicKey.
 func fakePublicKey(label string) ssh.PublicKey {
-	seed := sha256.Sum256([]byte("tokentop-test:" + label))
+	seed := sha256.Sum256([]byte("toktop-test:" + label))
 	pub, _, err := ed25519.GenerateKey(bytes.NewReader(seed[:]))
 	if err != nil {
 		panic(err)
@@ -552,7 +552,7 @@ func TestClientPasswordAuth(t *testing.T) {
 	withKnownHosts(t)
 	srv := newTestSSHServer(t, "secret", 0) // publickey rejected
 	defer srv.Close()
-	t.Setenv("TOKENTOP_SSH_PASSWORD", "secret")
+	t.Setenv("TOKTOP_SSH_PASSWORD", "secret")
 
 	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
 	if err != nil {
@@ -568,7 +568,7 @@ func TestClientWrongPasswordFails(t *testing.T) {
 	withKnownHosts(t)
 	srv := newTestSSHServer(t, "secret", 0)
 	defer srv.Close()
-	t.Setenv("TOKENTOP_SSH_PASSWORD", "wrong")
+	t.Setenv("TOKTOP_SSH_PASSWORD", "wrong")
 
 	_, err := Connect(t.Context(), testTarget(t, srv.Port()))
 	if err == nil {

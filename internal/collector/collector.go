@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
-	"github.com/maci0/tokentop/internal/probe"
-	"github.com/maci0/tokentop/internal/procs"
-	"github.com/maci0/tokentop/internal/provider"
-	"github.com/maci0/tokentop/internal/sysmon"
+	"github.com/maci0/toktop/internal/core"
+	"github.com/maci0/toktop/internal/probe"
+	"github.com/maci0/toktop/internal/procs"
+	"github.com/maci0/toktop/internal/provider"
+	"github.com/maci0/toktop/internal/sysmon"
 )
 
 const (

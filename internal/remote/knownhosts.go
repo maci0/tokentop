@@ -18,7 +18,7 @@ var knownHostsPath = func() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(dir, "tokentop", "known_hosts")
+	return filepath.Join(dir, "toktop", "known_hosts")
 }
 
 // tofu returns a HostKeyCallback implementing trust-on-first-use against a

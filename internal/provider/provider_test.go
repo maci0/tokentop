@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/maci0/tokentop/internal/bearer"
-	"github.com/maci0/tokentop/internal/core"
-	"github.com/maci0/tokentop/internal/httperr"
+	"github.com/maci0/toktop/internal/bearer"
+	"github.com/maci0/toktop/internal/core"
+	"github.com/maci0/toktop/internal/httperr"
 )
 
 const vllmFixture = `# HELP vllm:num_requests_running Number of requests currently running.

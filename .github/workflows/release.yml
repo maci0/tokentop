@@ -42,16 +42,16 @@ jobs:
           make test-dist VERSION="$VERSION"
           (
             cd dist
-            sha256sum tokentop_* > checksums.txt
+            sha256sum toktop_* > checksums.txt
             sha256sum -c checksums.txt
           )
           # smoke test the host-platform artifact: proves the binary runs and
           # carries the release version, not the default stamp
-          echo "smoke test: tokentop_${VERSION}_linux_amd64"
-          test "$("./dist/tokentop_${VERSION}_linux_amd64" --version)" = "tokentop $VERSION"
+          echo "smoke test: toktop_${VERSION}_linux_amd64"
+          test "$("./dist/toktop_${VERSION}_linux_amd64" --version)" = "toktop $VERSION"
           (
             cd dist
-            tar czf "tokentop_${VERSION}_checksums.tar.gz" checksums.txt && rm checksums.txt
+            tar czf "toktop_${VERSION}_checksums.tar.gz" checksums.txt && rm checksums.txt
           )
 
       - name: generate dependency sbom

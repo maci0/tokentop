@@ -1,4 +1,4 @@
-// Package remote attaches tokentop to engines on other hosts over one
+// Package remote attaches toktop to engines on other hosts over one
 // long-lived ssh connection: target parsing, host key handling, discovery of
 // listening inference ports and periodic vitals sampling.
 package remote
@@ -24,7 +24,7 @@ import (
 // tests can shrink it, like bannerTimeout and the keepalive pacing below.
 var runTimeout = 15 * time.Second
 
-// Client is one long-lived ssh connection carrying everything tokentop needs
+// Client is one long-lived ssh connection carrying everything toktop needs
 // from a remote host: command sessions for discovery and vitals, plus direct
 // TCP channels relayed onto local listeners for engine traffic. No ssh
 // binary, no local port-forward races: Forward binds its listeners before
@@ -110,7 +110,7 @@ func (c *handshakeConn) Read(b []byte) (int, error) {
 
 // Connect establishes an authenticated connection to t. Credentials are tried
 // in order: explicit key file, config/default keys, agent, then a password
-// (TOKENTOP_SSH_PASSWORD first, else an interactive prompt when stdin is a
+// (TOKTOP_SSH_PASSWORD first, else an interactive prompt when stdin is a
 // TTY). Host keys are trust-on-first-use with change detection.
 func Connect(ctx context.Context, t Target) (*Client, error) {
 	methods, cleanup, err := t.authMethods()
@@ -215,7 +215,7 @@ func (c *Client) probe(wait time.Duration) bool {
 	type ack struct{ ok bool }
 	ch := make(chan ack, 1)
 	go func() {
-		_, _, err := c.conn.SendRequest("keepalive@tokentop", true, nil)
+		_, _, err := c.conn.SendRequest("keepalive@toktop", true, nil)
 		ch <- ack{err == nil}
 	}()
 	select {

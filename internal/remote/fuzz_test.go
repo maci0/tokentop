@@ -3,7 +3,7 @@ package remote
 import (
 	"testing"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 // FuzzParseVitals throws arbitrary bytes at parseVitals, the entry point for
@@ -17,10 +17,10 @@ func FuzzParseVitals(f *testing.F) {
 		vitalsDump,
 		vitalsDumpFrom("1.0 1.0 1.0", "", "", "", "", "", rocmJSON),
 		vitalsDumpFrom("", "", "", "", "", "", ""),
-		"\n%tokentop%\n%tokentop%\n%tokentop%\n%tokentop%\n%tokentop%\n%tokentop%\n",
+		"\n%toktop%\n%toktop%\n%toktop%\n%toktop%\n%toktop%\n%toktop%\n",
 		"",
-		"%tokentop%",
-		"nan nan nan\n%tokentop%MemTotal: x\n%tokentop%-1e999\n%tokentop%%tokentop%%tokentop%%tokentop%\n-1, , [N/A], [N/A], [N/A], [N/A], [N/A], [N/A]",
+		"%toktop%",
+		"nan nan nan\n%toktop%MemTotal: x\n%toktop%-1e999\n%toktop%%toktop%%toktop%%toktop%\n-1, , [N/A], [N/A], [N/A], [N/A], [N/A], [N/A]",
 		"1e300 0 0",
 		"MemTotal: 99999999999999999999 kB\nMemAvailable: 1 kB\nSwapTotal: 5 kB\nSwapFree: 9 kB",
 		`{"card0":{"Temperature (Sensor edge) (C)":"1e308","GPU use (%)":"nan","Used Memory (VRAM)":[1e308],"Total Memory (VRAM)":{"values":[-42]}}}`,

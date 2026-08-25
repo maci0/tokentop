@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
-	"github.com/maci0/tokentop/internal/gpu"
+	"github.com/maci0/toktop/internal/core"
+	"github.com/maci0/toktop/internal/gpu"
 )
 
 // gpuBudget bounds the whole vendor-tool sweep per poll cycle.
