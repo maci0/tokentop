@@ -249,7 +249,9 @@ func TestRunReportsGrowth(t *testing.T) {
 		if s.Output != 120 {
 			t.Fatalf("reported %d, want 120", s.Output)
 		}
-	case <-time.After(2 * time.Second):
+	// Generous on purpose: this asserts that growth is reported at all, and a
+	// loaded CI runner should not turn that into a failure.
+	case <-time.After(10 * time.Second):
 		t.Fatal("no usage reported")
 	}
 }
