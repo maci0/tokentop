@@ -5,6 +5,7 @@ package agentusage
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,14 +17,24 @@ import (
 // themselves, so a format change shows up here as a failing test rather than
 // as a silently missing number.
 
+// jsonPath quotes a path the way a real transcript does. It matters on
+// Windows, whose separator is JSON's escape character.
+func jsonPath(p string) string {
+	b, err := json.Marshal(p)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
 func claudeLine(cwd string, out int) string {
-	return `{"type":"assistant","cwd":"` + cwd + `","timestamp":"2026-08-25T00:00:00.000Z",` +
+	return `{"type":"assistant","cwd":` + jsonPath(cwd) + `,"timestamp":"2026-08-25T00:00:00.000Z",` +
 		`"message":{"role":"assistant","usage":{"input_tokens":2,"cache_creation_input_tokens":100,` +
 		`"cache_read_input_tokens":0,"output_tokens":` + itoa(out) + `}}}`
 }
 
 func codexMeta(cwd string) string {
-	return `{"type":"session_meta","payload":{"id":"x","cwd":"` + cwd + `","cli_version":"1"}}`
+	return `{"type":"session_meta","payload":{"id":"x","cwd":` + jsonPath(cwd) + `,"cli_version":"1"}}`
 }
 
 func codexTokens(out, total int) string {
@@ -190,9 +201,9 @@ func TestQwenUsageMetadataIsSummed(t *testing.T) {
 	}
 	// Thinking tokens are output tokens too, so both are counted.
 	append_(t, path,
-		`{"type":"assistant","cwd":"`+work+`","usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":205,"thoughtsTokenCount":82,"totalTokenCount":387}}`,
-		`{"type":"user","cwd":"`+work+`","message":{"role":"user"}}`,
-		`{"type":"assistant","cwd":"`+work+`","usageMetadata":{"candidatesTokenCount":13,"totalTokenCount":420}}`)
+		`{"type":"assistant","cwd":`+jsonPath(work)+`,"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":205,"thoughtsTokenCount":82,"totalTokenCount":387}}`,
+		`{"type":"user","cwd":`+jsonPath(work)+`,"message":{"role":"user"}}`,
+		`{"type":"assistant","cwd":`+jsonPath(work)+`,"usageMetadata":{"candidatesTokenCount":13,"totalTokenCount":420}}`)
 	w.poll(nil)
 	if got := w.Sample().Output; got != 300 {
 		t.Fatalf("output tokens %d, want 300 (205+82+13)", got)
@@ -266,8 +277,8 @@ func TestDefinedAgentTranscriptsAreReadGenerically(t *testing.T) {
 	}
 	path := filepath.Join(store, "session.jsonl")
 	append_(t, path,
-		`{"role":"assistant","cwd":"`+work+`","usage":{"output_tokens":140,"reasoning_tokens":40}}`,
-		`{"role":"assistant","cwd":"`+work+`","usage":{"output_tokens":60}}`)
+		`{"role":"assistant","cwd":`+jsonPath(work)+`,"usage":{"output_tokens":140,"reasoning_tokens":40}}`,
+		`{"role":"assistant","cwd":`+jsonPath(work)+`,"usage":{"output_tokens":60}}`)
 	w.poll(nil)
 	if got := w.Sample(); got.Output != 200 || got.Thinking != 40 {
 		t.Fatalf("got %+v, want output 200 and thinking 40", got)
@@ -286,7 +297,7 @@ func TestDefinedAgentIgnoresOtherDirectories(t *testing.T) {
 	})
 	w := Watch("piclone2", work, time.Now())
 	append_(t, filepath.Join(store, "s.jsonl"),
-		`{"role":"assistant","cwd":"`+other+`","usage":{"output_tokens":5000}}`)
+		`{"role":"assistant","cwd":`+jsonPath(other)+`,"usage":{"output_tokens":5000}}`)
 	w.poll(nil)
 	if got := w.Sample().Output; got != 0 {
 		t.Fatalf("another directory's usage leaked in: %d", got)
