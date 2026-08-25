@@ -12,8 +12,7 @@ import (
 
 // Catppuccin-mocha-leaning palette; degrades to nearest 256/16 colors on old terminals.
 var (
-	cBase    = lipgloss.Color("#1e1e2e")
-	cSurface = lipgloss.Color("#313244")
+	cBase = lipgloss.Color("#1e1e2e")
 	// Secondary text must stay >= 4.5:1 on cBase (WCAG 1.4.3): the old
 	// #6c7086 measured ~3.4:1. overlay1 keeps hierarchy below cText.
 	cDim      = lipgloss.Color("#9399b2")
