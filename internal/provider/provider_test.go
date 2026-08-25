@@ -32,7 +32,7 @@ vllm:request_success_total{finished_reason="stop",model_name="qwen"} 11
 `
 
 func TestParsePromSumsLabeledSeries(t *testing.T) {
-	fam := ParseProm(vllmFixture)
+	fam := parseProm(vllmFixture)
 	if got := fam["vllm:prompt_tokens_total"]; got != 1000 {
 		t.Fatalf("prompt_tokens_total = %v, want 1000", got)
 	}
@@ -42,7 +42,7 @@ func TestParsePromSumsLabeledSeries(t *testing.T) {
 }
 
 func TestParsePromSkipsCommentsAndBuckets(t *testing.T) {
-	fam := ParseProm("# comment\nm_bucket{le=\"1\"} 2\nother 3\n")
+	fam := parseProm("# comment\nm_bucket{le=\"1\"} 2\nother 3\n")
 	if len(fam) != 1 || fam["other"] != 3 {
 		t.Fatalf("unexpected families: %#v", fam)
 	}
@@ -52,7 +52,7 @@ func TestParsePromSkipsCommentsAndBuckets(t *testing.T) {
 // one such series must not poison the summed family, or the collector's
 // stored totals keep every derived rate NaN until restart.
 func TestParsePromRejectsNonFinite(t *testing.T) {
-	fam := ParseProm("gen_total{m=\"a\"} 5\ngen_total{m=\"b\"} NaN\ngen_max{m=\"a\"} +Inf\n")
+	fam := parseProm("gen_total{m=\"a\"} 5\ngen_total{m=\"b\"} NaN\ngen_max{m=\"a\"} +Inf\n")
 	if fam["gen_total"] != 5 {
 		t.Fatalf("NaN series poisoned the family sum: %v", fam["gen_total"])
 	}
@@ -63,7 +63,7 @@ func TestParsePromRejectsNonFinite(t *testing.T) {
 
 func TestClassifyVLLM(t *testing.T) {
 	var m Metrics
-	classify(ParseProm(vllmFixture), &m)
+	classify(parseProm(vllmFixture), &m)
 	if m.InTotal != 1000 || m.OutTotal != 2500 {
 		t.Errorf("totals = in:%v out:%v", m.InTotal, m.OutTotal)
 	}
@@ -121,7 +121,7 @@ func TestIdentifyOmniRoute(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if kind := Identify(context.Background(), srv.URL); kind != core.KindOmniRoute {
+	if kind := identify(context.Background(), srv.URL); kind != core.KindOmniRoute {
 		t.Errorf("Identify = %q, want omnirouter", kind)
 	}
 }
@@ -131,7 +131,7 @@ func TestIdentifyNotOmniRouteWithoutHeader(t *testing.T) {
 		w.Write([]byte(`{"data":[{"id":"m"}]}`))
 	}))
 	defer srv.Close()
-	if kind := Identify(context.Background(), srv.URL); kind == core.KindOmniRoute {
+	if kind := identify(context.Background(), srv.URL); kind == core.KindOmniRoute {
 		t.Error("plain server misidentified as omnirouter")
 	}
 }

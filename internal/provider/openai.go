@@ -42,7 +42,7 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 		return nil, merr // vLLM without metrics is not worth showing
 	}
 	if merr == nil {
-		classify(ParseProm(text), m)
+		classify(parseProm(text), m)
 	}
 	var lm struct {
 		Data []struct {
