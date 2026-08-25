@@ -485,11 +485,12 @@ func (w *Watcher) Poll() Sample {
 	if w == nil {
 		return Sample{}
 	}
-	// Force a fresh walk: a session file created seconds ago may not be in the
-	// cached listing, and this is the last chance to see it.
-	w.pollMu.Lock()
-	w.cached = nil
-	w.pollMu.Unlock()
+	// The candidate listing is deliberately not forced fresh here. Forcing a
+	// walk re-reads the whole transcript store on every call, at whatever
+	// cadence the caller polls, and session stores hold thousands of files:
+	// that is exactly what rescanEvery exists to prevent. A session created
+	// moments ago surfaces within rescanEvery, the same bound every periodic
+	// read already works under.
 	w.poll(nil)
 	return w.Sample()
 }
