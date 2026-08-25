@@ -4,6 +4,7 @@
 package procs
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,10 +36,9 @@ type raw struct {
 // platformList is implemented per GOOS.
 var platformList func() ([]raw, error)
 
-var osGetpid func() int
-
-// clkTck is the jiffies-per-second constant on the linux path.
-var clkTck = func() float64 { return 100 }
+// clkTck is the jiffies-per-second constant on the linux path. USER_HZ is
+// fixed at 100 by the Linux ABI; there is no runtime probe.
+const clkTck = 100
 
 // listTimeout bounds OS-tooling process listings (darwin ps, windows
 // PowerShell CIM). A hung tool must not pin the Sampler lock and stall every
@@ -87,7 +87,7 @@ func (s *Sampler) Snapshot() []Info {
 	dt := now.Sub(s.last).Seconds() // elapsed time (monotonic) since previous successful poll
 	s.last = now
 
-	self := osGetpid()
+	self := os.Getpid()
 	out := make([]Info, 0, len(list))
 	for _, r := range list {
 		if r.pid == self {
@@ -106,7 +106,7 @@ func (s *Sampler) Snapshot() []Info {
 		case dt > 0:
 			pticks := s.prev[r.pid]
 			if pticks > 0 && r.ticks >= pticks {
-				info.CPUPct = clampPct(float64(r.ticks-pticks) / clkTck() / dt * 100)
+				info.CPUPct = clampPct(float64(r.ticks-pticks) / clkTck / dt * 100)
 			}
 		}
 		if _, tracked := s.prev[r.pid]; !tracked || r.ticks != 0 {

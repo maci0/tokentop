@@ -96,14 +96,6 @@ func (w *Watcher) Run(ctx context.Context) {
 	}
 }
 
-// Tracked reports how many agent processes are currently followed, for a
-// status line.
-func (w *Watcher) Tracked() int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return len(w.tracked)
-}
-
 // Following reports whether one process is currently followed.
 func (w *Watcher) Following(pid int) bool {
 	w.mu.Lock()

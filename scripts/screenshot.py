@@ -149,20 +149,15 @@ def main():
                     [x * cell_w, y * cell_h, (x + 1) * cell_w - 1, (y + 1) * cell_h - 1],
                     fill=bg,
                 )
-            # grapheme clusters: consume combining marks / wide sequences
-            cluster = ch
-            width = 1
-            if x + 1 < cols and line[x + 1].data in ("", "\ufe0f"):
-                pass
             f = font_bold if bold else font
             draw.text(
                 (x * cell_w + cell_w // 2, y * cell_h + cell_h // 2),
-                cluster,
+                ch,
                 font=f,
                 fill=fg,
                 anchor="mm",
             )
-            x += width
+            x += 1
 
     img.save(out)
     print(f"{out}: {img.width}x{img.height} from {cols}x{rows} cells")

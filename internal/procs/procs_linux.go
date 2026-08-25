@@ -10,9 +10,6 @@ import (
 
 func init() {
 	platformList = listLinux
-	// USER_HZ is fixed at 100 by the Linux ABI; there is no runtime probe.
-	clkTck = func() float64 { return 100 }
-	osGetpid = os.Getpid
 }
 
 // listLinux walks /proc: everything from plain files, zero subprocesses.

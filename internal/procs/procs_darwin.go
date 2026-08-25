@@ -4,7 +4,6 @@ package procs
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -12,7 +11,6 @@ import (
 
 func init() {
 	platformList = listDarwin
-	osGetpid = os.Getpid
 }
 
 // listDarwin shells out to ps(1): there is no pure-Go API for the BSD process

@@ -58,7 +58,7 @@ func TestSelfIsSkipped(t *testing.T) {
 	s := NewSampler()
 	list := s.Snapshot()
 	for _, p := range list {
-		if p.PID == osGetpid() && p.Name == baseName(os.Args[0]) {
+		if p.PID == os.Getpid() && p.Name == baseName(os.Args[0]) {
 			t.Errorf("tokentop's own test process leaked in: %+v", p)
 		}
 	}
