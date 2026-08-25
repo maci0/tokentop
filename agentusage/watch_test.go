@@ -232,6 +232,33 @@ func TestUnsupportedAgentYieldsNoWatcher(t *testing.T) {
 	}
 }
 
+// Rate is what the UI shows as tok/s for an agent. It must refuse to invent
+// a number when there is no measurable interval or no growth: a stalled or
+// restarted counter is silence, not zero throughput forever.
+func TestRateNeedsPositiveSpanAndGrowth(t *testing.T) {
+	t0 := time.Unix(1_000_000, 0)
+	cases := []struct {
+		name   string
+		prev   Sample
+		cur    Sample
+		want   float64
+		wantOK bool
+	}{
+		{"growth over one second", Sample{Output: 100, At: t0}, Sample{Output: 350, At: t0.Add(time.Second)}, 250, true},
+		{"same instant is not an interval", Sample{Output: 100, At: t0}, Sample{Output: 350, At: t0}, 0, false},
+		{"clock went backwards", Sample{Output: 100, At: t0}, Sample{Output: 350, At: t0.Add(-time.Second)}, 0, false},
+		{"counter did not move", Sample{Output: 100, At: t0}, Sample{Output: 100, At: t0.Add(time.Second)}, 0, false},
+		{"counter reset to zero", Sample{Output: 100, At: t0}, Sample{}, 0, false},
+	}
+	for _, c := range cases {
+		got, ok := Rate(c.prev, c.cur)
+		if ok != c.wantOK || got != c.want {
+			t.Errorf("%s: Rate(%+v, %+v) = %v,%v want %v,%v",
+				c.name, c.prev, c.cur, got, ok, c.want, c.wantOK)
+		}
+	}
+}
+
 func TestRunReportsGrowth(t *testing.T) {
 	store := withStore(t, "claude")
 	work := t.TempDir()

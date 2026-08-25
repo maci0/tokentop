@@ -12,8 +12,12 @@ func TestScanAmdSysfs(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, content string) {
 		p := filepath.Join(root, rel)
-		os.MkdirAll(filepath.Dir(p), 0o755)
-		os.WriteFile(p, []byte(content), 0o644)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	write("card0/device/mem_info_vram_used", "4294967296")
 	write("card0/device/mem_info_vram_total", "17179869184")

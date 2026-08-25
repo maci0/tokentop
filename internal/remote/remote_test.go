@@ -49,7 +49,7 @@ func TestParseTarget(t *testing.T) {
 func TestParseTargetSSHConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config")
-	os.WriteFile(cfg, []byte(`
+	if err := os.WriteFile(cfg, []byte(`
 # comment
 Host gpu
   hostname 192.168.0.212
@@ -62,7 +62,9 @@ Host *.lab
 
 Host *
   user fallback
-`), 0o600)
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	oldPath, oldRead := sshConfigPath, configReader
 	defer func() { sshConfigPath, configReader = oldPath, oldRead }()
 	sshConfigPath = func() string { return cfg }
