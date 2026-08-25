@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -191,6 +192,12 @@ func TestGaugeBar(t *testing.T) {
 	}
 	if lipgloss.Width(GaugeBar(-5, 10, kvHeat)) != 13 { // clamps to "0%"
 		t.Error("negative pct not clamped")
+	}
+	// A NaN gauge (a 0/0 upstream, or a sensor that slipped past the parse
+	// filters) must render as an empty bar: int(NaN) is implementation-
+	// defined and fed strings.Repeat a huge negative count on amd64.
+	if got := GaugeBar(math.NaN(), 10, kvHeat); !strings.Contains(got, "0%") {
+		t.Errorf("NaN pct = %q, want it clamped to 0%%", strip(got))
 	}
 }
 

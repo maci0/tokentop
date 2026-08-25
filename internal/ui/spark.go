@@ -188,7 +188,7 @@ func GaugeBar(pct float64, w int, heat func(float64) lipgloss.Color) string {
 }
 
 func clamp01(v float64) float64 {
-	if v < 0 {
+	if !(v > 0) { // also catches NaN: every comparison with it is false
 		return 0
 	}
 	if v > 1 {

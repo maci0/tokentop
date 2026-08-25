@@ -152,7 +152,10 @@ func parseIoregNum(s string) uint64 {
 	return v // 0 on parse failure, the desired zero value
 }
 
-// parseSizeString reads vendor sizes like "128 GB", "8192 MB".
+// parseSizeString reads vendor sizes like "128 GB", "8192 MB". The scaled
+// magnitude goes through satUint: junk input ("1e300 GB") must saturate
+// rather than convert out of range, since the result sits in the one-shot
+// identity cache for the whole process.
 func parseSizeString(s string) uint64 {
 	f := strings.Fields(s)
 	if len(f) < 2 {
@@ -162,14 +165,16 @@ func parseSizeString(s string) uint64 {
 	if err != nil {
 		return 0
 	}
+	var mult float64
 	switch strings.ToLower(strings.TrimSuffix(f[1], "B")) {
 	case "k":
-		return uint64(n * 1024)
+		mult = 1 << 10
 	case "m":
-		return uint64(n * 1024 * 1024)
+		mult = 1 << 20
 	case "g":
-		return uint64(n * 1024 * 1024 * 1024)
+		mult = 1 << 30
 	default:
 		return 0
 	}
+	return satUint(n * mult)
 }

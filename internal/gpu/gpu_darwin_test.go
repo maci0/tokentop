@@ -36,6 +36,28 @@ func TestParseIOAccelerator(t *testing.T) {
 	}
 }
 
+func TestParseSizeString(t *testing.T) {
+	cases := []struct {
+		in   string
+		want uint64
+	}{
+		{"128 GB", 128 << 30},
+		{"8192 MB", 8192 << 20},
+		{"64 KB", 64 << 10},
+		{"junk GB", 0},
+		{"128 XB", 0},
+		{"128", 0},
+		// Out-of-range magnitudes must saturate, not convert out of range
+		// into an arbitrary value that the identity cache keeps forever.
+		{"1e300 GB", ^uint64(0)},
+	}
+	for _, c := range cases {
+		if got := parseSizeString(c.in); got != c.want {
+			t.Errorf("parseSizeString(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
 func TestPlatformExtrasDetachesCachedDevices(t *testing.T) {
 	a := platformExtras(context.Background())
 	b := platformExtras(context.Background())
