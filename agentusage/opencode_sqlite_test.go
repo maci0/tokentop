@@ -121,6 +121,46 @@ func TestOpenCodeDBWithoutAStoreReportsNothing(t *testing.T) {
 	}
 }
 
+func TestReadOnlyDSNEscapesURISyntax(t *testing.T) {
+	for _, tc := range []struct{ path, want string }{
+		{"/home/user/.local/share/opencode/opencode.db",
+			"file:/home/user/.local/share/opencode/opencode.db?mode=ro"},
+		{"/home/mar{c}o#witz/db", "file:/home/mar{c}o%23witz/db?mode=ro"},
+		{"/tmp/what?now/db", "file:/tmp/what%3Fnow/db?mode=ro"},
+		{"/tmp/100%20done/db", "file:/tmp/100%2520done/db?mode=ro"},
+		{`C:\Users\mw\.local\share\opencode.db`, `file:C:\Users\mw\.local\share\opencode.db?mode=ro`},
+	} {
+		if got := readOnlyDSN(tc.path); got != tc.want {
+			t.Errorf("readOnlyDSN(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+// A home directory may contain characters that carry URI syntax in a SQLite
+// file: DSN; those paths must still open and read as themselves.
+func TestOpenCodeDBReadsPathWithURISyntaxCharacters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "50%.db")
+	exec(t, path, `CREATE TABLE session (id text PRIMARY KEY, directory text NOT NULL)`)
+	exec(t, path, `CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL,
+		time_created integer NOT NULL, data text NOT NULL)`)
+
+	dir := t.TempDir()
+	addSession(t, path, "s", dir)
+	start := time.Now()
+	addMessage(t, path, "m1", "s", start.Add(time.Second),
+		`{"role":"assistant","tokens":{"output":42}}`)
+	withOpenCodeDB(t, path)
+
+	w := Watch("opencode", dir, start)
+	if w == nil {
+		t.Fatal("the source is registered, so a watcher is expected")
+	}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 42 {
+		t.Fatalf("output tokens %d, want 42: the URI-syntax path was misread", got)
+	}
+}
+
 func TestEnableOpenCodeDBReportsAvailability(t *testing.T) {
 	if !EnableOpenCodeDB(false) {
 		t.Fatal("a build with -tags sqlite can read the database")
