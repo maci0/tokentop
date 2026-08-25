@@ -167,6 +167,11 @@ func (s *testSSHServer) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 				req.Reply(false, nil)
 				continue
 			}
+			// Reply before running, the way real sshd does: x/crypto
+			// attaches its stdout/stderr copiers only once this reply
+			// arrives, and a late reply would mean no streaming at all
+			// while the command runs.
+			req.Reply(true, nil)
 			cmd := exec.Command("sh", "-c", p.Command)
 			cmd.Stdout = ch
 			cmd.Stderr = ch.Stderr()
@@ -180,7 +185,6 @@ func (s *testSSHServer) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 					status = 127
 				}
 			}
-			req.Reply(true, nil)
 			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{status}))
 			return // one command per session
 		default:
@@ -520,7 +524,10 @@ func TestClientRunFailureCarriesStderr(t *testing.T) {
 
 // A remote command exceeding runTimeout must fail promptly with a timeout
 // notice; whatever stderr arrived before the cut rides along so a hung
-// command is diagnosable from the error alone.
+// command is diagnosable from the error alone. The command keeps writing
+// stderr across the deadline on purpose: the ssh package copies it from a
+// background goroutine that outlives Output here, and reading the tail must
+// stay synchronized with that writer (race detector coverage).
 func TestClientRunTimesOutCarriesStderr(t *testing.T) {
 	withKnownHosts(t)
 	old := runTimeout
@@ -536,12 +543,15 @@ func TestClientRunTimesOutCarriesStderr(t *testing.T) {
 	defer cli.Close()
 
 	start := time.Now()
-	_, err = cli.Run(t.Context(), "echo stalled >&2; sleep 5")
+	_, err = cli.Run(t.Context(), "yes stalled >&2 & sleep 5")
 	if err == nil {
 		t.Fatal("long command should hit runTimeout")
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("err = %v, want timeout notice", err)
+	}
+	if !strings.Contains(err.Error(), "stalled") {
+		t.Errorf("err should carry the streamed stderr: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Errorf("timeout took %s, deadline not applied", elapsed)
