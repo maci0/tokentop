@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -173,10 +175,20 @@ func parseProm(text string) map[string]float64 {
 		if !ok || strings.HasSuffix(name, "_bucket") {
 			continue
 		}
-		fam[name] += val
+		// Each series parsed finite, but the running family sum can still
+		// overflow past MaxFloat64; keep the last good value rather than
+		// let a poisoned family reach the stored totals and every derived
+		// rate from here on.
+		if sum := fam[name] + val; finite(sum) {
+			fam[name] = sum
+		}
 	}
 	return fam
 }
+
+// finite reports whether v is a usable measurement: NaN and ±Inf would
+// poison downstream math and render as garbage.
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 func splitMetric(line string) (string, float64, bool) {
 	sp := strings.LastIndexByte(line, ' ')
@@ -191,7 +203,7 @@ func splitMetric(line string) (string, float64, bool) {
 	// The exposition format allows NaN/+Inf values (0/0 gauges on engines
 	// that have not served yet); they would poison the summed family and,
 	// through the stored totals, every derived rate from here on.
-	if math.IsNaN(v) || math.IsInf(v, 0) {
+	if !finite(v) {
 		return "", 0, false
 	}
 	if i := strings.IndexByte(name, '{'); i >= 0 {
@@ -207,7 +219,11 @@ func classify(fam map[string]float64, m *Metrics) {
 	for k, v := range fam {
 		lower[strings.ToLower(k)] = v
 	}
-	for n, v := range lower {
+	// Iterate in sorted order: several names can contest one scalar field,
+	// and random map order would make the winner — and the rendered queue
+	// depth or KV percentage — flip between polls on identical input.
+	for _, n := range slices.Sorted(maps.Keys(lower)) {
+		v := lower[n]
 		hasTok := strings.Contains(n, "token")
 		switch {
 		case hasTok && strings.Contains(n, "total"):
@@ -215,9 +231,9 @@ func classify(fam map[string]float64, m *Metrics) {
 			inish := containsAny(n, "prompt", "input")
 			switch {
 			case inish:
-				m.InTotal = v
+				m.InTotal = max(v, 0) // counters are unsigned; a negative gauge is junk
 			case outish:
-				m.OutTotal = v
+				m.OutTotal = max(v, 0)
 			}
 		case strings.Contains(n, "token_usage"):
 			if v >= 0 && v <= 1 { // SGLang: fraction of token pool in use
@@ -243,7 +259,9 @@ func classify(fam map[string]float64, m *Metrics) {
 		case strings.Contains(n, "time_to_first_token") && strings.HasSuffix(n, "_sum"):
 			cnt := lower[strings.TrimSuffix(n, "_sum")+"_count"]
 			if cnt > 0 {
-				m.TTFTms = v / cnt * 1000
+				if ms := v / cnt * 1000; ms > 0 && finite(ms) { // junk means no reading; a denormal count overflows the mean
+					m.TTFTms = ms
+				}
 			}
 		case strings.Contains(n, "throughput") && containsAny(n, "gen", "generation", "decode"):
 			if v > 0 { // engines publishing instantaneous tok/s (SGLang, TRT-LLM)

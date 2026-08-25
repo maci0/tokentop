@@ -8,10 +8,13 @@
 package gpu
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"maps"
 	"math"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -197,15 +200,20 @@ func ParseRocmSMI(b []byte) []core.GPUDevice {
 	if json.Unmarshal(b, &raw) != nil {
 		return nil
 	}
+	// Cards and their fields are visited in sorted order: map ranges are
+	// randomized, and both the device list order and which sensor wins
+	// where several report a temperature would otherwise flip between
+	// polls on identical input.
 	var devs []core.GPUDevice
-	for card, fields := range raw {
+	for _, card := range slices.Sorted(maps.Keys(raw)) {
 		idx := 0
 		if _, rest, ok := strings.Cut(card, "card"); ok && len(strings.Fields(rest)) > 0 {
 			idx, _ = strconv.Atoi(strings.Fields(rest)[0])
 		}
 		d := core.GPUDevice{Vendor: "amd", Index: idx}
-		for k, v := range fields {
-			lk, val := strings.ToLower(k), flatten(v)
+		fields := raw[card]
+		for _, k := range slices.Sorted(maps.Keys(fields)) {
+			lk, val := strings.ToLower(k), flatten(fields[k])
 			switch {
 			case strings.Contains(lk, "temperature"):
 				if strings.Contains(lk, "edge") || d.MilliC == 0 {
@@ -221,6 +229,7 @@ func ParseRocmSMI(b []byte) []core.GPUDevice {
 		}
 		devs = append(devs, d)
 	}
+	slices.SortStableFunc(devs, func(a, b core.GPUDevice) int { return cmp.Compare(a.Index, b.Index) })
 	return devs
 }
 

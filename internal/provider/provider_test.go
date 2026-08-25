@@ -62,6 +62,30 @@ func TestParsePromRejectsNonFinite(t *testing.T) {
 	}
 }
 
+// Two finite series of the same family can sum past MaxFloat64 even though
+// each line parsed clean; the poisoned family must not reach the stored
+// totals, or every derived rate stays broken until restart.
+func TestParsePromRejectsOverflowingSum(t *testing.T) {
+	fam := parseProm("gen_total{m=\"a\"} 1e308\ngen_total{m=\"b\"} 1e308\n")
+	if v := fam["gen_total"]; math.IsNaN(v) || math.IsInf(v, 0) {
+		t.Fatalf("overflowing family sum = %v, want the family dropped", v)
+	}
+	var m Metrics
+	classify(parseProm("vllm:generation_tokens_total{a=\"1\"} 1e308\n"+
+		"vllm:generation_tokens_total{a=\"2\"} 1e308\n"), &m)
+	if math.IsInf(m.OutTotal, 0) || math.IsNaN(m.OutTotal) {
+		t.Fatalf("OutTotal = %v from an overflowing family, want the last finite sum", m.OutTotal)
+	}
+
+	// The mean divides a huge sum by a denormal count; an overflowing
+	// quotient is no measurement.
+	var ttft Metrics
+	classify(parseProm("ttft_seconds_sum 1e308\nttft_seconds_count 1e-320\n"), &ttft)
+	if math.IsInf(ttft.TTFTms, 0) || math.IsNaN(ttft.TTFTms) {
+		t.Fatalf("TTFTms = %v from an overflowing mean, want the reading dropped", ttft.TTFTms)
+	}
+}
+
 func TestClassifyVLLM(t *testing.T) {
 	var m Metrics
 	classify(parseProm(vllmFixture), &m)
