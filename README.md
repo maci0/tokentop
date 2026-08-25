@@ -36,12 +36,20 @@ to cooperate: claude, codex, qwen, copilot, pi, prime-agent, feynman, clanker,
 and dsh all keep transcripts that carry the provider's own counts. Agents that
 report nothing show no rate rather than a zero.
 
-opencode is the exception: it keeps its sessions in SQLite, so reading it means
-linking a database driver in for one agent. That is gated twice. The `sqlite`
-build tag decides whether the driver is compiled in at all (released binaries
-and `make build` carry it; `make build TAGS=` leaves it out), and `--opencode-db`
-decides whether a binary that has it opens the database. Asking for it in a
-build without the driver says so on stderr rather than reporting a silent zero.
+Two agents keep databases instead of transcripts, and both need the `sqlite`
+build tag, which decides whether a driver is compiled in at all (released
+binaries and `make build` carry it; `make build TAGS=` leaves it out).
+
+opencode keeps one session store for the whole machine, so it is gated twice:
+the tag links the driver, and `--opencode-db` decides whether a binary that has
+it opens the operator's database. Asking for it in a build without the driver
+says so on stderr rather than reporting a silent zero.
+
+crush keeps its database inside the project it is working on
+(`.crush/crush.db`, at the project root it resolves), with the counts in
+`sessions.completion_tokens`. That is the same file a review is already
+reading and writing, so there is no second gate: with the tag, it is read. The
+only JSONL crush writes is its log, which carries no counters.
 
 Reading is done by this repo's own `agentusage` package, which gauntlet also
 imports, so both tools report the same numbers. Agents defined in

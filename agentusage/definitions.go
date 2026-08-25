@@ -19,8 +19,8 @@ import (
 // Whether its tokens can be read is decided by the adapters in watch.go, and
 // most of this list keeps no transcript worth reading.
 var knownAgents = []string{
-	"agy", "claude", "clanker", "codex", "copilot", "cursor-agent", "dsh",
-	"feynman", "gemini", "grok", "kimi", "omp", "opencode", "pi",
+	"agy", "claude", "clanker", "codex", "copilot", "crush", "cursor-agent",
+	"dsh", "feynman", "gemini", "grok", "kimi", "omp", "opencode", "pi",
 	"prime-agent", "qwen",
 }
 
