@@ -5,9 +5,13 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/maci0/toktop/agentusage"
 )
 
 func TestValidateFlags(t *testing.T) {
@@ -89,6 +93,83 @@ func TestWarnUnknownEnv(t *testing.T) {
 		t.Setenv("OTHER_VAR", "x")
 		if got := captureWarnUnknownEnv(t); got != "" {
 			t.Fatalf("warnUnknownEnv() printed %q, want silence", got)
+		}
+	})
+}
+
+func TestValidateOnceEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		columns string
+		lines   string
+		wantErr string // empty means silence expected
+	}{
+		{name: "unset passes"},
+		{name: "empty means unset", columns: "", lines: ""},
+		{name: "typical values pass", columns: "120", lines: "38"},
+		{name: "floors accepted", columns: "41", lines: "21"},
+		{name: "below floor rejected", columns: "40", wantErr: "TOKTOP_COLUMNS"},
+		{name: "not a number rejected", lines: "full-hd", wantErr: "TOKTOP_LINES"},
+		{name: "negative rejected", columns: "-1", wantErr: "TOKTOP_COLUMNS"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TOKTOP_COLUMNS", tt.columns)
+			t.Setenv("TOKTOP_LINES", tt.lines)
+			err := validateOnceEnv()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateOnceEnv() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateOnceEnv() = %v, want error mentioning %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// writeAgentsJSON points GAUNTLET_HOME at a temp dir holding the given file
+// body ("" writes nothing, leaving agents.json absent).
+func writeAgentsJSON(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if body != "" {
+		path := filepath.Join(dir, "agents.json")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestLoadAgentDefs(t *testing.T) {
+	t.Run("missing file is silent", func(t *testing.T) {
+		t.Setenv("GAUNTLET_HOME", writeAgentsJSON(t, ""))
+		if got := captureStderr(t, loadAgentDefs); got != "" {
+			t.Fatalf("loadAgentDefs() printed %q, want silence", got)
+		}
+	})
+
+	t.Run("malformed file names itself and names the consequence", func(t *testing.T) {
+		t.Setenv("GAUNTLET_HOME", writeAgentsJSON(t, "{oops"))
+		got := captureStderr(t, loadAgentDefs)
+		for _, want := range []string{"agents.json", "built-in agents"} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("loadAgentDefs() printed %q, want mention of %q", got, want)
+			}
+		}
+	})
+
+	t.Run("valid file loads quietly", func(t *testing.T) {
+		t.Setenv("GAUNTLET_HOME", writeAgentsJSON(t,
+			`{"deftest-agent":{"usage":{"roots":["~/.deftest/sessions"]}}}`))
+		if got := captureStderr(t, loadAgentDefs); got != "" {
+			t.Fatalf("loadAgentDefs() printed %q, want silence", got)
+		}
+		if !slices.Contains(agentusage.Agents(), "deftest-agent") {
+			t.Fatalf("defined agent missing from %v", agentusage.Agents())
 		}
 	})
 }
