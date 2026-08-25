@@ -50,7 +50,14 @@ func isKnown(name string) bool {
 
 var (
 	defsMu sync.RWMutex
-	defs   = map[string]Spec{}
+	// The pi family keeps ordinary JSONL transcripts, so they need locations
+	// rather than adapters. They ship here so both this tool and gauntlet read
+	// them without a definitions file.
+	defs = map[string]Spec{
+		"pi":          {Roots: []string{"~/.pi/agent/sessions"}},
+		"prime-agent": {Roots: []string{"~/.prime/agent/sessions"}},
+		"feynman":     {Roots: []string{"~/.feynman/sessions"}},
+	}
 )
 
 // definedSpec returns a transcript location supplied at runtime rather than
