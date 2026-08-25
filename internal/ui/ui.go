@@ -180,7 +180,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	if !m.ready {
-		return "\n  ⏳ toktop is warming up…"
+		// Same glyph the probe panel uses for work in progress: the status
+		// vocabulary stays monochrome terminal glyphs, no color emoji.
+		return "\n  " + styleWarn.Render("● toktop is warming up…")
 	}
 	if m.help {
 		return m.renderHelp()

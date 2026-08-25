@@ -152,6 +152,19 @@ func TestMinimalViewNamesDownEngines(t *testing.T) {
 	}
 }
 
+// The pre-ready frame must name itself, and its status marker comes from the
+// dashboard's monochrome glyph set (●), not a color emoji.
+func TestWarmupFrameUsesStatusGlyphs(t *testing.T) {
+	m := New(Config{Version: "t"}, nil) // ready stays false until WindowSizeMsg
+	out := strip(m.View())
+	if !strings.Contains(out, "warming up") {
+		t.Errorf("warmup frame does not say what it is doing:\n%s", out)
+	}
+	if strings.ContainsRune(out, '⏳') {
+		t.Errorf("warmup frame uses an emoji instead of the status glyphs:\n%s", out)
+	}
+}
+
 // feedLine must render event timestamps in the viewer's zone: ingest events
 // carry sender-supplied RFC 3339 stamps whose offset (or absent offset,
 // decoded as UTC) is otherwise shown as-is.
