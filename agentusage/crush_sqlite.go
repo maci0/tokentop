@@ -20,7 +20,14 @@ import (
 //
 //	sessions.completion_tokens  what the model generated, which is output here
 //	sessions.prompt_tokens      input, which this package never counts
-//	sessions.updated_at         milliseconds, which bounds the review
+//	sessions.updated_at         when the row last changed, which bounds the review
+//
+// That last column carries two units. The schema comments call it
+// milliseconds, and crush writes milliseconds from Go, but the table's own
+// update trigger writes `strftime('%s','now')`, which is seconds: a row can
+// hold either depending on who touched it last. The query normalizes per row
+// rather than trusting the comment, because a mismatch here does not read
+// slightly wrong, it reads zero.
 //
 // The only JSONL crush writes is `.crush/logs/crush.log`, and it carries no
 // counters, so there is nothing for the file adapters to tail.
@@ -87,7 +94,7 @@ func crushDBPath(dir string) string {
 const crushUsageQuery = `
 	SELECT COALESCE(SUM(completion_tokens), 0)
 	FROM sessions
-	WHERE updated_at >= ?`
+	WHERE (CASE WHEN updated_at > 100000000000 THEN updated_at ELSE updated_at * 1000 END) >= ?`
 
 func readCrushDB(path string, since time.Time) (int, bool) {
 	// mode=ro leaves the database alone; a missing or unreadable one is an
