@@ -186,10 +186,33 @@ func applyTo(ctx context.Context, rel *Release, self string) (string, error) {
 	if err := os.Chmod(tmpName, 0o755); err != nil {
 		return "", err
 	}
-	if err := os.Rename(tmpName, self); err != nil {
+	if err := install(tmpName, self); err != nil {
 		return "", fmt.Errorf("cannot replace %s: %w", self, err)
 	}
 	return self, nil
+}
+
+// install puts the verified binary in place.
+//
+// A rename is atomic, and on Unix it works even while the old binary is
+// running. Windows refuses to replace a running image but does allow renaming
+// it out of the way first, so that is what happens there; the displaced file
+// is removed on the next update, since it is still locked during this one.
+func install(tmpName, self string) error {
+	if runtime.GOOS != "windows" {
+		return os.Rename(tmpName, self)
+	}
+	displaced := self + ".old"
+	_ = os.Remove(displaced) // left by a previous update, now unlocked
+	if err := os.Rename(self, displaced); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, self); err != nil {
+		// Put the running binary back rather than leaving nothing installed.
+		_ = os.Rename(displaced, self)
+		return err
+	}
+	return nil
 }
 
 func fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
