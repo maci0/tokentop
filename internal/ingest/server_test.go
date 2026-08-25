@@ -192,6 +192,40 @@ func TestIngestClampsNegativeTokenCounts(t *testing.T) {
 	}
 }
 
+// A claimed event timestamp far ahead of arrival is a wrong clock or a
+// forgery; it must not enter the retained feed as a future instant, where
+// it would pin the UI's "live" marker and render a future wall-clock time.
+// Modest skew stays honored.
+func TestIngestClampsFarFutureTimestamps(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	farFuture := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	nearFuture := time.Now().Add(10 * time.Second).UTC().Format(time.RFC3339)
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"skewed","ts":"`+farFuture+`"}`+"\n"+
+			`{"agent":"skewed","ts":"`+nearFuture+`"}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != 2 {
+		t.Fatalf("events = %d, want 2", len(rec.evs))
+	}
+	if got := rec.evs[0].At; got.After(time.Now()) {
+		t.Errorf("far-future stamp retained: %v", got)
+	}
+	want := time.Now().Add(-time.Minute)
+	if got := rec.evs[1].At; got.Before(want) {
+		t.Errorf("modest skew not honored: %v older than %v", got, want)
+	}
+}
+
 // An empty ts means "absent": every other event field defaults when empty,
 // so an empty string must not abort the stream with 400 while null and a
 // missing field both decode to "stamp on arrival".

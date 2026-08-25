@@ -77,6 +77,15 @@ func (s *Server) Close() error { return s.srv.Close() }
 // decode loop for as long as the connection stays up.
 const maxEventBody = 1 << 20
 
+// maxEventSkew bounds how far ahead of arrival a claimed event timestamp may
+// sit before it is clamped to the arrival instant. The stamp is a sender's
+// word: a wrong clock (or a forged event, since this endpoint authenticates
+// nothing) can claim an instant hours ahead, which would pin the agent view's
+// "● live" marker (a negative idle duration reads as fresh) and render a
+// future wall-clock time in the feed until real time caught up. Modest skew
+// between machines stays honored.
+const maxEventSkew = 2 * time.Minute
+
 // maxEventLifetime and bodyIdleTimeout bound how long one POST may hold the
 // connection. The byte cap above limits volume, not time: a peer that sends
 // headers and then drips bytes (or goes silent mid-body) would otherwise pin
@@ -179,8 +188,11 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		if ev.Kind == "" {
 			ev.Kind = "turn"
 		}
+		now := time.Now()
 		if ev.At.IsZero() {
-			ev.At = time.Now()
+			ev.At = now
+		} else if ev.At.Sub(now) > maxEventSkew {
+			ev.At = now
 		}
 		s.rec.RecordAgent(ev)
 		n++
