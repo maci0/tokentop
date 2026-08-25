@@ -21,13 +21,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: vet before shipping (every release platform)
+      - name: install staticcheck (host binary; GOOS picks the analyzed platform)
+        run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.1
+
+      - name: vet and staticcheck before shipping (every release platform)
         run: |
           set -euo pipefail
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             goos=${target%/*}; goarch=${target#*/}
             echo "vetting $goos/$goarch"
             GOOS="$goos" GOARCH="$goarch" go vet ./...
+            GOOS="$goos" GOARCH="$goarch" go vet -tags sqlite ./agentusage/...
+            echo "staticchecking $goos/$goarch"
+            GOOS="$goos" GOARCH="$goarch" staticcheck ./...
+            GOOS="$goos" GOARCH="$goarch" staticcheck -tags sqlite ./agentusage/...
           done
 
       - name: test before shipping

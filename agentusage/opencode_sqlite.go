@@ -31,6 +31,18 @@ import (
 // time_created) index rather than a scan.
 type openCodeDBSource struct{ path string }
 
+// registerSource makes an agent readable through a source instead of files.
+// Passing nil removes it, which is how the runtime switch turns one off.
+func registerSource(tool string, s usageSource) {
+	sourcesMu.Lock()
+	defer sourcesMu.Unlock()
+	if s == nil {
+		delete(sources, tool)
+		return
+	}
+	sources[tool] = s
+}
+
 func setOpenCodeDB(on bool) bool {
 	if !on {
 		registerSource("opencode", nil)
