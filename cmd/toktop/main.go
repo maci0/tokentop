@@ -557,6 +557,14 @@ func attachRemote(ctx context.Context, tgt remote.Target) ([]provider.Provider, 
 		cli.Close()
 		return nil, nil, err
 	}
+	// Forward skips a port whose local listener cannot be bound; without
+	// this line the engine behind it silently vanishes from the dashboard.
+	for _, p := range ports {
+		if _, ok := fwd[p]; !ok {
+			fmt.Fprintf(os.Stderr, "toktop: %s:%d could not be forwarded locally; engines on that port are invisible\n",
+				tgt.Host, p)
+		}
+	}
 	go func() {
 		select {
 		case <-ctx.Done():

@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -583,6 +584,11 @@ func (w *Watcher) candidates() []string {
 // Polling runs four times a second over every recent transcript, and most of
 // them are idle, so the mtime check happens on a plain stat: an untouched file
 // costs one syscall instead of open+stat+close.
+//
+// Only newline-terminated lines are counted and only their bytes are
+// committed to the offset. A record whose remainder lands after this poll is
+// then re-read whole next time instead of being silently lost, and a read
+// error mid-file retries the whole span without having credited anything.
 func (w *Watcher) readNew(path string) {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -613,62 +619,129 @@ func (w *Watcher) readNew(path string) {
 		return
 	}
 
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
-	read := off
-	for sc.Scan() {
-		line := sc.Bytes()
-		read += int64(len(line)) + 1
-		v, cwd, ok := w.ad.parse(line)
-		if !ok {
-			continue
-		}
-		// A transcript that names a different working directory belongs to
-		// another review, or another project entirely.
-		if cwd != "" && !w.sameDir(cwd) {
-			continue
-		}
-		switch w.ad.kind {
-		case perMessage:
-			cur := w.seen[path]
-			cur.output += v.output
-			cur.thinking += v.thinking
-			w.seen[path] = cur
-			// Output accrues per message; a "total" on a per-message record is
-			// the context size at that point, so summing it would be
-			// meaningless. The largest one seen is the honest figure.
-			w.total[path] = max(w.total[path], v.total)
-		case cumulative:
-			if _, have := w.base[path]; !have {
-				// Attaching mid-session, everything before now belongs to an
-				// earlier review, so the first value seen is the baseline. A
-				// session that only appeared after the review started is ours
-				// in full, and baselining it would throw the first reading
-				// away, which is most of a short review.
-				if w.preexisting[path] {
-					w.base[path] = v.output
-					w.baseThink[path] = v.thinking
-				} else {
-					w.base[path], w.baseThink[path] = 0, 0
+	// Collect first, fold in afterwards: a record may only be counted
+	// together with the offset that skips it.
+	var recs []pendingRecord
+	var (
+		line    []byte
+		discard bool
+		pos     = off
+		// complete is the offset just past the last newline seen; it is the
+		// only value safe to commit.
+		complete = off
+	)
+	br := bufio.NewReaderSize(f, 64<<10)
+	for {
+		chunk, rerr := br.ReadSlice('\n')
+		pos += int64(len(chunk))
+		if rerr == bufio.ErrBufferFull {
+			if !discard {
+				line = append(line, chunk...)
+				if len(line) > maxLineBytes {
+					// One record larger than the cap cannot parse; drop it
+					// and resume at the next newline rather than stalling
+					// every later record in this file behind it.
+					discard = true
+					line = line[:0]
 				}
 			}
-			cur := w.seen[path]
-			if d := v.output - w.base[path]; d > cur.output {
-				cur.output = d
+			continue
+		}
+		if rerr == nil {
+			if !discard {
+				line = append(line, chunk...)
+				l := line[:len(line)-1] // drop the newline
+				if n := len(l); n > 0 && l[n-1] == '\r' {
+					l = l[:n-1]
+				}
+				recs = w.collect(recs, l)
 			}
-			if d := v.thinking - w.baseThink[path]; d > cur.thinking {
-				cur.thinking = d
+			line = line[:0]
+			complete = pos
+			continue
+		}
+		if errors.Is(rerr, io.EOF) {
+			// A trailing fragment is either a complete record whose writer
+			// omitted the final newline, or half of one mid-write. It counts
+			// only when it parses in full: a torn prefix stays uncommitted
+			// and is re-read whole next poll instead of being lost.
+			if !discard && len(chunk) > 0 {
+				line = append(line, chunk...)
+				if _, _, ok := w.ad.parse(line); ok {
+					recs = w.collect(recs, line)
+					complete = pos
+				}
 			}
-			w.seen[path] = cur
-			if v.total > w.total[path] {
-				w.total[path] = v.total
+			break
+		}
+		return // read failed: nothing counted, offset unchanged, retried next poll
+	}
+	for _, r := range recs {
+		w.applyRecord(path, r.v)
+	}
+	w.offsets[path] = complete
+}
+
+// maxLineBytes bounds one transcript record: a single JSONL line larger than
+// this is junk no parser here accepts.
+const maxLineBytes = 8 << 20
+
+// pendingRecord is one parsed usage record not yet folded into the totals.
+type pendingRecord struct{ v values }
+
+// collect parses one complete line and appends its values when it carries
+// usage belonging to this review.
+func (w *Watcher) collect(recs []pendingRecord, line []byte) []pendingRecord {
+	v, cwd, ok := w.ad.parse(line)
+	if !ok {
+		return recs
+	}
+	// A transcript that names a different working directory belongs to
+	// another review, or another project entirely.
+	if cwd != "" && !w.sameDir(cwd) {
+		return recs
+	}
+	return append(recs, pendingRecord{v: v})
+}
+
+// applyRecord folds one counted record into the per-file bookkeeping.
+func (w *Watcher) applyRecord(path string, v values) {
+	switch w.ad.kind {
+	case perMessage:
+		cur := w.seen[path]
+		cur.output += v.output
+		cur.thinking += v.thinking
+		w.seen[path] = cur
+		// Output accrues per message; a "total" on a per-message record is
+		// the context size at that point, so summing it would be
+		// meaningless. The largest one seen is the honest figure.
+		w.total[path] = max(w.total[path], v.total)
+	case cumulative:
+		if _, have := w.base[path]; !have {
+			// Attaching mid-session, everything before now belongs to an
+			// earlier review, so the first value seen is the baseline. A
+			// session that only appeared after the review started is ours
+			// in full, and baselining it would throw the first reading
+			// away, which is most of a short review.
+			if w.preexisting[path] {
+				w.base[path] = v.output
+				w.baseThink[path] = v.thinking
+			} else {
+				w.base[path], w.baseThink[path] = 0, 0
 			}
 		}
+		cur := w.seen[path]
+		if d := v.output - w.base[path]; d > cur.output {
+			cur.output = d
+		}
+		if d := v.thinking - w.baseThink[path]; d > cur.thinking {
+			cur.thinking = d
+		}
+		w.seen[path] = cur
+		if v.total > w.total[path] {
+			w.total[path] = v.total
+		}
 	}
-	if err := sc.Err(); err != nil {
-		return // a partially written line: re-read it next poll
-	}
-	w.offsets[path] = read
 }
 
 // owns reports whether a transcript belongs to this review. For agents whose

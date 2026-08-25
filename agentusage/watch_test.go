@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -432,4 +433,76 @@ func copilotSession(t *testing.T, store, name, cwd string) string {
 	path := filepath.Join(dir, "events.jsonl")
 	append_(t, path, `{"type":"session.start","id":"e0","data":{"sessionId":"s","context":{"cwd":`+jsonPath(cwd)+`}}}`)
 	return path
+}
+
+// appendRaw writes bytes verbatim; unlike append_ it adds no newline, so a
+// test can stage torn or unterminated transcript lines.
+func appendRaw(t *testing.T, path, s string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(s); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A record flushed in two chunks must be counted exactly once: the torn
+// prefix waits for its remainder instead of being consumed and lost.
+func TestTornRecordIsCountedOnceComplete(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	path := filepath.Join(store, "session.jsonl")
+
+	w := Watch("claude", work, time.Now())
+	rest := claudeLine(work, 250)
+	half := len(rest) / 2
+	appendRaw(t, path, claudeLine(work, 100)+"\n"+rest[:half])
+	w.poll(nil)
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output tokens %d, want 100 (a torn record counts for nothing yet)", got)
+	}
+	appendRaw(t, path, rest[half:]+"\n")
+	w.poll(nil)
+	if got := w.Sample().Output; got != 350 {
+		t.Fatalf("output tokens %d, want 350: completing a torn record lost it", got)
+	}
+}
+
+// A complete final line without a trailing newline counts now and must not
+// misalign the offset against records appended afterwards.
+func TestFinalLineWithoutNewlineSurvivesGrowth(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	path := filepath.Join(store, "session.jsonl")
+
+	w := Watch("claude", work, time.Now())
+	appendRaw(t, path, claudeLine(work, 100))
+	w.poll(nil)
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output tokens %d, want 100", got)
+	}
+	appendRaw(t, path, "\n"+claudeLine(work, 250))
+	w.poll(nil)
+	if got := w.Sample().Output; got != 350 {
+		t.Fatalf("output tokens %d, want 350: growth after an unterminated line lost a record", got)
+	}
+}
+
+// One record over the size cap is junk, but it must not stall every later
+// record in the same file behind it.
+func TestOversizedLineDoesNotStallFollowingRecords(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	path := filepath.Join(store, "session.jsonl")
+
+	w := Watch("claude", work, time.Now())
+	appendRaw(t, path, strings.Repeat("x", maxLineBytes+1)+"\n")
+	appendRaw(t, path, claudeLine(work, 42))
+	w.poll(nil)
+	if got := w.Sample().Output; got != 42 {
+		t.Fatalf("output tokens %d, want 42: an oversized line stalled the file", got)
+	}
 }
