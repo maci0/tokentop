@@ -8,17 +8,7 @@
 - A C compiler (`gcc` or `clang`) for `go test -race`; plain builds and
   cross-compiles are pure Go and need nothing else.
 - No services or databases: everything is stdlib plus the modules in
-  `go.mod`. One caveat: agent watching imports
-  `github.com/maci0/gauntlet-go/agentusage`, code shared with gauntlet that
-  is not published yet, so `go.mod` `replace`s it with a local checkout at
-  `/home/maci/gauntlet-go`. Building and testing require that path to exist;
-  if your gauntlet checkout lives elsewhere, point the `replace` line at the
-  bottom of `go.mod` at it. Until that module is published, hosted CI fails
-  at module resolution for the same reason. Mind the license asymmetry while
-  this stands: toktop is MIT, but gauntlet-go is AGPL-3.0-or-later, so a
-  binary built with agent watching enabled is an AGPL-covered combined work
-  regardless of what `LICENSE` says. Distributing binaries before that module
-  is published (or rewritten under MIT) means distributing AGPL code.
+  `go.mod`.
 
 ## Quickstart
 

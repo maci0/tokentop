@@ -317,14 +317,6 @@ type Watcher struct {
 	sample Sample
 }
 
-// New returns a watcher for one review, or nil when the agent is unsupported.
-// Files that already exist are read from their current end, so a session
-// resumed from an earlier review contributes only what it adds from now on.
-// Watch starts reading usage for one agent working in one directory. It
-// returns nil when that agent keeps no readable transcript, which callers
-// should treat as "no rate available" rather than an error.
-func Watch(tool, dir string, since time.Time) *Watcher { return newWatcher(tool, dir, since) }
-
 // Tool is the agent this watcher follows.
 func (w *Watcher) Tool() string {
 	if w == nil {
@@ -344,7 +336,12 @@ func (w *Watcher) Dir() string {
 // Read takes one reading now, including whatever an agent wrote as it exited.
 func (w *Watcher) Read() Sample { return w.Poll() }
 
-func newWatcher(tool, dir string, since time.Time) *Watcher {
+// Watch starts reading usage for one agent working in one directory. It
+// returns nil when that agent keeps no readable transcript, which callers
+// should treat as "no rate available" rather than an error. Files that
+// already exist are read from their current end, so a session resumed from
+// an earlier review contributes only what it adds from now on.
+func Watch(tool, dir string, since time.Time) *Watcher {
 	if src, ok := sourceFor(tool); ok {
 		return &Watcher{src: src, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
 	}
