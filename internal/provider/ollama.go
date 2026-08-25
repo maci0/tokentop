@@ -12,15 +12,14 @@ import (
 // counters over HTTP, so throughput comes from probes or agent events.
 type Ollama struct {
 	base    string
-	label   string
 	version versionCache
 }
 
 func NewOllama(base string) *Ollama {
-	return &Ollama{base: strings.TrimRight(base, "/"), label: "ollama"}
+	return &Ollama{base: strings.TrimRight(base, "/")}
 }
 
-func (o *Ollama) Label() string { return o.label }
+func (o *Ollama) Label() string { return "ollama" }
 func (o *Ollama) Addr() string  { return o.base }
 
 func (o *Ollama) Poll(ctx context.Context) (*Metrics, error) {
