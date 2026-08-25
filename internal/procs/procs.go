@@ -40,16 +40,6 @@ var platformList func() ([]raw, error)
 // fixed at 100 by the Linux ABI; there is no runtime probe.
 const clkTck = 100
 
-// listTimeout bounds OS-tooling process listings (darwin ps, windows
-// PowerShell CIM). A hung tool must not pin the Sampler lock and stall every
-// snapshot; the linux path reads procfs directly and never approaches it.
-const listTimeout = 15 * time.Second
-
-// listPipeGrace bounds the post-kill wait on the listing tool's output pipes
-// (see Cmd.WaitDelay): a grandchild inheriting stdout must not keep the
-// killed tool's Output call, and with it the Sampler lock, blocked forever.
-const listPipeGrace = 500 * time.Millisecond
-
 // Sampler turns raw process listings into Infos, deriving CPU percentage on
 // linux from tick deltas between samples.
 type Sampler struct {

@@ -318,9 +318,7 @@ func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotRelo
 	}
 	if reloaded.Load() {
 		fmt.Fprintln(os.Stderr, "toktop: binary changed, restarting…")
-		if err := selfreload.ReExec(self, os.Args, os.Environ()); err != nil {
-			fmt.Fprintln(os.Stderr, "toktop:", err)
-		}
+		selfreload.Restart(self, os.Args, os.Environ())
 	}
 }
 

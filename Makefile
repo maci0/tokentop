@@ -57,6 +57,11 @@ sbom: ## generate CycloneDX SBOM of all dependencies into dist/
 vet: ## run go vet
 	$(GO) vet $(GOTAGS) ./...
 
+.PHONY: lint
+lint: ## run staticcheck (both halves of the sqlite tag gate)
+	$(GO) run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
+	$(GO) run honnef.co/go/tools/cmd/staticcheck@2026.2.1 -tags sqlite ./agentusage/...
+
 .PHONY: fmt
 fmt: ## rewrite all Go files with gofmt (including simplifications)
 	gofmt -s -w .
@@ -67,15 +72,16 @@ fix: ## apply go fix modernization autofixes, then gofmt
 	gofmt -s -w .
 
 .PHONY: check
-check: ## verify gofmt -s formatting and vet (CI parity)
+check: ## verify gofmt -s formatting, vet and staticcheck (CI parity)
 	@unformatted=$$(gofmt -s -l .); \
 		if [ -n "$$unformatted" ]; then \
 			echo "needs gofmt:"; echo "$$unformatted"; exit 1; \
 		fi
+	@$(MAKE) lint
 	$(GO) vet $(GOTAGS) ./...
 
 .PHONY: ci
-ci: ## everything CI runs before merging: fmt, vet, govulncheck, race tests
+ci: ## everything CI runs before merging: fmt, lint, vet, govulncheck, race tests
 	@$(MAKE) check
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 	$(GO) test $(GOTAGS) -race -shuffle=on ./...
