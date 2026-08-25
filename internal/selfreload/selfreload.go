@@ -51,7 +51,7 @@ func statIdentity(path string) (identity, error) {
 		size:       fi.Size(),
 		mtimeNanos: fi.ModTime().UnixNano(),
 	}
-	if sys, ok := fi.Sys().(syscallStat); ok {
+	if sys, ok := fi.Sys().(*syscallStat); ok {
 		id.dev = statDev(sys)
 		id.ino = statIno(sys)
 	}
