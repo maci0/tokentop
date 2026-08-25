@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"io"
 	"os"
 	"strings"
@@ -106,6 +108,60 @@ func TestUsage(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("usage() missing %q", want)
 		}
+	}
+}
+
+// runUpdate must answer -h/--help the way the top-level command does: full
+// usage on stdout with exit 0, so `toktop update --help | grep repo` works.
+func TestRunUpdateHelp(t *testing.T) {
+	for _, arg := range []string{"--help", "-h"} {
+		t.Run(arg, func(t *testing.T) {
+			var out bytes.Buffer
+			var code int
+			got := captureStderr(t, func() {
+				code = runUpdate(context.Background(), &out, []string{arg})
+			})
+			if code != 0 {
+				t.Fatalf("runUpdate(%q) = %d, want 0", arg, code)
+			}
+			if out.Len() == 0 {
+				t.Fatalf("runUpdate(%q) wrote nothing to stdout", arg)
+			}
+			if got != "" {
+				t.Fatalf("runUpdate(%q) leaked %q to stderr", arg, got)
+			}
+			for _, want := range []string{"Usage:", "--check", "--repo"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("update help missing %q", want)
+				}
+			}
+		})
+	}
+}
+
+func TestRunUpdateUsageErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantSub string // required substring on stderr
+	}{
+		{name: "unknown flag", args: []string{"--bogus"}, wantSub: "flag provided but not defined"},
+		{name: "unexpected argument", args: []string{"extra"}, wantSub: "unexpected argument"},
+		{name: "unexpected argument points at help", args: []string{"extra"}, wantSub: "toktop update --help"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var code int
+			got := captureStderr(t, func() {
+				code = runUpdate(context.Background(), io.Discard, tt.args)
+			})
+			if code != 2 {
+				t.Fatalf("runUpdate(%v) = %d, want 2", tt.args, code)
+			}
+			if !strings.Contains(got, tt.wantSub) {
+				t.Fatalf("stderr = %q, want mention of %q", got, tt.wantSub)
+			}
+		})
 	}
 }
 
