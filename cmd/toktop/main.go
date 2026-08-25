@@ -269,6 +269,7 @@ func main() {
 		PollEvery:  *interval,
 		Prober:     prober,
 		FeedErr:    feedErr,
+		Agents:     *agents,
 	}
 
 	if *once {
