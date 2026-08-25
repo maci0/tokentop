@@ -126,30 +126,48 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	defer r.Body.Close()
 	n := 0
+	// fail reports a stream-level error. Events decode-and-record one by one,
+	// so everything before the failing line is already in the feed; saying so
+	// lets senders resume after the failure instead of replaying the whole
+	// stream and duplicating what was kept.
+	fail := func(status int, msg string) {
+		if n > 0 {
+			unit := "events"
+			if n == 1 {
+				unit = "event"
+			}
+			msg += fmt.Sprintf("; %d earlier %s in this stream were recorded", n, unit)
+		}
+		http.Error(w, msg, status)
+	}
 	for {
 		var wire agentEventWire
 		if err := dec.Decode(&wire); err != nil {
 			if n > 0 && errors.Is(err, io.EOF) {
 				break // clean end of stream after at least one event
 			}
+			if errors.Is(err, io.EOF) {
+				fail(http.StatusBadRequest, "empty body: expected one JSON object or an NDJSON stream")
+				return
+			}
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				http.Error(w, "request stalled", http.StatusRequestTimeout)
+				fail(http.StatusRequestTimeout, "request stalled")
 				return
 			}
 			var maxBytes *http.MaxBytesError
 			if errors.As(err, &maxBytes) {
 				// A size failure is not a JSON failure; senders need the
 				// distinction to know trimming (not re-encoding) is the fix.
-				http.Error(w, fmt.Sprintf("event stream exceeds %d byte cap", maxBytes.Limit),
-					http.StatusRequestEntityTooLarge)
+				fail(http.StatusRequestEntityTooLarge,
+					fmt.Sprintf("event stream exceeds %d byte cap", maxBytes.Limit))
 				return
 			}
-			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+			fail(http.StatusBadRequest, "bad json: "+err.Error())
 			return
 		}
 		at, err := parseEventTime(wire.At)
 		if err != nil {
-			http.Error(w, "bad ts: "+err.Error(), http.StatusBadRequest)
+			fail(http.StatusBadRequest, "bad ts: "+err.Error())
 			return
 		}
 		ev := core.AgentEvent{
