@@ -101,6 +101,46 @@ func TestIngestAcceptsNaiveTimestampsAsUTC(t *testing.T) {
 	}
 }
 
+// SQL-style stamps separate date and time with a space (`date '+%F %T'`,
+// SQLite and Postgres text output). One of them used to fail both accepted
+// shapes and abort the whole NDJSON batch with 400, dropping every event
+// queued behind it; they must parse on the same terms as T-separated ones:
+// an offset is honored, its absence decodes as UTC.
+func TestIngestAcceptsSpaceSeparatedTimestamps(t *testing.T) {
+	rec := &memRecorder{}
+	s, err := New("127.0.0.1:0", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	defer s.Close()
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"sql","ts":"2026-01-02 03:04:05"}`+"\n"+
+			`{"agent":"sql","ts":"2026-01-02 03:04:05.25"}`+"\n"+
+			`{"agent":"pg","ts":"2026-01-02 05:04:05+02:00"}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != 3 {
+		t.Fatalf("events = %d, want 3 (a space-separated ts must not drop the stream)", len(rec.evs))
+	}
+	want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if got := rec.evs[0].At; !got.Equal(want) || got.Location() != time.UTC {
+		t.Errorf("space-separated naive stamp = %v (%v), want 03:04:05 UTC", got, got.Location())
+	}
+	if got := rec.evs[1].At; !got.Equal(want.Add(250*time.Millisecond)) {
+		t.Errorf("fractional stamp = %v, want %v", got, want.Add(250*time.Millisecond))
+	}
+	if got := rec.evs[2].At; !got.Equal(want) {
+		t.Errorf("+02:00 space-separated stamp = %v, want same instant as %v", got, want)
+	}
+}
+
 // A ts that is neither RFC 3339 nor an offset-less variant stays a hard
 // error so sender bugs surface instead of silently becoming "now".
 func TestIngestRejectsGarbageTimestamp(t *testing.T) {
