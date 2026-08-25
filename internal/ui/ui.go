@@ -738,7 +738,7 @@ func (m Model) gaugesBody(w int) string {
 		}
 		name := styleDim.Render(clip(shorten(core.SanitizeText(p.Label), w-6), w-6))
 		kv := "kv  " + GaugeBar(p.KVPct, clampi(w-10, 4, 20), kvHeat)
-		third := procLine(p, w)
+		third := procLine(p)
 		row := clip(name+"\n"+kv+"\n"+third, w)
 		b.WriteString(row + "\n\n")
 	}
@@ -754,7 +754,7 @@ func (m Model) gaugesBody(w int) string {
 }
 
 // procLine composes the third detail row: memory/context/process stats.
-func procLine(p core.ProviderSnapshot, w int) string {
+func procLine(p core.ProviderSnapshot) string {
 	var parts []string
 	var bytes uint64
 	for _, mm := range p.Models {

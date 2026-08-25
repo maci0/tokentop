@@ -5,7 +5,6 @@ package procs
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -13,7 +12,6 @@ import (
 
 func init() {
 	platformList = listWindows
-	osGetpid = os.Getpid
 }
 
 type cimProc struct {

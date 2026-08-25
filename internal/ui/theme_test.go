@@ -6,17 +6,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// wcagLuminance wraps the production luminance math so palette assertions
-// fail loudly on non-hex encodings instead of silently passing them through.
-func wcagLuminance(t testing.TB, c lipgloss.Color) float64 {
-	t.Helper()
-	lum, ok := relLuminance(c)
-	if !ok {
-		t.Fatalf("color %q is not #rrggbb", c)
-	}
-	return lum
-}
-
 // contrastRatioT is contrastRatio with a fatal on non-hex input.
 func contrastRatioT(t testing.TB, a, b lipgloss.Color) float64 {
 	t.Helper()

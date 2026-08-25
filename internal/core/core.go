@@ -31,41 +31,41 @@ const (
 )
 
 type ModelInfo struct {
-	Name     string `json:"name"`
-	SizeVRAM uint64 `json:"vram_bytes,omitempty"`
-	CtxMax   uint64 `json:"ctx_max,omitempty"`
+	Name     string
+	SizeVRAM uint64
+	CtxMax   uint64
 }
 
 // ProviderSnapshot is one observation of an inference backend.
 type ProviderSnapshot struct {
-	Label   string `json:"label"`
-	Kind    string `json:"kind"`
-	Addr    string `json:"addr"`
-	OK      bool   `json:"ok"`
-	Err     string `json:"error,omitempty"`
-	Version string `json:"version,omitempty"` // engine version, best effort
+	Label   string
+	Kind    string
+	Addr    string
+	OK      bool
+	Err     string
+	Version string // engine version, best effort
 
-	PID     int     `json:"pid,omitempty"`      // serving process, when found locally
-	ProcRSS uint64  `json:"proc_rss,omitempty"` // resident memory of that process
-	ProcCPU float64 `json:"proc_cpu,omitempty"` // percent of one core
+	PID     int     // serving process, when found locally
+	ProcRSS uint64  // resident memory of that process
+	ProcCPU float64 // percent of one core
 
 	// OutT0/InT0 timestamp Hist[0]; combined with the collector cadence this
 	// lets the UI place samples on an absolute time axis (outages and late
 	// joiners no longer skew the chart window).
-	OutT0 time.Time `json:"-"`
-	InT0  time.Time `json:"-"`
+	OutT0 time.Time
+	InT0  time.Time
 
-	Models []ModelInfo `json:"models,omitempty"`
+	Models []ModelInfo
 
-	OutTokPS float64 `json:"out_tok_s"`
-	InTokPS  float64 `json:"in_tok_s"`
-	Running  int     `json:"running"`
-	Waiting  int     `json:"waiting"`
-	KVPct    float64 `json:"kv_pct"`  // kv cache usage, 0..100
-	TTFTms   float64 `json:"ttft_ms"` // engine-reported avg ttft if available
+	OutTokPS float64
+	InTokPS  float64
+	Running  int
+	Waiting  int
+	KVPct    float64 // kv cache usage, 0..100
+	TTFTms   float64 // engine-reported avg ttft if available
 
-	OutHist []float64 `json:"-"`
-	InHist  []float64 `json:"-"`
+	OutHist []float64
+	InHist  []float64
 }
 
 func (p *ProviderSnapshot) PrimaryModel() string {
@@ -75,73 +75,74 @@ func (p *ProviderSnapshot) PrimaryModel() string {
 	return "-"
 }
 
-// AgentEvent is a token-usage event pushed by an agent or harness.
+// AgentEvent is a token-usage event pushed by an agent or harness. The HTTP
+// wire shape is defined separately by ingest's agentEventWire.
 type AgentEvent struct {
-	At           time.Time `json:"ts"`
-	Agent        string    `json:"agent"`
-	Model        string    `json:"model,omitempty"`
-	Kind         string    `json:"kind"` // turn | tool | error | note
-	PromptTokens int64     `json:"prompt_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
-	Note         string    `json:"note,omitempty"`
+	At           time.Time
+	Agent        string
+	Model        string
+	Kind         string // turn | tool | error | note
+	PromptTokens int64
+	OutputTokens int64
+	Note         string
 }
 
 // ProbeSample is one synthetic generation probe result.
 type ProbeSample struct {
-	At     time.Time `json:"ts"`
-	Addr   string    `json:"addr"`
-	Model  string    `json:"model"`
-	OK     bool      `json:"ok"`
-	Err    string    `json:"error,omitempty"`
-	TTFTms float64   `json:"ttft_ms"`
-	TokPS  float64   `json:"tok_s"`
-	Tokens int       `json:"tokens"`
+	At     time.Time
+	Addr   string
+	Model  string
+	OK     bool
+	Err    string
+	TTFTms float64
+	TokPS  float64
+	Tokens int
 }
 
 // TempReading is one thermal sensor value in millidegrees Celsius.
 type TempReading struct {
-	Label  string `json:"label"`
-	MilliC int    `json:"milli_c"`
-	IsGPU  bool   `json:"gpu,omitempty"`
+	Label  string
+	MilliC int
+	IsGPU  bool
 }
 
 // GPUDevice is one accelerator as reported by sysfs/vendor CLIs (no vendor
 // libraries linked).
 type GPUDevice struct {
-	Vendor   string  `json:"vendor"` // nvidia | amd | intel | apple
-	Index    int     `json:"index"`
-	Name     string  `json:"name,omitempty"`
-	MilliC   int     `json:"milli_c"`
-	MemUsed  uint64  `json:"mem_used"`
-	MemTotal uint64  `json:"mem_total"`
-	UtilPct  float64 `json:"util_pct"`
-	PowerW   float64 `json:"power_w"`
-	Driver   string  `json:"driver,omitempty"`
+	Vendor   string // nvidia | amd | intel | apple
+	Index    int
+	Name     string
+	MilliC   int
+	MemUsed  uint64
+	MemTotal uint64
+	UtilPct  float64
+	PowerW   float64
+	Driver   string
 }
 
 // SysSample carries host-level vitals: RAM, swap, load and temperatures.
 type SysSample struct {
-	CPUModel string `json:"cpu_model,omitempty"`
-	OsName   string `json:"os,omitempty"`     // PRETTY_NAME / product version
-	Kernel   string `json:"kernel,omitempty"` // uname -r
+	CPUModel string
+	OsName   string // PRETTY_NAME / product version
+	Kernel   string // uname -r
 
-	MemTotal uint64 `json:"mem_total"`
-	MemUsed  uint64 `json:"mem_used"`
+	MemTotal uint64
+	MemUsed  uint64
 
-	SwapTotal uint64 `json:"swap_total"`
-	SwapUsed  uint64 `json:"swap_used"`
+	SwapTotal uint64
+	SwapUsed  uint64
 
-	Load1  float64 `json:"load1"`
-	Load5  float64 `json:"load5"`
-	Load15 float64 `json:"load15"`
+	Load1  float64
+	Load5  float64
+	Load15 float64
 
-	HostUptime time.Duration     `json:"host_uptime,omitempty"`
-	Drivers    map[string]string `json:"drivers,omitempty"`     // vendor -> version
-	NPUs       []string          `json:"npus,omitempty"`        // detected accelerator drivers
-	RemoteHost string            `json:"remote_host,omitempty"` // set when stats come via ssh
+	HostUptime time.Duration
+	Drivers    map[string]string // vendor -> version
+	NPUs       []string          // detected accelerator drivers
+	RemoteHost string            // set when stats come via ssh
 
-	Temps []TempReading `json:"temps,omitempty"`
-	GPUs  []GPUDevice   `json:"gpus,omitempty"`
+	Temps []TempReading
+	GPUs  []GPUDevice
 }
 
 // Snapshot is everything the UI needs for one frame.
