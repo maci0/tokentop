@@ -23,13 +23,24 @@ func (m *memRecorder) RecordAgent(ev core.AgentEvent) { m.evs = append(m.evs, ev
 // keep-alive connections are reusable.
 func post(t *testing.T, url, body string) int {
 	t.Helper()
+	code, _ := postBody(t, url, body)
+	return code
+}
+
+// postBody sends body and returns the status code plus the response text,
+// draining the response so keep-alive connections are reusable.
+func postBody(t *testing.T, url, body string) (int, string) {
+	t.Helper()
 	resp, err := http.Post(url, "application/json", bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, string(b)
 }
 
 func TestIngestAcceptsEvents(t *testing.T) {
@@ -176,6 +187,66 @@ func TestIngestDefaultsAndBadJSON(t *testing.T) {
 	resp = post(t, base, `{not json`)
 	if resp != http.StatusBadRequest {
 		t.Fatalf("bad json status = %d", resp)
+	}
+}
+
+// An empty body carries no event at all; the error must say so instead of
+// the cryptic decode-level "bad json: EOF".
+func TestIngestEmptyBodyRejected(t *testing.T) {
+	s, _ := New("127.0.0.1:0", &memRecorder{})
+	go s.Serve()
+	defer s.Close()
+
+	code, body := postBody(t, "http://"+s.Addr()+"/v1/events", "")
+	if code != http.StatusBadRequest {
+		t.Fatalf("empty body status = %d, want 400", code)
+	}
+	if !strings.Contains(body, "empty body") {
+		t.Errorf("body should name the problem, got %q", body)
+	}
+}
+
+// Streams record incrementally: when a later line fails, events before it
+// stay recorded and the error must say how many, so senders resume instead
+// of replaying the whole stream and duplicating what was kept.
+func TestIngestPartialStreamReportsRecordedCount(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	code, body := postBody(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"kept"}`+"\n"+`{"agent":"dropped","ts":"yesterday"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", code)
+	}
+	if !strings.Contains(body, "; 1 earlier event in this stream were recorded") {
+		t.Errorf("error should state the recorded count, got %q", body)
+	}
+	if len(rec.evs) != 1 || rec.evs[0].Agent != "kept" {
+		t.Fatalf("events = %+v, want only the first line kept", rec.evs)
+	}
+}
+
+// The recorded-count note rides along on every stream-level failure,
+// including the size cap.
+func TestIngestOversizedAfterEventsReportsRecordedCount(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+
+	body := `{"agent":"kept"}` + "\n" + `{"agent":"` + strings.Repeat("a", maxEventBody) + `"}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/events", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handlePost(w, r)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d, want 413", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "; 1 earlier event in this stream were recorded") {
+		t.Errorf("error should state the recorded count, got %q", w.Body.String())
+	}
+	if len(rec.evs) != 1 {
+		t.Fatalf("events = %d, want 1", len(rec.evs))
 	}
 }
 

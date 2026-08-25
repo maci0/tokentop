@@ -107,6 +107,11 @@ stalls mid-body, and `413` past the 1 MiB body cap. Error bodies are short
 plain-text reasons; unknown fields are ignored, so harnesses can include
 their own.
 
+Streams are recorded line by line: if a later line fails, events before it
+stay recorded and the error states how many, so a retry should resume after
+the failing line rather than replay the whole stream (replaying would
+duplicate the kept events).
+
 ## Zero vendor libraries
 
 Everything comes from procfs/sysfs/sysctl, vendor CLIs it shells out to
