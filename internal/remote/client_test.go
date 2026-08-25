@@ -5,11 +5,14 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -222,7 +225,29 @@ func (s *testSSHServer) serveDirect(nch ssh.NewChannel) {
 func testTarget(t *testing.T, port int) Target {
 	t.Helper()
 	t.Setenv("USER", "tester") // currentUser() reads it; scoped to this test
-	return Target{User: "tester", Host: "127.0.0.1", Port: port}
+	// A key of its own: without one the client offers no auth method at all
+	// on a machine with an empty ~/.ssh and no agent, and with one it would
+	// be authenticating with the developer's real key. The test server
+	// accepts any public key, so only its presence matters.
+	return Target{User: "tester", Host: "127.0.0.1", Port: port, KeyFile: testKeyFile(t)}
+}
+
+// testKeyFile writes a throwaway private key and returns its path.
+func testKeyFile(t *testing.T) string {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func withKnownHosts(t *testing.T) {
