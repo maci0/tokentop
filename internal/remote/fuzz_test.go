@@ -3,7 +3,7 @@ package remote
 import (
 	"testing"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 // FuzzParseVitals throws arbitrary bytes at parseVitals, the entry point for

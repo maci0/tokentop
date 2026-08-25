@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 // OpenAICompat scrapes any server exposing Prometheus /metrics plus

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 const sglangFixture = `# TYPE sglang:num_running_reqs gauge

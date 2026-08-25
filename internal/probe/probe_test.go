@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 func TestRunOpenAIStream(t *testing.T) {

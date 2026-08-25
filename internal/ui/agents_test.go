@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 // Agent names arrive from the ingest endpoint (attacker-shaped: any local
