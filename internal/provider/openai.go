@@ -127,7 +127,7 @@ func enrichLemonade(ctx context.Context, base string, m *Metrics) {
 		for _, mm := range h.AllLoaded {
 			mi := core.ModelInfo{Name: mm.ModelName}
 			if mm.CtxSize > 0 {
-				mi.CtxMax = uint64(mm.CtxSize)
+				mi.CtxMax = satUint(mm.CtxSize)
 			}
 			m.Models = append(m.Models, mi)
 		}

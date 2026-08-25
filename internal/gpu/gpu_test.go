@@ -1,6 +1,7 @@
 package gpu
 
 import (
+	"math"
 	"testing"
 
 	"tokentop/internal/core"
@@ -104,6 +105,39 @@ func TestFlexF(t *testing.T) {
 		if got := flexF(in); got != want {
 			t.Errorf("flexF(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+// Vendor output is untrusted: a broken CLI or JSON feed may report any
+// finite magnitude, and the float->int conversion behind MilliC/MemUsed is
+// implementation-defined past the type's range (on amd64 a huge temp
+// renders as a huge negative number). Absurd magnitudes must saturate.
+func TestSaturatesAbsurdVendorNumbers(t *testing.T) {
+	devs := ParseNvidiaSMI([]byte("0, GPU, 1e300, 24564, 81920, 50, 300, 550.54.14\n" +
+		"1, GPU2, 55, 1e300, 81920, 50, 300, 550.54.14\n"))
+	if len(devs) != 2 {
+		t.Fatalf("devices = %d", len(devs))
+	}
+	if devs[0].MilliC != math.MaxInt {
+		t.Errorf("MilliC = %d, want saturation", devs[0].MilliC)
+	}
+	if devs[0].MemTotal != 81920<<20 || devs[0].UtilPct != 50 || devs[0].PowerW != 300 {
+		t.Errorf("sane columns disturbed: %+v", devs[0])
+	}
+	if devs[1].MemUsed != math.MaxUint64 {
+		t.Errorf("MemUsed = %d, want saturation", devs[1].MemUsed)
+	}
+
+	if got := satInt(2.7); got != 2 {
+		t.Errorf("satInt(2.7) = %d, want 2", got)
+	}
+	for _, v := range []float64{0, -5} {
+		if satInt(v) != 0 || satUint(v) != 0 {
+			t.Errorf("satInt/satUint(%v) must collapse to zero", v)
+		}
+	}
+	if satInt(1e300) != math.MaxInt || satUint(1e300) != math.MaxUint64 {
+		t.Error("huge magnitudes must saturate, not wrap")
 	}
 }
 

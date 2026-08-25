@@ -227,10 +227,10 @@ func classify(fam map[string]float64, m *Metrics) {
 		case strings.Contains(n, "request") && containsAny(n, "run", "process", "active", "inflight"),
 			containsAny(n, "req") && containsAny(n, "run", "process", "active", "inflight") &&
 				!containsAny(n, "time", "duration", "second"):
-			m.Running = int(v)
+			m.Running = satInt(v)
 		case containsAny(n, "req") && containsAny(n, "wait", "queue", "pend") &&
 			!containsAny(n, "time", "duration", "second"):
-			m.Waiting = int(v) // covers vLLM requests_waiting and SGLang num_queue_reqs
+			m.Waiting = satInt(v) // covers vLLM requests_waiting and SGLang num_queue_reqs
 		case strings.Contains(n, "cache") && containsAny(n, "usage", "util", "ratio", "perc"):
 			pct := v
 			if pct <= 1.0 {
@@ -260,4 +260,30 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+// satInt coerces an engine-published gauge to int. A plain conversion is
+// implementation-defined outside the type's range (a broken or lying
+// /metrics endpoint publishing 1e300 would render as a huge negative queue
+// depth): junk and negatives collapse to zero, huge values saturate.
+func satInt(v float64) int {
+	if !(v > 0) { // also catches NaN: every comparison with it is false
+		return 0
+	}
+	if v >= math.MaxInt {
+		return math.MaxInt
+	}
+	return int(v)
+}
+
+// satUint is satInt for the unsigned counts engines publish as floats
+// (ctx_size, VRAM sizes); same rationale.
+func satUint(v float64) uint64 {
+	if !(v > 0) {
+		return 0
+	}
+	if v >= float64(math.MaxUint64) {
+		return math.MaxUint64
+	}
+	return uint64(v)
 }
