@@ -27,13 +27,17 @@ AGENTS  local, read from their own session logs
   codex    ▲ 340 tok/s    18k tok    idle 12s
 ```
 
-Nothing has to be configured, and the agent does not have to cooperate: claude,
-codex, qwen, pi, prime-agent, feynman, clanker, and dsh all keep transcripts
-that carry the provider's own counts. Agents that report nothing show no rate
-rather than a zero. `--no-agents` turns it off.
+`--agents` turns this on. It is off by default because it means scanning this
+machine's processes and reading session files nobody pointed tokentop at:
+watching engines you configured does not imply consent to that.
 
-Reading is done by `github.com/maci0/gauntlet-go/agentusage`, shared with
-gauntlet so both tools report the same numbers. Agents defined in
+Once asked for, nothing else has to be configured and the agent does not have
+to cooperate: claude, codex, qwen, pi, prime-agent, feynman, clanker, and dsh
+all keep transcripts that carry the provider's own counts. Agents that report
+nothing show no rate rather than a zero.
+
+Reading is done by this repo's own `agentusage` package, which gauntlet also
+imports, so both tools report the same numbers. Agents defined in
 `~/.gauntlet/agents.json` are picked up here too.
 
 ## What it shows
