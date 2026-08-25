@@ -373,7 +373,7 @@ func usage(w io.Writer) {
 
 Usage:
   toktop [flags] [ssh://user@host ...]
-  toktop update [--check]      install the latest release
+  toktop update [--check] [--repo owner/name]   install the latest release
 
 Examples:
   toktop --demo                simulated fleet, works instantly
