@@ -63,6 +63,22 @@ func TestCrushSourceCountsOnlyThisReview(t *testing.T) {
 	}
 }
 
+// The rows carry two units: crush writes milliseconds, and the table's own
+// update trigger writes seconds. Both must count, or a review reads zero.
+func TestCrushSourceAcceptsSecondsAndMilliseconds(t *testing.T) {
+	dir := t.TempDir()
+	since := time.Now()
+	crushDB(t, dir, map[string][2]int64{
+		"millis":      {10, since.Add(time.Minute).UnixMilli()},
+		"seconds":     {20, since.Add(time.Minute).Unix()},
+		"old seconds": {40, since.Add(-time.Hour).Unix()},
+		"old millis":  {80, since.Add(-time.Hour).UnixMilli()},
+	})
+	if v, ok := (crushDBSource{}).read([]string{dir}, since); !ok || v.output != 30 {
+		t.Fatalf("read %+v (ok=%v), want the 30 written during the review in either unit", v, ok)
+	}
+}
+
 // crush resolves the project root, so a worktree under the project reads the
 // project's database rather than reporting nothing.
 func TestCrushSourceFindsTheProjectDatabase(t *testing.T) {
