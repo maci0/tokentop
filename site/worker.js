@@ -127,6 +127,46 @@ toktop ssh://you@box      <span class="dim"># watch another host over ssh</span>
 </html>
 `;
 
+// The page bytes change only at deploy time, so a strong ETag lets a browser
+// that already holds a copy prove freshness with If-None-Match and be
+// answered with a bodyless 304 instead of the whole page again on every
+// reload and every visit past max-age. Derived from the source itself, so it
+// moves whenever the page does; computed once when the isolate starts.
+const ETAG = (() => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < HTML.length; i++) {
+    hash ^= HTML.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `"${(hash >>> 0).toString(16)}"`;
+})();
+
+// RFC 9110 weak comparison for If-None-Match: any list member counts, an
+// optional W/ prefix is ignored, and * matches whatever is held.
+function ifNoneMatchMatches(headerValue) {
+  const value = headerValue?.trim();
+  if (!value) return false;
+  if (value === "*") return true;
+  return value.split(",").some((raw) => {
+    let candidate = raw.trim();
+    if (candidate.startsWith("W/")) candidate = candidate.slice(2);
+    return candidate === ETAG;
+  });
+}
+
+// Fresh for five minutes, then served from the browser's copy while a cheap
+// 304 revalidation runs in the background: repeat visitors paint instantly
+// and are never more than the first max-age behind a deploy.
+const PAGE_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=86400";
+
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "strict-transport-security": "max-age=31536000",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+};
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -134,19 +174,27 @@ export default {
       return new Response("method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
     }
     if (url.pathname === "/health") {
-      return new Response("ok\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
+      // Uptime probes hit this continuously; caching it would only blur
+      // what the last probe actually saw.
+      return new Response("ok\n", {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      });
     }
     // One page: anything else is that page too, rather than a 404 nobody
     // learns anything from.
+    if (ifNoneMatchMatches(request.headers.get("if-none-match"))) {
+      // Revalidation answers keep the validator and policy headers but no body.
+      return new Response(null, {
+        status: 304,
+        headers: { etag: ETAG, "cache-control": PAGE_CACHE_CONTROL, ...SECURITY_HEADERS },
+      });
+    }
     return new Response(HTML, {
       headers: {
         "content-type": "text/html; charset=utf-8",
-        "cache-control": "public, max-age=300",
-        "x-content-type-options": "nosniff",
-        "strict-transport-security": "max-age=31536000",
-        "referrer-policy": "strict-origin-when-cross-origin",
-        "content-security-policy":
-          "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        etag: ETAG,
+        "cache-control": PAGE_CACHE_CONTROL,
+        ...SECURITY_HEADERS,
       },
     });
   },
