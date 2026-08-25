@@ -385,7 +385,10 @@ func TestPerProviderStateKeyedByEndpoint(t *testing.T) {
 		return out
 	}
 
-	get()             // seed both baselines
+	get() // seed both baselines
+	// A rate needs a measurable interval, and back-to-back emits do not have
+	// one on a clock as coarse as Windows'.
+	time.Sleep(20 * time.Millisecond)
 	m1.OutTotal = 200 // only engine :8080 generated tokens since emit #1
 
 	rates := get()
