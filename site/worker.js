@@ -131,6 +131,7 @@ export default {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "public, max-age=300",
         "x-content-type-options": "nosniff",
+        "strict-transport-security": "max-age=31536000",
         "referrer-policy": "strict-origin-when-cross-origin",
         "content-security-policy":
           "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",

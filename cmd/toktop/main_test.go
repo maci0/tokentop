@@ -144,3 +144,23 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestRoutableBind(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:8420", false},
+		{"[::1]:8420", false},
+		{"localhost:8420", false}, // resolved form is what Addr reports; a literal name errs into quiet
+		{":8420", true},
+		{"0.0.0.0:8420", true},
+		{"[::]:8420", true},
+		{"192.168.1.7:8420", true},
+	}
+	for _, tt := range tests {
+		if got := routableBind(tt.addr); got != tt.want {
+			t.Errorf("routableBind(%q) = %v, want %v", tt.addr, got, tt.want)
+		}
+	}
+}

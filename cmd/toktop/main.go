@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"maps"
+	"net"
 	"os"
 	"os/signal"
 	"slices"
@@ -144,6 +145,10 @@ func main() {
 	default:
 		providers := provider.Discover(ctx)
 		for _, raw := range adds {
+			// The token rides only to endpoints the operator named: discovery
+			// probes every well-known port on spec, and whatever answers there
+			// must not be able to harvest the credential.
+			bearer.Allow(raw)
 			if p := provider.Attach(ctx, strings.TrimRight(raw, "/")); p != nil {
 				providers = append(providers, p)
 			} else {
@@ -249,6 +254,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "toktop: ingest disabled (%v)\n", err)
 		} else {
 			feedAddr = srv.Addr()
+			if routableBind(feedAddr) {
+				fmt.Fprintf(os.Stderr, "toktop: warning: ingest endpoint %s accepts unauthenticated events from any reachable peer\n", feedAddr)
+			}
 			go func() {
 				if err := srv.Serve(); err != nil {
 					fmt.Fprintf(os.Stderr, "toktop: ingest stopped: %v\n", err)
@@ -277,6 +285,22 @@ func main() {
 	}
 
 	runTUI(ctx, cfg, ch, !*noReload)
+}
+
+// routableBind reports whether a bound listen address is reachable from
+// beyond this host: a wildcard or non-loopback interface rather than
+// loopback. The ingest endpoint authenticates nothing, so such a bind is
+// worth naming at startup instead of leaving the widening silent.
+func routableBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false // no port to split: treat as local, not as an alarm
+	}
+	if host == "" {
+		return true // ":port" binds every interface
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && !ip.IsLoopback()
 }
 
 // runTUI runs the dashboard, restarting into a fresh binary whenever the
