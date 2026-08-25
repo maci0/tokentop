@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 type memRecorder struct{ evs []core.AgentEvent }

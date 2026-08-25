@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 const (

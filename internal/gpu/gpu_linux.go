@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 // init wires the amdgpu sysfs walker as the platform extra. amdgpu exposes

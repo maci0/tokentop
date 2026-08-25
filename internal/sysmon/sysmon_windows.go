@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 var (

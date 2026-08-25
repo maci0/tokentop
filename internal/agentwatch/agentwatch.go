@@ -10,7 +10,7 @@
 // write to their own session transcripts, and feeds the same event stream, so
 // a claude or codex working in a terminal shows up next to the engines.
 //
-// The reading is done by github.com/maci0/gauntlet-go/agentusage, which is the
+// The reading is done by github.com/maci0/gauntlet/agentusage, which is the
 // same code gauntlet uses for its dashboard. Its contract carries over: every
 // number came from an agent that reported it, and an agent that reports
 // nothing produces no rate rather than a zero.
@@ -18,13 +18,15 @@ package agentwatch
 
 import (
 	"context"
+	"net/netip"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/maci0/gauntlet-go/agentusage"
+	"github.com/maci0/tokentop/agentusage"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 // Recorder receives the events this watcher produces. It is satisfied by the
@@ -32,6 +34,13 @@ import (
 type Recorder interface {
 	RecordAgent(ev core.AgentEvent)
 }
+
+// Engines reports the endpoints tokentop is already measuring, as the URLs the
+// providers advertise. An agent generating through one of those engines has
+// its tokens counted by the engine already, so this watcher must not add them
+// again: the engine is the closer, more complete source (it sees every client,
+// including ones that keep no transcript).
+type Engines func() []string
 
 // Defaults chosen so a monitor stays cheap: discovery is a /proc walk, and
 // reading is a stat per transcript.
@@ -43,6 +52,7 @@ const (
 // Watcher follows the agent processes on this machine.
 type Watcher struct {
 	rec           Recorder
+	engines       Engines
 	discoverEvery time.Duration
 	readEvery     time.Duration
 
@@ -55,10 +65,14 @@ type tracked struct {
 	proc  agentusage.Process
 	watch *agentusage.Watcher
 	last  agentusage.Sample
+	// viaEngine names the monitored engine this agent generates through, when
+	// it has one. Its tokens are then the engine's to report.
+	viaEngine string
 }
 
-// New returns a watcher feeding rec. Zero intervals take the defaults.
-func New(rec Recorder, discoverEvery, readEvery time.Duration) *Watcher {
+// New returns a watcher feeding rec. Zero intervals take the defaults, and a
+// nil engines function means nothing is being measured elsewhere.
+func New(rec Recorder, engines Engines, discoverEvery, readEvery time.Duration) *Watcher {
 	if discoverEvery <= 0 {
 		discoverEvery = defaultDiscoverEvery
 	}
@@ -66,7 +80,8 @@ func New(rec Recorder, discoverEvery, readEvery time.Duration) *Watcher {
 		readEvery = defaultReadEvery
 	}
 	return &Watcher{
-		rec: rec, discoverEvery: discoverEvery, readEvery: readEvery,
+		rec: rec, engines: engines,
+		discoverEvery: discoverEvery, readEvery: readEvery,
 		tracked: map[int]*tracked{},
 	}
 }
@@ -131,6 +146,55 @@ func (w *Watcher) discover() {
 			delete(w.tracked, pid)
 		}
 	}
+
+	// Re-checked every pass rather than once at discovery: an agent connects
+	// to its engine after it starts, and may switch engines mid-session.
+	endpoints, labels := w.engineEndpoints()
+	for pid, t := range w.tracked {
+		t.viaEngine = ""
+		for i, e := range endpoints {
+			if agentusage.ConnectedTo(pid, []netip.AddrPort{e}) {
+				t.viaEngine = labels[i]
+				break
+			}
+		}
+	}
+}
+
+// engineEndpoints parses the monitored engines' advertised URLs into addresses
+// that can be compared against a process's open connections.
+func (w *Watcher) engineEndpoints() ([]netip.AddrPort, []string) {
+	if w.engines == nil {
+		return nil, nil
+	}
+	raw := w.engines()
+	eps := make([]netip.AddrPort, 0, len(raw))
+	labels := make([]string, 0, len(raw))
+	for _, addr := range raw {
+		ap, label, ok := parseEngineAddr(addr)
+		if !ok {
+			continue
+		}
+		eps = append(eps, ap)
+		labels = append(labels, label)
+	}
+	return eps, labels
+}
+
+// parseEngineAddr turns "http://127.0.0.1:11434" into an endpoint and a label.
+// A hostname that is not an address cannot be compared against a connection
+// table, so it is skipped rather than resolved: resolving would make a monitor
+// do DNS on a timer.
+func parseEngineAddr(addr string) (netip.AddrPort, string, bool) {
+	host := addr
+	if u, err := url.Parse(addr); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	ap, err := netip.ParseAddrPort(host)
+	if err != nil {
+		return netip.AddrPort{}, "", false
+	}
+	return ap, host, true
 }
 
 // read takes one reading per tracked agent and reports what grew.
@@ -154,6 +218,17 @@ func (w *Watcher) read() {
 		}
 		t.last = cur
 		if w.rec == nil {
+			continue
+		}
+		if t.viaEngine != "" {
+			// The engine is already reporting these tokens. Saying so keeps
+			// the agent visible without counting its output twice.
+			w.rec.RecordAgent(core.AgentEvent{
+				At:    cur.At,
+				Agent: t.proc.Tool,
+				Kind:  "note",
+				Note:  shortDir(t.proc.Dir) + " · counted by engine " + t.viaEngine,
+			})
 			continue
 		}
 		w.rec.RecordAgent(core.AgentEvent{

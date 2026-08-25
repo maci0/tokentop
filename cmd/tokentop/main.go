@@ -22,17 +22,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
-	"tokentop/internal/agentwatch"
-	"tokentop/internal/bearer"
-	"tokentop/internal/collector"
-	"tokentop/internal/core"
-	"tokentop/internal/demo"
-	"tokentop/internal/ingest"
-	"tokentop/internal/provider"
-	"tokentop/internal/remote"
-	"tokentop/internal/selfreload"
-	"tokentop/internal/sysmon"
-	"tokentop/internal/ui"
+	"github.com/maci0/tokentop/internal/agentwatch"
+	"github.com/maci0/tokentop/internal/bearer"
+	"github.com/maci0/tokentop/internal/collector"
+	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/demo"
+	"github.com/maci0/tokentop/internal/ingest"
+	"github.com/maci0/tokentop/internal/provider"
+	"github.com/maci0/tokentop/internal/remote"
+	"github.com/maci0/tokentop/internal/selfreload"
+	"github.com/maci0/tokentop/internal/sysmon"
+	"github.com/maci0/tokentop/internal/ui"
 )
 
 // var, not const: release builds stamp it via -ldflags "-X main.version=...".
@@ -121,6 +121,10 @@ func main() {
 	// The agent event endpoint runs in every mode so harnesses can always
 	// feed the dashboard.
 	var recorder ingest.Recorder
+	// Endpoints tokentop is already measuring. An agent generating through one
+	// of them has its tokens reported by the engine, which sees every client;
+	// counting the agent as well would double the total.
+	var engineAddrs agentwatch.Engines
 	feedAddr := "" // advertised by the UI only while the endpoint is live
 
 	switch {
@@ -174,6 +178,14 @@ func main() {
 				len(rp), tgt.Host)
 		}
 
+		engineAddrs = func() []string {
+			out := make([]string, 0, len(providers))
+			for _, p := range providers {
+				out = append(out, p.Addr())
+			}
+			return out
+		}
+
 		col := collector.New(providers, *interval)
 		if sysWrap != nil {
 			col.SetSysFn(sysWrap)
@@ -205,7 +217,8 @@ func main() {
 	// cooperation from the agent, so a claude or codex started in a terminal
 	// shows up without anyone wiring tokentop into it.
 	if !*noAgents && recorder != nil {
-		go agentwatch.New(recorder, 0, 0).Run(ctx)
+		// engineAddrs is nil in demo mode, where nothing real is measured.
+		go agentwatch.New(recorder, engineAddrs, 0, 0).Run(ctx)
 	}
 
 	if !*noIngest && recorder != nil {

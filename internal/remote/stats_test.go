@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 const vitalsDump = `3.10 2.20 1.05 4/900 12345

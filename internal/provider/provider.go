@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"tokentop/internal/bearer"
-	"tokentop/internal/core"
-	"tokentop/internal/httperr"
+	"github.com/maci0/tokentop/internal/bearer"
+	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/httperr"
 )
 
 // PollTimeout bounds a single metrics scrape.

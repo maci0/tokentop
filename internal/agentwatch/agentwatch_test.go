@@ -4,16 +4,19 @@
 package agentwatch
 
 import (
+	"context"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 // recorder collects what the watcher reports.
@@ -68,7 +71,7 @@ func TestWatchesARunningAgent(t *testing.T) {
 	}()
 
 	rec := &recorder{}
-	w := New(rec, 200*time.Millisecond, 100*time.Millisecond)
+	w := New(rec, nil, 200*time.Millisecond, 100*time.Millisecond)
 	ctx := t.Context()
 	go w.Run(ctx)
 
@@ -112,7 +115,7 @@ func TestForgetsExitedAgents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := New(&recorder{}, 100*time.Millisecond, time.Hour)
+	w := New(&recorder{}, nil, 100*time.Millisecond, time.Hour)
 	ctx := t.Context()
 	go w.Run(ctx)
 
@@ -147,7 +150,7 @@ func TestSilentAgentProducesNoEvents(t *testing.T) {
 	}()
 
 	rec := &recorder{}
-	w := New(rec, 100*time.Millisecond, 50*time.Millisecond)
+	w := New(rec, nil, 100*time.Millisecond, 50*time.Millisecond)
 	ctx := t.Context()
 	go w.Run(ctx)
 
@@ -202,4 +205,86 @@ func waitFor(t *testing.T, limit time.Duration, cond func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("condition not met within %s", limit)
+}
+
+// TestEngineTakesPrecedence is the double-counting guard: an agent generating
+// through an engine tokentop already measures must not add its tokens on top
+// of the engine's. It stays visible, with a note saying where its output is
+// being counted.
+func TestEngineTakesPrecedence(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("connection attribution reads /proc")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Something that looks like a local inference engine.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	engine := "http://" + ln.Addr().String()
+
+	work := t.TempDir()
+	transcript := filepath.Join(home, ".claude", "projects", "p")
+	if err := os.MkdirAll(transcript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// An agent that holds a connection to that engine while it works.
+	bin := filepath.Join(t.TempDir(), "claude")
+	script := "#!/bin/sh\nexec 3<>/dev/tcp/127.0.0.1/" + port(t, ln) + "\nsleep 5\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/bash", bin) // /dev/tcp is a bash feature
+	cmd.Dir = work
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+
+	rec := &recorder{}
+	w := New(rec, func() []string { return []string{engine} },
+		150*time.Millisecond, 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Run(ctx)
+
+	waitFor(t, 3*time.Second, func() bool { return w.Following(cmd.Process.Pid) })
+	// Let one discovery pass classify the connection before it spends.
+	time.Sleep(400 * time.Millisecond)
+	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 500))
+
+	waitFor(t, 3*time.Second, func() bool { return len(rec.all()) > 0 })
+	for _, ev := range rec.all() {
+		if ev.OutputTokens != 0 {
+			t.Fatalf("counted tokens the engine already reports: %+v", ev)
+		}
+		if ev.Kind != "note" || !strings.Contains(ev.Note, "counted by engine") {
+			t.Fatalf("the agent should stay visible with an explanation: %+v", ev)
+		}
+	}
+}
+
+func port(t *testing.T, ln net.Listener) string {
+	t.Helper()
+	_, p, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

@@ -15,7 +15,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 // agentWindow is how far back a rate looks. Long enough that a pause between

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 type backend struct {

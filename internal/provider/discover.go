@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"tokentop/internal/bearer"
-	"tokentop/internal/core"
-	"tokentop/internal/procs"
+	"github.com/maci0/tokentop/internal/bearer"
+	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/procs"
 )
 
 // scanTimeout bounds each identification request during discovery.

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"tokentop/internal/core"
-	"tokentop/internal/gpu"
-	"tokentop/internal/sysmon"
+	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/gpu"
+	"github.com/maci0/tokentop/internal/sysmon"
 )
 
 // Stats samples host vitals from the remote /proc tree every few seconds and

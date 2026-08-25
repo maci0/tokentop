@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"tokentop/internal/core"
+	"github.com/maci0/tokentop/internal/core"
 )
 
 // Server accepts POST /v1/events (single object or newline-delimited stream)

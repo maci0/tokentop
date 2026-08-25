@@ -2,7 +2,7 @@
 
 package sysmon
 
-import "tokentop/internal/core"
+import "github.com/maci0/tokentop/internal/core"
 
 func init() {
 	platformMemory = nil
