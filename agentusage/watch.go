@@ -513,12 +513,15 @@ func (w *Watcher) Poll() Sample {
 	if w == nil {
 		return Sample{}
 	}
-	// The candidate listing is deliberately not forced fresh here. Forcing a
-	// walk re-reads the whole transcript store on every call, at whatever
-	// cadence the caller polls, and session stores hold thousands of files:
-	// that is exactly what rescanEvery exists to prevent. A session created
-	// moments ago surfaces within rescanEvery, the same bound every periodic
-	// read already works under.
+	// Force a fresh walk: this is the caller's last chance to see a session
+	// file created seconds ago, and a run short enough to finish inside
+	// rescanEvery would otherwise report nothing at all. Clearing the stamp is
+	// what forces it; the listing itself is what candidates rewrites. The cost
+	// is one walk per final read, not one per periodic poll: Run's ticker goes
+	// through poll, which still reuses the cached listing.
+	w.pollMu.Lock()
+	w.scanned = time.Time{}
+	w.pollMu.Unlock()
 	w.poll(nil)
 	return w.Sample()
 }

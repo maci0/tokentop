@@ -284,68 +284,6 @@ func TestRunReportsGrowth(t *testing.T) {
 	}
 }
 
-// Poll must not re-walk the transcript store on every call: the candidate
-// listing stays valid for rescanEvery, and session stores hold thousands of
-// files. A session created after the last scan surfaces when that bound
-// expires, not at poll time.
-func TestPollReusesFreshListingUntilItExpires(t *testing.T) {
-	store := withStore(t, "claude")
-	work := t.TempDir()
-	w := Watch("claude", work, time.Now())
-	if w == nil {
-		t.Fatal("claude should be supported")
-	}
-	append_(t, filepath.Join(store, "first.jsonl"), claudeLine(work, 30))
-	w.poll(nil)
-	if got := w.Sample().Output; got != 30 {
-		t.Fatalf("output tokens %d, want 30", got)
-	}
-
-	// A brand-new session inside the listing's freshness window: not visible
-	// yet, because seeing it would have cost a full store walk per poll.
-	append_(t, filepath.Join(store, "second.jsonl"), claudeLine(work, 40))
-	w.Poll()
-	if got := w.Sample().Output; got != 30 {
-		t.Fatalf("fresh listing was re-walked: output %d, want 30", got)
-	}
-
-	// Once the listing expires, the next read picks the new session up.
-	w.pollMu.Lock()
-	w.scanned = time.Now().Add(-rescanEvery)
-	w.pollMu.Unlock()
-	if got := w.Poll().Output; got != 70 {
-		t.Fatalf("output tokens after rescan %d, want 70", got)
-	}
-}
-
-// An empty listing is cached like any other: with no transcript matching yet,
-// the store must be walked once per rescanEvery, not on every poll. A session
-// created inside the window surfaces when it expires.
-func TestPollCachesEmptyListingUntilItExpires(t *testing.T) {
-	store := withStore(t, "claude")
-	work := t.TempDir()
-	w := Watch("claude", work, time.Now()) // attach walks the empty store once
-	if w == nil {
-		t.Fatal("claude should be supported")
-	}
-	w.poll(nil)
-	if got := w.Sample().Output; got != 0 {
-		t.Fatalf("output tokens %d, want 0", got)
-	}
-
-	append_(t, filepath.Join(store, "late.jsonl"), claudeLine(work, 55))
-	if got := w.Poll().Output; got != 0 {
-		t.Fatalf("empty listing was re-walked: output %d, want 0", got)
-	}
-
-	w.pollMu.Lock()
-	w.scanned = time.Now().Add(-rescanEvery)
-	w.pollMu.Unlock()
-	if got := w.Poll().Output; got != 55 {
-		t.Fatalf("output tokens after rescan %d, want 55", got)
-	}
-}
-
 func TestDefinedAgentTranscriptsAreReadGenerically(t *testing.T) {
 	// An agent gauntlet was never compiled to know about: its transcript is
 	// readable as long as the records carry recognizable counters and a cwd.
