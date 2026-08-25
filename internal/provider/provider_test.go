@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -88,6 +89,43 @@ func TestClassifyRatioVsPercentCache(t *testing.T) {
 	classify(map[string]float64{"kv_cache_usage_perc": 40}, &pct)
 	if pct.KVPct != 40 {
 		t.Errorf("percent passthrough = %v", pct.KVPct)
+	}
+}
+
+// A broken or lying /metrics endpoint may publish any finite float. The
+// plain conversion this used to apply is implementation-defined past the
+// type's range: on amd64, int(1e300) renders as a huge negative queue depth.
+func TestClassifySaturatesAbsurdGauges(t *testing.T) {
+	var m Metrics
+	classify(map[string]float64{"vllm:num_requests_running": 1e300}, &m)
+	if m.Running != math.MaxInt {
+		t.Errorf("running = %d, want saturation at MaxInt", m.Running)
+	}
+
+	var junk Metrics
+	classify(map[string]float64{"sglang:num_queue_reqs": -3}, &junk)
+	if junk.Waiting != 0 {
+		t.Errorf("waiting = %d from a negative gauge, want 0", junk.Waiting)
+	}
+}
+
+func TestSatCoercions(t *testing.T) {
+	if got := satInt(2.7); got != 2 {
+		t.Errorf("satInt(2.7) = %d, want 2", got)
+	}
+	if got := satUint(8192); got != 8192 {
+		t.Errorf("satUint(8192) = %d", got)
+	}
+	for _, v := range []float64{0, -5} {
+		if got := satInt(v); got != 0 {
+			t.Errorf("satInt(%v) = %d, want 0", v, got)
+		}
+		if got := satUint(v); got != 0 {
+			t.Errorf("satUint(%v) = %d, want 0", v, got)
+		}
+	}
+	if satInt(1e300) != math.MaxInt || satUint(1e300) != math.MaxUint64 {
+		t.Error("huge magnitudes must saturate, not wrap")
 	}
 }
 
