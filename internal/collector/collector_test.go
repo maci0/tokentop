@@ -342,6 +342,27 @@ func TestRecordProbeKeepsChronologicalOrder(t *testing.T) {
 	}
 }
 
+// Agent events arrive over the ingest endpoint from senders whose clocks
+// disagree, so arrival order is not time order; the retained slice must
+// still be chronological or the agent feed renders a stale event last and
+// eviction drops the wrong end.
+func TestRecordAgentKeepsChronologicalOrder(t *testing.T) {
+	c := New(nil, time.Second)
+	base := time.Now()
+	order := []time.Duration{3 * time.Second, 7 * time.Second, 0, 5 * time.Second}
+	for _, d := range order {
+		c.RecordAgent(core.AgentEvent{At: base.Add(d), Agent: "a", OutputTokens: 1})
+	}
+	for i := 1; i < len(c.agents); i++ {
+		if c.agents[i].At.Before(c.agents[i-1].At) {
+			t.Fatalf("agent ring not sorted at %d: %v", i, c.agents)
+		}
+	}
+	if !c.agents[len(c.agents)-1].At.Equal(base.Add(7 * time.Second)) {
+		t.Fatal("newest agent is not last")
+	}
+}
+
 // Two instances of the same engine kind share a display label ("llama.cpp"
 // for every llama.cpp server); their rate baselines and histories must be
 // keyed by endpoint so counters never mix across engines.
