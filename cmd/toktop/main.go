@@ -85,6 +85,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
 		os.Exit(2)
 	}
+	if *once {
+		if err := validateOnceEnv(); err != nil {
+			fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
+			os.Exit(2)
+		}
+	}
 	warnUnknownEnv()
 
 	// Flags the user passed explicitly, for warnings about no-op combos.
@@ -227,6 +233,9 @@ func main() {
 	// Opt-in, because it means scanning this machine's processes and reading
 	// files the operator never pointed at toktop. Watching engines does not
 	// imply consent to that.
+	if *agents {
+		loadAgentDefs()
+	}
 	if *agents && *opencode && !agentusage.EnableOpenCodeDB(true) {
 		// Silence here would look like an agent that generates nothing.
 		fmt.Fprintln(os.Stderr, "toktop: --opencode-db needs a build with -tags sqlite; opencode will report no tokens")
@@ -325,16 +334,17 @@ func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotRelo
 }
 
 // runOnce prints a single rendered frame sized to the terminal (or 120x38).
-// TOKTOP_COLUMNS / TOKTOP_LINES override detection (useful for capture).
+// TOKTOP_COLUMNS / TOKTOP_LINES override detection (useful for capture);
+// validateOnceEnv rejected unusable values before this runs.
 func runOnce(cfg ui.Config, ch <-chan core.Snapshot, n int) {
 	w, h := 120, 38
 	if tw, th, err := term.GetSize(int(os.Stdout.Fd())); err == nil && tw > 40 && th > 20 {
 		w, h = tw, th
 	}
-	if v, err := strconv.Atoi(os.Getenv("TOKTOP_COLUMNS")); err == nil && v > 40 {
+	if v, err := strconv.Atoi(os.Getenv("TOKTOP_COLUMNS")); err == nil && v >= minFrameColumns {
 		w = v
 	}
-	if v, err := strconv.Atoi(os.Getenv("TOKTOP_LINES")); err == nil && v > 20 {
+	if v, err := strconv.Atoi(os.Getenv("TOKTOP_LINES")); err == nil && v >= minFrameLines {
 		h = v
 	}
 	// Snapshots land one poll interval apart, so a slow-polling host needs a
@@ -426,6 +436,37 @@ func validateFlags(once bool, interval time.Duration, probeSecs, frames int) err
 	return nil
 }
 
+// Frame floors: below these the static frame cannot lay out legibly. The
+// README documents the overrides as "> 40" / "> 20".
+const (
+	minFrameColumns = 41
+	minFrameLines   = 21
+)
+
+// validateOnceEnv rejects a set-but-unusable frame override before --once
+// renders: a capture sized by a typo'd variable must fail loudly rather than
+// come out at the fallback size with nothing explaining why. Unset or empty
+// means default, matching how every other optional setting reads here.
+func validateOnceEnv() error {
+	for _, e := range [...]struct {
+		name  string
+		least int
+	}{
+		{"TOKTOP_COLUMNS", minFrameColumns},
+		{"TOKTOP_LINES", minFrameLines},
+	} {
+		v := os.Getenv(e.name)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < e.least {
+			return fmt.Errorf("$%s must be an integer >= %d, got %q", e.name, e.least, v)
+		}
+	}
+	return nil
+}
+
 // toktopEnvVars are the TOKTOP_* environment variables this build reads;
 // see also OMNIROUTE_API_KEY, SSH_AUTH_SOCK and the ssh defaults.
 var toktopEnvVars = map[string]bool{
@@ -450,6 +491,21 @@ func warnUnknownEnv() {
 	if len(unknown) > 0 {
 		fmt.Fprintf(os.Stderr, "toktop: ignoring unknown environment variable(s): %s\n",
 			strings.Join(unknown, ", "))
+	}
+}
+
+// loadAgentDefs pulls in ~/.gauntlet/agents.json so --agents can follow
+// agents toktop was not built to know (in-house wrappers, the pi family),
+// including where they keep their transcripts. A missing file is the normal
+// case; a malformed one is reported instead of swallowed, because agents
+// silently missing from the watch look exactly like agents doing nothing.
+func loadAgentDefs() {
+	path := agentusage.DefinitionsPath()
+	if path == "" {
+		return // no home directory resolved; nothing to load
+	}
+	if err := agentusage.LoadDefinitions(path); err != nil {
+		fmt.Fprintf(os.Stderr, "toktop: %s: %v; watching only the built-in agents\n", path, err)
 	}
 }
 

@@ -12,8 +12,9 @@ they live and what already stands in their way.
 
 Scope: the `toktop` CLI (single static Go binary) and its deployment
 artifacts (GitHub Actions workflows, Makefile release targets). Out of scope:
-the vendored-path dependency `github.com/maci0/gauntlet-go` (deps-review owns
-it; agentwatch consumes it at internal/agentwatch/agentwatch.go:78).
+the `gauntlet` tool that shares this repo's in-repo `agentusage` package
+(deps-review owns the gauntlet side; agentwatch consumes the package via
+internal/agentwatch/agentwatch.go:27).
 
 ## Risk-ranked summary
 
@@ -81,10 +82,11 @@ Every externally reachable input, with its code location:
    ports discovered over ssh (cmd/toktop/main.go:407). Probes POST small
    generations to engines (internal/probe/probe.go).
 6. **Agent transcript reading** (local disk): `/proc` walk finds coding-agent
-   processes; their transcript files are read every second via the
-   gauntlet-go dependency (internal/agentwatch/agentwatch.go:74-96). Agent
-   definitions, including transcript paths, load at runtime from
-   `~/.gauntlet/agents.json` (agentwatch.go:78).
+   processes; their transcript files are read every second via the in-repo
+   `agentusage` package (internal/agentwatch/agentwatch.go:93-110). Agent
+   definitions, including transcript paths, load once at startup from
+   `~/.gauntlet/agents.json`; a malformed file warns on stderr and leaves
+   only the built-in set (cmd/toktop/main.go:236-238,497-507).
 7. **Config files read at startup**: `~/.ssh/config` (HostName/User/Port/
    IdentityFile override target fields, internal/remote/target.go:104-155) and
    the known_hosts store (knownhosts.go:55-74).
@@ -141,7 +143,7 @@ signature step exists.
 - **B6: user config -> runtime.** `~/.ssh/config` steers where connections go
   and which identity is offered (target.go:104-155); `~/.gauntlet/agents.json`
   defines which processes count as agents and which files are read
-  (agentwatch.go:76-78); `PATH` decides which vendor CLIs execute
+  (cmd/toktop/main.go:497-507); `PATH` decides which vendor CLIs execute
   (gpu.go:42-51). All three are same-user-writable inputs treated as trusted.
 
 Privilege transitions: toktop gains no privileges at runtime (no setuid,
@@ -234,7 +236,7 @@ Controls verified in code, with the threats they cover:
 | Local-only defaults: forward listeners on 127.0.0.1, ingest on 127.0.0.1:8420 | accidental network exposure (B1 widening) | client.go:298; main.go:46 |
 | Remote shell scripts: static bodies, only locally generated integers interpolated; no secret material sent to remote scripts | command injection into remote shell (B3 elevation) | discover.go:87,117-144; stats.go:38-64 |
 | Password prompt gated on TTY; encrypted keys skipped with guidance | credential handling in headless runs (B4) | auth.go:33-44,103-106 |
-| Flag validation exits 2; unknown `TOKTOP_*` env warned | misconfiguration acting as silent security-relevant behavior change | main.go:66-70,323-334,345-361 |
+| Flag validation exits 2; set-but-invalid `TOKTOP_COLUMNS`/`TOKTOP_LINES` exit 2 under `--once`; malformed `~/.gauntlet/agents.json` warned instead of swallowed; unknown `TOKTOP_*` env warned | misconfiguration acting as silent security-relevant behavior change | main.go:84-94,236-238,426-438,441-463,479-495 |
 | Supply chain: govulncheck in CI, Dependabot, SHA-pinned workflow actions, SBOM in releases | vulnerable-dependency drift (deployment surface) | .github/workflows/ci.yml, .github/dependabot.yml, .github/workflows/release.yml, Makefile |
 
 Documentation claims checked against code this pass:

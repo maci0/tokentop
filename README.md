@@ -45,7 +45,9 @@ build without the driver says so on stderr rather than reporting a silent zero.
 
 Reading is done by this repo's own `agentusage` package, which gauntlet also
 imports, so both tools report the same numbers. Agents defined in
-`~/.gauntlet/agents.json` are picked up here too.
+`~/.gauntlet/agents.json` are picked up here too; a malformed file is reported
+at startup rather than silently shrinking the watch to the built-in agents.
+Set `GAUNTLET_HOME` to read that file from somewhere else.
 
 ## What it shows
 
@@ -216,14 +218,17 @@ Password auth for ssh targets: interactive prompt, or `TOKTOP_SSH_PASSWORD`.
 | `OMNIROUTE_API_KEY` | bearer token fallback for `--bearer` (checked first) |
 | `TOKTOP_BEARER` | bearer token fallback for `--bearer` (checked after `OMNIROUTE_API_KEY`) |
 | `TOKTOP_SSH_PASSWORD` | ssh password for headless runs; otherwise an interactive prompt |
-| `TOKTOP_COLUMNS` / `TOKTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20 |
+| `TOKTOP_COLUMNS` / `TOKTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20, and a set-but-invalid value aborts with exit code 2 |
+| `GITHUB_TOKEN` | optional; authenticates `toktop update`'s GitHub API calls past the anonymous rate limit |
+| `GAUNTLET_HOME` | directory holding `agents.json` (default `~/.gauntlet`) |
 
 The flag always wins over its env fallback. Prefer an env var over
 `--bearer` for tokens: command-line arguments are visible in process
 listings to every user on the host. Unknown `TOKTOP_*` variables are
 reported at startup, so a typo fails loudly instead of doing nothing.
 Out-of-range flag values (`--interval 0`, negative `--probe`, `--frames < 1`
-with `--once`) abort with exit code 2 instead of being silently adjusted.
+with `--once`) abort with exit code 2 instead of being silently adjusted;
+so do out-of-range `TOKTOP_COLUMNS` / `TOKTOP_LINES` when `--once` renders.
 
 ## Build & test
 

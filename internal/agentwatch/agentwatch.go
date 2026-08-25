@@ -86,13 +86,11 @@ func New(rec Recorder, engines Engines, discoverEvery, readEvery time.Duration) 
 	}
 }
 
-// Run follows agents until the context is canceled.
+// Run follows agents until the context is canceled. Agent definitions
+// (~/.gauntlet/agents.json, via agentusage.LoadDefinitions) are the caller's
+// to load before Run: a malformed file must be reported where the operator
+// can see it, not swallowed inside a goroutine behind the alt screen.
 func (w *Watcher) Run(ctx context.Context) {
-	// Agent definitions let a user name agents toktop was not built to know
-	// (in-house wrappers, the pi family), including where they keep their
-	// transcripts. A missing file is the normal case.
-	_ = agentusage.LoadDefinitions(agentusage.DefinitionsPath())
-
 	discover := time.NewTicker(w.discoverEvery)
 	defer discover.Stop()
 	read := time.NewTicker(w.readEvery)
