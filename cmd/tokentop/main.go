@@ -46,7 +46,7 @@ func main() {
 		interval  = flag.Duration("interval", time.Second, "poll interval")
 		ingestArg = flag.String("ingest", "127.0.0.1:8420", "agent event ingest listen address")
 		noIngest  = flag.Bool("no-ingest", false, "disable the agent event HTTP endpoint")
-		noAgents  = flag.Bool("no-agents", false, "do not watch AI coding agents running on this machine")
+		agents    = flag.Bool("agents", false, "watch AI coding agents on this machine by reading their session transcripts")
 		once      = flag.Bool("once", false, "render one frame and exit (non-interactive)")
 		frames    = flag.Int("frames", 2, "with --once: snapshots to accumulate before rendering")
 		noReload  = flag.Bool("no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
@@ -216,7 +216,11 @@ func main() {
 	// write. This is the counterpart to the HTTP endpoint below: it needs no
 	// cooperation from the agent, so a claude or codex started in a terminal
 	// shows up without anyone wiring tokentop into it.
-	if !*noAgents && recorder != nil {
+	//
+	// Opt-in, because it means scanning this machine's processes and reading
+	// files the operator never pointed at tokentop. Watching engines does not
+	// imply consent to that.
+	if *agents && recorder != nil {
 		// engineAddrs is nil in demo mode, where nothing real is measured.
 		go agentwatch.New(recorder, engineAddrs, 0, 0).Run(ctx)
 	}
@@ -364,6 +368,7 @@ Examples:
   tokentop                       auto-discover engines on this machine
   tokentop ssh://maci@box        watch another host's engines over ssh
   tokentop --add http://10.0.0.5:8000   attach an endpoint (repeatable)
+  tokentop --agents              also watch coding agents on this machine
   tokentop --once >frame.txt     render one static frame and exit
 
 Flags:
