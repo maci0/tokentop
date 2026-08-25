@@ -395,10 +395,7 @@ func (c *Collector) ring(m map[string]*timedRing, key string) *timedRing {
 func (c *Collector) RecordAgent(ev core.AgentEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.agents = append(c.agents, ev)
-	sort.SliceStable(c.agents, func(i, j int) bool {
-		return c.agents[i].At.Before(c.agents[j].At)
-	})
+	c.agents = insertSorted(append(c.agents, ev), agentAt)
 	if len(c.agents) > core.AgentHistoryLen {
 		c.agents = c.agents[len(c.agents)-core.AgentHistoryLen:]
 	}
@@ -410,13 +407,27 @@ func (c *Collector) RecordAgent(ev core.AgentEvent) {
 func (c *Collector) RecordProbe(s core.ProbeSample) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.probes = append(c.probes, s)
-	sort.SliceStable(c.probes, func(i, j int) bool {
-		return c.probes[i].At.Before(c.probes[j].At)
-	})
+	c.probes = insertSorted(append(c.probes, s), probeAt)
 	if len(c.probes) > core.ProbeHistoryLen {
 		c.probes = c.probes[len(c.probes)-core.ProbeHistoryLen:]
 	}
+}
+
+func agentAt(ev core.AgentEvent) time.Time { return ev.At }
+func probeAt(s core.ProbeSample) time.Time { return s.At }
+
+// insertSorted places the element just appended to s (sorted before the
+// append) at its stable position: after every element whose timestamp is
+// less than or equal to its own. One binary search plus one shift replaces
+// the previous full re-sort per event; the ingest path holds c.mu across
+// this, so every comparison saved unblocks emit and ProbeAll sooner.
+func insertSorted[T any](s []T, at func(T) time.Time) []T {
+	i := len(s) - 1
+	ev := s[i]
+	dst := sort.Search(i, func(j int) bool { return at(s[j]).After(at(ev)) })
+	copy(s[dst+1:], s[dst:])
+	s[dst] = ev
+	return s
 }
 
 // providerKey is the per-provider state key: the endpoint when known, else

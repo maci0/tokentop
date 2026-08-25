@@ -221,9 +221,11 @@ func (s *Source) RecordAgent(ev core.AgentEvent) {
 func (s *Source) addProbe(p core.ProbeSample) {
 	s.probes = append(s.probes, p)
 	// Consumers assume newest-last ordering; keep the ring sorted by time.
-	sort.SliceStable(s.probes, func(i, j int) bool {
-		return s.probes[i].At.Before(s.probes[j].At)
-	})
+	i := len(s.probes) - 1
+	last := s.probes[i]
+	dst := sort.Search(i, func(j int) bool { return s.probes[j].At.After(last.At) })
+	copy(s.probes[dst+1:], s.probes[dst:])
+	s.probes[dst] = last
 	if len(s.probes) > core.ProbeHistoryLen {
 		s.probes = s.probes[len(s.probes)-core.ProbeHistoryLen:]
 	}
