@@ -14,8 +14,12 @@ import (
 //
 // The contract is the same as everywhere else here: report what the agent
 // recorded for this directory since this moment, or report nothing.
+//
+// dirs holds the spellings the review's directory can appear under, resolved
+// and unresolved, because an agent records whichever it was started with and
+// on macOS every temporary path is a symlink to another.
 type usageSource interface {
-	read(dir string, since time.Time) (values, bool)
+	read(dirs []string, since time.Time) (values, bool)
 }
 
 var (

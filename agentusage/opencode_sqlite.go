@@ -7,8 +7,10 @@ package agentusage
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure Go driver: no cgo, so cross-compilation still works
@@ -53,6 +55,8 @@ func openCodeDBPath() string {
 
 // usageQuery sums what this directory's sessions spent after a point in time.
 // Cached reads are deliberately absent: they are input, not generated output.
+// The directory list is spliced in by usageQueryFor, since SQL has no
+// placeholder for a set.
 const usageQuery = `
 	SELECT
 		COALESCE(SUM(json_extract(m.data, '$.tokens.output')), 0),
@@ -60,10 +64,16 @@ const usageQuery = `
 		COALESCE(MAX(json_extract(m.data, '$.tokens.total')), 0)
 	FROM message m
 	JOIN session s ON s.id = m.session_id
-	WHERE s.directory = ? AND m.time_created > ?`
+	WHERE s.directory IN (%s) AND m.time_created > ?`
 
-func (o openCodeDBSource) read(dir string, since time.Time) (values, bool) {
-	if o.path == "" {
+// usageQueryFor builds the query for n directory spellings. Only the number of
+// placeholders varies: every value still travels as a bound parameter.
+func usageQueryFor(n int) string {
+	return fmt.Sprintf(usageQuery, strings.TrimSuffix(strings.Repeat("?,", n), ","))
+}
+
+func (o openCodeDBSource) read(dirs []string, since time.Time) (values, bool) {
+	if o.path == "" || len(dirs) == 0 {
 		return values{}, false
 	}
 	// mode=ro leaves the database alone; a missing or unreadable one is an
@@ -75,8 +85,14 @@ func (o openCodeDBSource) read(dir string, since time.Time) (values, bool) {
 	}
 	defer db.Close()
 
+	args := make([]any, 0, len(dirs)+1)
+	for _, d := range dirs {
+		args = append(args, d)
+	}
+	args = append(args, since.UnixMilli())
+
 	var out, thinking, total sql.NullInt64
-	row := db.QueryRow(usageQuery, dir, since.UnixMilli())
+	row := db.QueryRow(usageQueryFor(len(dirs)), args...)
 	if err := row.Scan(&out, &thinking, &total); err != nil {
 		return values{}, false
 	}
