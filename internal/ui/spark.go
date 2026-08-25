@@ -112,6 +112,19 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 		pattern int
 	}
 	cache := map[cacheKey]string{}
+	// FadeAge recomputes a clamped WCAG blend per cell, and each blend can
+	// bisect up to 16 times (hex parse + luminance per step). The blend
+	// depends only on the base color and the column, never on the row or the
+	// value's height, so results are memoized: w*h blends collapse to at
+	// most (#ramp colors x w).
+	type fadeKey struct {
+		color string
+		cx    int
+	}
+	var fades map[fadeKey]lipgloss.Color
+	if st.FadeAge {
+		fades = make(map[fadeKey]lipgloss.Color)
+	}
 	rows := make([]strings.Builder, h)
 	for cy := range h {
 		for cx := range w {
@@ -129,12 +142,18 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 				pattern = int(brailleBits[3][0])
 			}
 			col := heat(frac)
-			if st.FadeAge && frac > 0.02 {
-				f := 0.30 + 0.70*(float64(cx)/float64(max(w-1, 1)))
-				// The oldest columns still carry history: clamp the fade at
-				// the non-text contrast floor instead of letting the bloom
-				// fade them into invisibility for low-vision users.
-				col = fadeClamped(col, f, minGraphicContrast)
+			if frac > 0.02 && fades != nil {
+				k := fadeKey{color: string(col), cx: cx}
+				if fc, ok := fades[k]; ok {
+					col = fc
+				} else {
+					f := 0.30 + 0.70*(float64(cx)/float64(max(w-1, 1)))
+					// The oldest columns still carry history: clamp the fade at
+					// the non-text contrast floor instead of letting the bloom
+					// fade them into invisibility for low-vision users.
+					col = fadeClamped(col, f, minGraphicContrast)
+					fades[k] = col
+				}
 			}
 			k := cacheKey{color: string(col), pattern: pattern}
 			s, ok := cache[k]
