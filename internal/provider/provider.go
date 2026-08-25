@@ -159,10 +159,10 @@ func extractVersionField(body string) string {
 	return ""
 }
 
-// ParseProm scrapes a minimal Prometheus text exposition into family values.
+// parseProm scrapes a minimal Prometheus text exposition into family values.
 // Labeled series of the same family are summed; histograms contribute their
 // _sum and _count families verbatim.
-func ParseProm(text string) map[string]float64 {
+func parseProm(text string) map[string]float64 {
 	fam := map[string]float64{}
 	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimSpace(line)

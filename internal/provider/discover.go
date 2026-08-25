@@ -133,7 +133,7 @@ func IdentifyAll(ctx context.Context, bases []string) []string {
 		wg.Add(1)
 		go func(i int, base string) {
 			defer wg.Done()
-			kinds[i] = Identify(ctx, base)
+			kinds[i] = identify(ctx, base)
 		}(i, base)
 	}
 	wg.Wait()
@@ -156,7 +156,7 @@ func discoverBases(ctx context.Context, bases []string) []Provider {
 
 // Attach builds a provider for an explicit URL, identifying its kind first.
 func Attach(ctx context.Context, base string) Provider {
-	if kind := Identify(ctx, base); kind != "" {
+	if kind := identify(ctx, base); kind != "" {
 		return newProvider(kind, base)
 	}
 	return nil
@@ -169,10 +169,10 @@ func newProvider(kind, base string) Provider {
 	return NewOpenAICompat(base, kind, kind)
 }
 
-// Identify returns the provider kind serving base, or "" if none matches.
+// identify returns the provider kind serving base, or "" if none matches.
 // Order matters: specific metrics prefixes first, then engine-specific
 // endpoints, then generic OpenAI probing.
-func Identify(ctx context.Context, base string) string {
+func identify(ctx context.Context, base string) string {
 	if isOmniRoute(ctx, base) {
 		return core.KindOmniRoute
 	}

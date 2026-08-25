@@ -38,7 +38,7 @@ func TestScanTempsPrefersHwmonAndClassifiesGPU(t *testing.T) {
 		"class/thermal/thermal_zone0/temp": "99000", // ignored: hwmon exists
 	})
 
-	temps := ScanTemps(
+	temps := scanTemps(
 		filepath.Join(sysroot, "class/hwmon"),
 		filepath.Join(sysroot, "class/thermal"),
 	)
@@ -58,7 +58,7 @@ func TestScanTempsFallsBackToThermalZones(t *testing.T) {
 		"class/thermal/thermal_zone0/type": "soc_thermal",
 		"class/thermal/thermal_zone0/temp": "45000",
 	})
-	temps := ScanTemps(
+	temps := scanTemps(
 		filepath.Join(sysroot, "class/hwmon"), // empty
 		filepath.Join(sysroot, "class/thermal"),
 	)
@@ -69,7 +69,7 @@ func TestScanTempsFallsBackToThermalZones(t *testing.T) {
 
 func TestScanTempsEmptyDirs(t *testing.T) {
 	root := t.TempDir()
-	if temps := ScanTemps(root, root); len(temps) != 0 {
+	if temps := scanTemps(root, root); len(temps) != 0 {
 		t.Fatalf("expected no temps, got %+v", temps)
 	}
 }

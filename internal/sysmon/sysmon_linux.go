@@ -31,7 +31,7 @@ func init() {
 			s.Load1, s.Load5, s.Load15 = ParseLoadavg(string(b))
 		}
 	}
-	platformTemps = func() []core.TempReading { return ScanTemps(sysHwmon, sysThermal) }
+	platformTemps = func() []core.TempReading { return scanTemps(sysHwmon, sysThermal) }
 	platformCPUModel = cpuModelOnce // /proc/cpuinfo never changes: resolve once
 	platformHost = hostInfoLinux
 }
@@ -216,9 +216,9 @@ func cpuModelLinux() string {
 
 var gpuChips = []string{"amdgpu", "radeon", "nouveau", "nvidia", "i915", "xe"}
 
-// ScanTemps gathers readings, preferring hwmon chips and falling back to
+// scanTemps gathers readings, preferring hwmon chips and falling back to
 // thermal zones only when hwmon yields nothing (they often duplicate).
-func ScanTemps(hwmonRoot, thermalRoot string) []core.TempReading {
+func scanTemps(hwmonRoot, thermalRoot string) []core.TempReading {
 	temps := scanHwmon(hwmonRoot)
 	if len(temps) == 0 {
 		temps = scanThermalZones(thermalRoot)

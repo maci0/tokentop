@@ -26,7 +26,7 @@ sglang:generation_tokens_total 200.0
 
 func TestClassifySGLang(t *testing.T) {
 	var m Metrics
-	classify(ParseProm(sglangFixture), &m)
+	classify(parseProm(sglangFixture), &m)
 	if m.Running != 4 || m.Waiting != 9 {
 		t.Errorf("queues = run:%d wait:%d", m.Running, m.Waiting)
 	}
@@ -61,7 +61,7 @@ nv_inference_pending_request_count{model="trt_llm"} 6
 
 func TestClassifyTriton(t *testing.T) {
 	var m Metrics
-	classify(ParseProm(tritonFixture), &m)
+	classify(parseProm(tritonFixture), &m)
 	if m.Waiting != 6 {
 		t.Errorf("pending = %d, want 6", m.Waiting)
 	}
@@ -78,7 +78,7 @@ func httptestKind(t *testing.T, routes map[string]fakeRoute) string {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	t.Cleanup(srv.Close)
-	return Identify(context.Background(), srv.URL)
+	return identify(context.Background(), srv.URL)
 }
 
 type fakeRoute struct {
