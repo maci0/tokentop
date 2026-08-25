@@ -7,6 +7,7 @@ package agentusage
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -133,5 +134,27 @@ func TestEnableOpenCodeDBReportsAvailability(t *testing.T) {
 	t.Cleanup(func() { EnableOpenCodeDB(false) })
 	if !Supported("opencode") {
 		t.Fatal("enabled means readable")
+	}
+}
+
+// An agent records the directory it was started in, which on macOS is a
+// symlink to the one filepath.EvalSymlinks reports. Both spellings must count.
+func TestOpenCodeDBMatchesUnresolvedDirectories(t *testing.T) {
+	path := opencodeDB(t)
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	addSession(t, path, "s", link) // the session names the path as given
+	withOpenCodeDB(t, path)
+
+	start := time.Now()
+	w := Watch("opencode", link, start)
+	addMessage(t, path, "m1", "s", start.Add(time.Second),
+		`{"role":"assistant","tokens":{"output":42}}`)
+	w.poll(nil)
+	if got := w.Sample().Output; got != 42 {
+		t.Fatalf("output tokens %d, want 42: the unresolved spelling was missed", got)
 	}
 }

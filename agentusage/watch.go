@@ -285,7 +285,10 @@ func home(parts ...string) string {
 type Watcher struct {
 	// src is set for agents whose usage is not in files (opencode). When it
 	// is, every field below that describes file state is unused.
-	src     usageSource
+	src usageSource
+	// dirs are the spellings a source matches against, for agents that record
+	// the directory they were started in rather than its resolved form.
+	dirs    []string
 	ad      adapter
 	tool    string // the agent being followed
 	dir     string // the working directory usage is attributed to
@@ -343,7 +346,7 @@ func (w *Watcher) Read() Sample { return w.Poll() }
 
 func newWatcher(tool, dir string, since time.Time) *Watcher {
 	if src, ok := sourceFor(tool); ok {
-		return &Watcher{src: src, tool: tool, dir: resolveDir(dir), since: since}
+		return &Watcher{src: src, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
 	}
 	adaptersMu.RLock()
 	ad, ok := adapters[tool]
@@ -400,6 +403,22 @@ func resolveDir(dir string) string {
 		abs = resolved
 	}
 	return abs
+}
+
+// dirSpellings lists the paths a review's directory can be recorded under:
+// the resolved one, and the one the caller passed if it differs. On macOS
+// every temporary directory is reached through a symlink, and an agent records
+// whichever spelling it was started with.
+func dirSpellings(dir string) []string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	out := []string{abs}
+	if resolved := resolveDir(dir); resolved != abs {
+		out = append(out, resolved)
+	}
+	return out
 }
 
 // baselineTailBytes bounds the seed read. Cumulative values only grow, so the
@@ -492,7 +511,7 @@ func (w *Watcher) poll(onChange func(Sample)) {
 	if w.src != nil {
 		// A source reports this review's usage in full each time, so there is
 		// no per-file bookkeeping to fold in.
-		v, ok := w.src.read(w.dir, w.since)
+		v, ok := w.src.read(w.dirs, w.since)
 		if !ok {
 			return
 		}
