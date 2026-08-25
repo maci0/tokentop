@@ -15,7 +15,8 @@ const HTML = `<!doctype html>
 <meta property="og:description" content="btop for AI: a terminal dashboard for LLM inference engines and the coding agents hammering them.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://toktop.ai">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<!-- the icon is the h1 cursor block in --accent/--panel, not a placeholder emoji -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2311161d'/><rect x='37' y='25' width='26' height='50' rx='5' fill='%234cc38a'/></svg>">
 <style>
   :root {
     --bg: #0d1117; --panel: #11161d; --line: #222b36;
