@@ -3,7 +3,10 @@ package collector
 import (
 	"context"
 	"errors"
+	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -510,5 +513,89 @@ func TestEmitBlockedSendDoesNotPinMu(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("RecordAgent blocked while emit was parked on a channel send")
+	}
+}
+
+// waitFor polls cond until it holds or the deadline passes; probe completion
+// is asynchronous, so tests must wait rather than sleep-and-hope.
+func waitFor(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal(msg)
+}
+
+// Holding 'p' or stacking --probe on top of it must not pile concurrent
+// generations onto one backend: a probing engine distorts the metrics being
+// watched, and gateway backends bill per generated token. At most one probe
+// runs per backend, and a finished backend re-arms once its sample lands.
+func TestProbeAllSingleFlightPerBackend(t *testing.T) {
+	release := make(chan struct{})
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release // hold the generation open until the test lets it finish
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		io.WriteString(w, "{\"response\":\"one\",\"done\":false}\n"+
+			"{\"response\":\"two\",\"done\":true,\"eval_count\":2,\"eval_duration\":1000000}\n")
+	}))
+	defer srv.Close()
+
+	oldGap := probeWaveGap
+	probeWaveGap = 0 // isolate single-flight from the wave gate
+	defer func() { probeWaveGap = oldGap }()
+
+	c := New([]provider.Provider{&fakeProvider{label: "p", addr: srv.URL}}, time.Second)
+	c.lastModel[srv.URL] = "m"
+
+	c.ProbeAll()
+	waitFor(t, func() bool { return hits.Load() == 1 }, "first wave never reached the engine")
+
+	c.ProbeAll() // first still in flight: this wave must be dropped
+	time.Sleep(30 * time.Millisecond)
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("second wave started while the first was in flight (%d requests)", n)
+	}
+
+	close(release)
+	waitFor(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.probes) == 1
+	}, "in-flight probe never recorded")
+
+	c.ProbeAll() // completed: a fresh generation is allowed
+	waitFor(t, func() bool { return hits.Load() == 2 }, "re-armed backend was never probed again")
+}
+
+// Rapid-fire triggers (a held 'p', a fast --probe ticker) must not launch
+// waves continuously; within one gap only the first wave runs.
+func TestProbeAllWaveGap(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		io.WriteString(w, "{\"response\":\"one\",\"done\":true,\"eval_count\":1,\"eval_duration\":1000000}\n")
+	}))
+	defer srv.Close()
+
+	oldGap := probeWaveGap
+	probeWaveGap = time.Hour // longer than this test can run: only wave #1 passes
+	defer func() { probeWaveGap = oldGap }()
+
+	c := New([]provider.Provider{&fakeProvider{label: "g", addr: srv.URL}}, time.Second)
+	c.lastModel[srv.URL] = "m"
+
+	c.ProbeAll()
+	c.ProbeAll()
+	c.ProbeAll()
+	waitFor(t, func() bool { return hits.Load() == 1 }, "first wave never reached the engine")
+	time.Sleep(30 * time.Millisecond) // long enough for waves 2 and 3 to have fired unchecked
+	if n := hits.Load(); n != 1 {
+		t.Fatalf("gap gate let %d waves reach the engine, want 1", n)
 	}
 }

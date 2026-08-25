@@ -52,6 +52,10 @@ type Collector struct {
 	probes    []core.ProbeSample
 	started   time.Time
 	baseCtx   context.Context // set by Run; bounds ad-hoc probes past shutdown
+
+	probeMu       sync.Mutex      // guards the probe fan-out state below
+	lastProbeWave time.Time       // wave gate: see probeWaveGap
+	probeInflight map[string]bool // "base|model" -> generation running
 }
 
 func New(providers []provider.Provider, interval time.Duration) *Collector {
@@ -59,16 +63,17 @@ func New(providers []provider.Provider, interval time.Duration) *Collector {
 		interval = time.Second
 	}
 	return &Collector{
-		providers: providers,
-		interval:  interval,
-		sysFn:     sysmon.Sample,
-		procFn:    func() []procs.Info { return procSampler.Snapshot() },
-		histOut:   map[string]*timedRing{},
-		histIn:    map[string]*timedRing{},
-		prev:      map[string]prevSample{},
-		lastModel: map[string]string{},
-		kvPct:     map[string]float64{},
-		started:   time.Now(),
+		providers:     providers,
+		interval:      interval,
+		sysFn:         sysmon.Sample,
+		procFn:        func() []procs.Info { return procSampler.Snapshot() },
+		histOut:       map[string]*timedRing{},
+		histIn:        map[string]*timedRing{},
+		prev:          map[string]prevSample{},
+		lastModel:     map[string]string{},
+		kvPct:         map[string]float64{},
+		probeInflight: map[string]bool{},
+		started:       time.Now(),
 	}
 }
 
@@ -440,6 +445,14 @@ func providerKey(p provider.Provider) string {
 	return p.Label()
 }
 
+// probeWaveGap is the minimum spacing between probe waves. The UI's 'p' key
+// auto-repeats when held and the --probe ticker can land on top of a manual
+// wave; without a gate each press stacks another concurrent generation on
+// every backend. Probing distorts the very metrics it measures, and
+// OpenAI-compatible gateways (LiteLLM and friends) may bill every probe
+// token, so waves also never overlap per backend.
+var probeWaveGap = 500 * time.Millisecond
+
 // ProbeAll launches one probe against every known backend, asynchronously.
 // Probes ride the Run context so shutdown cancels in-flight generations
 // instead of leaving them running for the client's full timeout.
@@ -456,9 +469,32 @@ func (c *Collector) ProbeAll() {
 	if ctx == nil { // probed before Run: nothing bounds these but the client timeout
 		ctx = context.Background()
 	}
+
+	now := time.Now()
+	c.probeMu.Lock()
+	if now.Sub(c.lastProbeWave) < probeWaveGap {
+		c.probeMu.Unlock()
+		return
+	}
+	c.lastProbeWave = now
+	var live []probe.Request
 	for _, t := range targets {
+		key := t.Base + "|" + t.Model
+		if c.probeInflight[key] { // one generation per backend at a time
+			continue
+		}
+		c.probeInflight[key] = true
+		live = append(live, t)
+	}
+	c.probeMu.Unlock()
+
+	for _, t := range live {
 		go func(t probe.Request) {
-			c.RecordProbe(probe.Run(ctx, t))
+			s := probe.Run(ctx, t)
+			c.probeMu.Lock()
+			delete(c.probeInflight, t.Base+"|"+t.Model)
+			c.probeMu.Unlock()
+			c.RecordProbe(s)
 		}(t)
 	}
 }
