@@ -354,9 +354,8 @@ func (r *timedRing) push(v float64, now time.Time, interval time.Duration) {
 	if len(r.buf) < core.HistoryLen { // filling: keep appending in order
 		r.buf = append(r.buf, v)
 	} else {
-		if r.head == core.HistoryLen { // just filled: oldest lives at index 0
-			r.head = 0
-		}
+		// head is always in [0, HistoryLen) here: filling leaves it at 0,
+		// and each overwrite below wraps it after incrementing.
 		r.buf[r.head] = v // overwrite the oldest sample
 		r.head++
 		if r.head == core.HistoryLen {

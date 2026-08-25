@@ -23,14 +23,8 @@ func TestAnthropicShapedLine(t *testing.T) {
 	if !ok {
 		t.Fatal("valid JSON was rejected")
 	}
-	if ev.Text != "Fixed the leak in pool.go" {
-		t.Fatalf("text: %q", ev.Text)
-	}
 	if ev.Usage.Output != 120 || ev.Usage.Thinking != 40 || ev.Usage.Input != 900 {
 		t.Fatalf("usage: %+v", ev.Usage)
-	}
-	if ev.Kind != "assistant" {
-		t.Fatalf("kind: %q", ev.Kind)
 	}
 }
 
@@ -45,9 +39,6 @@ func TestGeminiShapedLine(t *testing.T) {
 	if ev.Usage.Output != 17 || ev.Usage.Thinking != 9 || ev.Usage.Total != 76 {
 		t.Fatalf("usage: %+v", ev.Usage)
 	}
-	if !strings.Contains(ev.Text, "done") {
-		t.Fatalf("text: %q", ev.Text)
-	}
 }
 
 func TestOpenAIShapedLine(t *testing.T) {
@@ -59,40 +50,6 @@ func TestOpenAIShapedLine(t *testing.T) {
 	}
 	if ev.Usage.Output != 5 || ev.Usage.Total != 15 {
 		t.Fatalf("usage: %+v", ev.Usage)
-	}
-	if ev.Text != "partial output" {
-		t.Fatalf("text: %q", ev.Text)
-	}
-}
-
-func TestThinkingBlocksAreSeparatedFromOutput(t *testing.T) {
-	line := `{"type":"assistant","message":{"content":[
-		{"type":"thinking","thinking":"the caller already checks nil"},
-		{"type":"text","text":"No change needed."}]}}`
-	ev, ok := parseJSON([]byte(line))
-	if !ok {
-		t.Fatal("valid JSON was rejected")
-	}
-	if ev.Thinking != "the caller already checks nil" {
-		t.Fatalf("thinking: %q", ev.Thinking)
-	}
-	if ev.Text != "No change needed." {
-		t.Fatalf("text: %q", ev.Text)
-	}
-}
-
-func TestThinkingBlockWithPlainTextField(t *testing.T) {
-	// grok emits reasoning deltas as a typed block whose payload is "text".
-	line := `{"type":"stream_event","event":{"type":"reasoning_delta","text":"weighing options"}}`
-	ev, ok := parseJSON([]byte(line))
-	if !ok {
-		t.Fatal("valid JSON was rejected")
-	}
-	if ev.Thinking != "weighing options" {
-		t.Fatalf("thinking: %q, text: %q", ev.Thinking, ev.Text)
-	}
-	if ev.Text != "" {
-		t.Fatalf("reasoning leaked into visible output: %q", ev.Text)
 	}
 }
 
@@ -110,8 +67,8 @@ func TestPlainTextIsNotJSON(t *testing.T) {
 	}
 }
 
-func TestUnknownEnvelopeContributesNothingRatherThanGarbage(t *testing.T) {
-	// A shape nobody anticipated must not invent numbers or text.
+func TestUnknownEnvelopeInventsNoNumbers(t *testing.T) {
+	// A shape nobody anticipated must not invent numbers.
 	line := `{"kind":"progress","phase":"indexing","files":420}`
 	ev, ok := parseJSON([]byte(line))
 	if !ok {
@@ -119,9 +76,6 @@ func TestUnknownEnvelopeContributesNothingRatherThanGarbage(t *testing.T) {
 	}
 	if ev.Usage.Has() {
 		t.Fatalf("invented usage: %+v", ev.Usage)
-	}
-	if !ev.Empty() {
-		t.Fatalf("invented content: %+v", ev)
 	}
 }
 
@@ -132,7 +86,7 @@ func TestDeeplyNestedPayloadDoesNotRunAway(t *testing.T) {
 	if !ok {
 		t.Fatal("valid JSON was rejected")
 	}
-	if strings.Contains(ev.Text, "deep") {
+	if ev.Usage.Has() || ev.Cwd != "" {
 		t.Fatal("walked past the depth limit")
 	}
 }
@@ -147,9 +101,6 @@ func TestResultLineCarriesFinalUsage(t *testing.T) {
 	if ev.Usage.Output != 250 || ev.Usage.Total != 1250 {
 		t.Fatalf("usage: %+v", ev.Usage)
 	}
-	if ev.Kind != "result" {
-		t.Fatalf("kind: %q", ev.Kind)
-	}
 }
 
 // The two shapes below were read out of the shipped binaries themselves
@@ -162,9 +113,6 @@ func TestGrokStreamEventShape(t *testing.T) {
 	ev, ok := parseJSON([]byte(line))
 	if !ok {
 		t.Fatal("valid JSON was rejected")
-	}
-	if ev.Text != "patching pool.go" {
-		t.Fatalf("text: %q", ev.Text)
 	}
 	if ev.Usage.Output != 88 || ev.Usage.Thinking != 31 || ev.Usage.Input != 4096 {
 		t.Fatalf("usage: %+v", ev.Usage)
@@ -225,8 +173,7 @@ func TestAbsurdCountersReportNothing(t *testing.T) {
 	}
 }
 
-// BenchmarkParse measures the per-line cost every stream-mode output line and
-// every transcript record pays.
+// BenchmarkParse measures the per-line cost every transcript record pays.
 func BenchmarkParseJSON(b *testing.B) {
 	line := []byte(`{"type":"assistant","message":{"role":"assistant","content":[
 		{"type":"text","text":"Fixed the leak in pool.go by bounding the ring buffer."}],

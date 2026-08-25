@@ -13,14 +13,14 @@ import (
 
 // Info is one sampled process relevant to engine discovery or accounting.
 type Info struct {
-	PID      int      `json:"pid"`
-	Name     string   `json:"name"` // executable / comm
-	Args     []string `json:"args,omitempty"`
-	RSS      uint64   `json:"rss_bytes,omitempty"`
-	CPUPct   float64  `json:"cpu_pct,omitempty"` // percent of one core
-	PortHint int      `json:"port,omitempty"`    // --port found on the command line
-	Engine   string   `json:"engine,omitempty"`  // matched well-known engine id
-	DefPort  int      `json:"def_port,omitempty"`
+	PID      int
+	Name     string // executable / comm
+	Args     []string
+	RSS      uint64  // resident memory, bytes
+	CPUPct   float64 // percent of one core
+	PortHint int     // --port found on the command line
+	Engine   string  // matched well-known engine id
+	DefPort  int     // the matched engine's default port
 }
 
 // raw is the platform-sampled record before delta math.
