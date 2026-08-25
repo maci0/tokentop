@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -132,12 +133,41 @@ func TestApplyReplacesTargetOnMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fi.Mode().Perm()&0o111 == 0 {
+	// Windows has no execute bit; being in place is all that is asked of it.
+	if runtime.GOOS != "windows" && fi.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("replacement is not executable: %v", fi.Mode())
 	}
 	// No temp files survive a successful install.
 	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(target), ".toktop-update-*"))
 	if len(matches) != 0 {
 		t.Fatalf("temp files left behind: %v", matches)
+	}
+}
+
+// Windows cannot overwrite a running image, so the installer moves it aside
+// first. The path that does that must still end with the new binary in place
+// and the old one out of the way.
+func TestInstallDisplacesTheRunningBinary(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("only Windows displaces the running binary")
+	}
+	dir := t.TempDir()
+	self := filepath.Join(dir, "toktop.exe")
+	if err := os.WriteFile(self, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	next := filepath.Join(dir, "next.exe")
+	if err := os.WriteFile(next, []byte("new"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := install(next, self); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(self)
+	if err != nil || string(body) != "new" {
+		t.Fatalf("installed %q (%v), want the new binary", body, err)
+	}
+	if _, err := os.Stat(self + ".old"); err != nil {
+		t.Fatalf("the displaced binary should be kept until the next update: %v", err)
 	}
 }
