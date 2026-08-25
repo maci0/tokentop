@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 const runTimeout = 2500 * time.Millisecond

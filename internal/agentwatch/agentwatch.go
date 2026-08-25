@@ -4,7 +4,7 @@
 // Package agentwatch reports token throughput for AI coding agents running on
 // this machine.
 //
-// tokentop already accepts agent events pushed over HTTP by a harness that
+// toktop already accepts agent events pushed over HTTP by a harness that
 // cooperates. This is the other half: agents that are simply running, with
 // nobody pushing anything. It finds them, reads the token counts they already
 // write to their own session transcripts, and feeds the same event stream, so
@@ -24,9 +24,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maci0/tokentop/agentusage"
+	"github.com/maci0/toktop/agentusage"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 // Recorder receives the events this watcher produces. It is satisfied by the
@@ -35,7 +35,7 @@ type Recorder interface {
 	RecordAgent(ev core.AgentEvent)
 }
 
-// Engines reports the endpoints tokentop is already measuring, as the URLs the
+// Engines reports the endpoints toktop is already measuring, as the URLs the
 // providers advertise. An agent generating through one of those engines has
 // its tokens counted by the engine already, so this watcher must not add them
 // again: the engine is the closer, more complete source (it sees every client,
@@ -88,7 +88,7 @@ func New(rec Recorder, engines Engines, discoverEvery, readEvery time.Duration) 
 
 // Run follows agents until the context is canceled.
 func (w *Watcher) Run(ctx context.Context) {
-	// Agent definitions let a user name agents tokentop was not built to know
+	// Agent definitions let a user name agents toktop was not built to know
 	// (in-house wrappers, the pi family), including where they keep their
 	// transcripts. A missing file is the normal case.
 	_ = agentusage.LoadDefinitions(agentusage.DefinitionsPath())
@@ -134,7 +134,7 @@ func (w *Watcher) discover() {
 		// A watcher counts only what is written after it attaches, so an agent
 		// already halfway through a task contributes from here on rather than
 		// retroactively. That keeps the rate honest at the cost of the first
-		// part of a session tokentop was not running for.
+		// part of a session toktop was not running for.
 		watch := agentusage.Watch(p.Tool, p.Dir, time.Now())
 		if watch == nil {
 			continue // this agent keeps nothing readable

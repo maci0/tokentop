@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 type proberFunc func()
@@ -311,7 +311,7 @@ func TestStaticFrameRenders(t *testing.T) {
 			PromptTokens: 10, OutputTokens: 5}},
 	}
 	out := StaticFrame(Config{Version: "t"}, snap, 110, 36)
-	for _, want := range []string{"TOKENTOP", "BACKENDS", "ENGINE STATE", "PROBES", "AGENT FEED", "SYS", "llama3"} {
+	for _, want := range []string{"TOKTOP", "BACKENDS", "ENGINE STATE", "PROBES", "AGENT FEED", "SYS", "llama3"} {
 		if !strings.Contains(strip(out), want) {
 			t.Errorf("frame missing %q", want)
 		}

@@ -68,19 +68,19 @@ func captureWarnUnknownEnv(t *testing.T) string {
 
 func TestWarnUnknownEnv(t *testing.T) {
 	t.Run("known variables pass silently", func(t *testing.T) {
-		t.Setenv("TOKENTOP_BEARER", "x")
-		t.Setenv("TOKENTOP_SSH_PASSWORD", "x")
-		t.Setenv("TOKENTOP_COLUMNS", "80")
-		t.Setenv("TOKENTOP_LINES", "24")
+		t.Setenv("TOKTOP_BEARER", "x")
+		t.Setenv("TOKTOP_SSH_PASSWORD", "x")
+		t.Setenv("TOKTOP_COLUMNS", "80")
+		t.Setenv("TOKTOP_LINES", "24")
 		if got := captureWarnUnknownEnv(t); got != "" {
 			t.Fatalf("warnUnknownEnv() printed %q, want silence", got)
 		}
 	})
 	t.Run("misspelled variable is named", func(t *testing.T) {
-		t.Setenv("TOKENTOP_BEARE", "x") // typo: must not be swallowed
+		t.Setenv("TOKTOP_BEARE", "x") // typo: must not be swallowed
 		got := captureWarnUnknownEnv(t)
-		if !strings.Contains(got, "TOKENTOP_BEARE") {
-			t.Fatalf("warnUnknownEnv() printed %q, want mention of TOKENTOP_BEARE", got)
+		if !strings.Contains(got, "TOKTOP_BEARE") {
+			t.Fatalf("warnUnknownEnv() printed %q, want mention of TOKTOP_BEARE", got)
 		}
 	})
 	t.Run("unrelated variables ignored", func(t *testing.T) {
@@ -96,7 +96,7 @@ func TestUsage(t *testing.T) {
 	usage(&buf)
 	got := buf.String()
 	for _, want := range []string{
-		"tokentop -",           // what the tool is
+		"toktop -",             // what the tool is
 		"Usage:",               // invocation line
 		"[ssh://user@host ...", // positional targets documented
 		"Examples:",            // worked examples section
@@ -115,6 +115,7 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		set     map[string]bool
 		demo    bool
 		once    bool
+		agents  bool
 		wantSub string // empty means silence expected
 	}{
 		{name: "seed outside demo warns", set: map[string]bool{"seed": true}, wantSub: "--seed"},
@@ -124,10 +125,13 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		{name: "frames inside once silent", set: map[string]bool{"frames": true}, once: true},
 		{name: "both no-ops warn twice", set: map[string]bool{"seed": true, "frames": true},
 			wantSub: "--seed"},
+		{name: "opencode-db without agents warns", set: map[string]bool{"opencode-db": true},
+			wantSub: "--opencode-db"},
+		{name: "opencode-db with agents silent", set: map[string]bool{"opencode-db": true}, agents: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once) })
+			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents) })
 			if tt.wantSub == "" {
 				if got != "" {
 					t.Fatalf("warnIgnoredFlags() printed %q, want silence", got)

@@ -8,7 +8,7 @@ Dependencies are declared in scripts/requirements.txt (pyte, pillow).
 The capture must come from `tmux capture-pane -e -p` (one line per row,
 escape sequences preserved). Rendering uses the same monospace family the
 dashboard targets (Meslo LG), on the Catppuccin Mocha base the TUI paints.
-Set TOKENTOP_SCREENSHOT_FONT to a regular-weight .ttf when no Meslo build
+Set TOKTOP_SCREENSHOT_FONT to a regular-weight .ttf when no Meslo build
 is installed where the script looks.
 """
 
@@ -68,13 +68,13 @@ def _search(pattern):
 def resolve_fonts():
     """Return (regular, bold) ttf paths for the dashboard's font family.
 
-    TOKENTOP_SCREENSHOT_FONT pins an explicit regular-weight face; its Bold
+    TOKTOP_SCREENSHOT_FONT pins an explicit regular-weight face; its Bold
     sibling is used when present. Otherwise the standard font roots are
     searched, preferring a Nerd Font build of Meslo.
     """
-    if override := os.environ.get("TOKENTOP_SCREENSHOT_FONT"):
+    if override := os.environ.get("TOKTOP_SCREENSHOT_FONT"):
         if not os.path.isfile(override):
-            sys.exit(f"TOKENTOP_SCREENSHOT_FONT: no such file: {override}")
+            sys.exit(f"TOKTOP_SCREENSHOT_FONT: no such file: {override}")
         sibling = override.replace("Regular", "Bold")
         bold = sibling if os.path.isfile(sibling) else override
         return override, bold
@@ -125,7 +125,7 @@ def main():
     if font_path is None:
         sys.exit(
             "no Meslo Nerd Font found; install one or set "
-            "TOKENTOP_SCREENSHOT_FONT to a regular-weight .ttf"
+            "TOKTOP_SCREENSHOT_FONT to a regular-weight .ttf"
         )
     font = ImageFont.truetype(font_path, font_size)
     font_bold = ImageFont.truetype(font_bold_path, font_size)

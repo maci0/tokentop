@@ -80,7 +80,7 @@ func (t Target) userHost() string {
 	return t.User + "@" + t.Host
 }
 
-// sshConfigEntry is the subset of ~/.ssh/config tokentop understands.
+// sshConfigEntry is the subset of ~/.ssh/config toktop understands.
 type sshConfigEntry struct {
 	User         string
 	HostName     string

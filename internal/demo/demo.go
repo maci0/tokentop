@@ -1,4 +1,4 @@
-// Package demo simulates a small inference fleet so tokentop has something to
+// Package demo simulates a small inference fleet so toktop has something to
 // show without any real backends. Deterministic per seed.
 package demo
 
@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 type backend struct {

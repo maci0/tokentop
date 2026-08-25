@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
-	"github.com/maci0/tokentop/internal/provider"
+	"github.com/maci0/toktop/internal/core"
+	"github.com/maci0/toktop/internal/provider"
 )
 
 type fakeProvider struct {

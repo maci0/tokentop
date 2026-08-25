@@ -197,7 +197,7 @@ func TestDefaultKeyPathsAndAuthChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, err := ssh.MarshalPrivateKey(priv, "tokentop test")
+	block, err := ssh.MarshalPrivateKey(priv, "toktop test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestDefaultKeyPathsAndAuthChain(t *testing.T) {
 // password and keyboard-interactive legs of one connection chain share it
 // instead of re-reading the environment or prompting twice.
 func TestPasswordSourceEnvWinsAndAsksOnce(t *testing.T) {
-	t.Setenv("TOKENTOP_SSH_PASSWORD", "sekrit")
+	t.Setenv("TOKTOP_SSH_PASSWORD", "sekrit")
 	tgt := Target{User: "u", Host: "h", Port: 22}
 	ps := &passwordSource{}
 
@@ -234,18 +234,18 @@ func TestPasswordSourceEnvWinsAndAsksOnce(t *testing.T) {
 	if err != nil || pw != "sekrit" {
 		t.Fatalf("first get = %q, %v", pw, err)
 	}
-	t.Setenv("TOKENTOP_SSH_PASSWORD", "") // env gone after the first ask
+	t.Setenv("TOKTOP_SSH_PASSWORD", "") // env gone after the first ask
 	pw, err = ps.get(tgt)
 	if err != nil || pw != "sekrit" {
 		t.Errorf("cached answer lost: %q, %v", pw, err)
 	}
 }
 
-// Without TOKENTOP_SSH_PASSWORD and without a terminal there is no way to
+// Without TOKTOP_SSH_PASSWORD and without a terminal there is no way to
 // prompt: get must fail naming the env var, and cache that failure instead
 // of retrying (or blocking) for every auth mechanism in the chain.
 func TestPasswordSourceHeadlessFailureCached(t *testing.T) {
-	t.Setenv("TOKENTOP_SSH_PASSWORD", "")
+	t.Setenv("TOKTOP_SSH_PASSWORD", "")
 
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -258,7 +258,7 @@ func TestPasswordSourceHeadlessFailureCached(t *testing.T) {
 	ps := &passwordSource{}
 	tgt := Target{}
 	_, err = ps.get(tgt)
-	if err == nil || !strings.Contains(err.Error(), "TOKENTOP_SSH_PASSWORD") {
+	if err == nil || !strings.Contains(err.Error(), "TOKTOP_SSH_PASSWORD") {
 		t.Fatalf("headless get err = %v, want guidance naming the env var", err)
 	}
 	_, err = ps.get(tgt)

@@ -7,24 +7,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 const vitalsDump = `3.10 2.20 1.05 4/900 12345
-%tokentop%
+%toktop%
 MemTotal:       16096680 kB
 MemAvailable:   8000000 kB
 SwapTotal:       2000000 kB
 SwapFree:        1000000 kB
-%tokentop%
+%toktop%
 183729.42 712000.11
-%tokentop%
+%toktop%
 AMD Ryzen 9 7950X 16-Core Processor
-%tokentop%
+%toktop%
 "Debian GNU/Linux 12 (bookworm)"
-%tokentop%
+%toktop%
 6.1.0-18-amd64
-%tokentop%
+%toktop%
 0, NVIDIA GeForce RTX 4090, 54, 12345, 24564, 97, 410.2, 550.54.15
 1, NVIDIA A100-SXM4-40GB, 61, 30000, 40960, 80, 250.0, [N/A]
 `
@@ -77,7 +77,7 @@ func TestParseVitals(t *testing.T) {
 func TestParseVitalsPartial(t *testing.T) {
 	var s core.SysSample
 	s.CPUModel = "keep me"
-	parseVitals("\n%tokentop%\n%tokentop%\n%tokentop%\n%tokentop%\n%tokentop%\n%tokentop%\n", &s)
+	parseVitals("\n%toktop%\n%toktop%\n%toktop%\n%toktop%\n%toktop%\n%toktop%\n", &s)
 	if s.CPUModel != "keep me" || s.OsName != "" || s.Kernel != "" || len(s.GPUs) != 0 {
 		t.Errorf("empty sections must not clobber: %+v", s)
 	}

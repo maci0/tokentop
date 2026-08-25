@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/maci0/tokentop/internal/core"
+	"github.com/maci0/toktop/internal/core"
 )
 
 // recorder collects what the watcher reports.
@@ -39,7 +39,7 @@ func (r *recorder) all() []core.AgentEvent {
 
 // TestWatchesARunningAgent is the whole feature in one test: a process that
 // looks like claude is running somewhere, it writes tokens into its own
-// transcript, and tokentop reports them without anyone pushing anything.
+// transcript, and toktop reports them without anyone pushing anything.
 func TestWatchesARunningAgent(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("discovery reads /proc")
@@ -54,7 +54,7 @@ func TestWatchesARunningAgent(t *testing.T) {
 	}
 
 	// A process named like the agent, working in the directory the transcript
-	// claims. Nothing about it cooperates with tokentop.
+	// claims. Nothing about it cooperates with toktop.
 	bin := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\nsleep 5\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -208,7 +208,7 @@ func waitFor(t *testing.T, limit time.Duration, cond func() bool) {
 }
 
 // TestEngineTakesPrecedence is the double-counting guard: an agent generating
-// through an engine tokentop already measures must not add its tokens on top
+// through an engine toktop already measures must not add its tokens on top
 // of the engine's. It stays visible, with a note saying where its output is
 // being counted.
 func TestEngineTakesPrecedence(t *testing.T) {

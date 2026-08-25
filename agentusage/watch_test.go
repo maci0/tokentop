@@ -355,3 +355,52 @@ func TestDirPlaceholderInDefinedRoots(t *testing.T) {
 		t.Fatalf("output tokens %d, want 77", got)
 	}
 }
+
+// GitHub Copilot CLI records the working directory once, in the session.start
+// event, and the usage on later assistant.message events.
+func TestCopilotCliEventsAreRead(t *testing.T) {
+	store := withStore(t, "copilot")
+	work := t.TempDir()
+	path := copilotSession(t, store, "sess-1", work)
+
+	w := Watch("copilot", work, time.Now())
+	if w == nil {
+		t.Fatal("copilot should be readable")
+	}
+	append_(t, path,
+		`{"type":"assistant.message","id":"e1","data":{"messageId":"m1","usage":{"prompt_tokens":900,"completion_tokens":120,"total_tokens":1020}}}`,
+		`{"type":"assistant.message","id":"e2","data":{"messageId":"m2","usage":{"prompt_tokens":940,"completion_tokens":80,"total_tokens":1100}}}`)
+	w.poll(nil)
+	if got := w.Sample().Output; got != 200 {
+		t.Fatalf("output tokens %d, want 200 (120+80)", got)
+	}
+}
+
+// Another project's Copilot session must not land in this review.
+func TestCopilotCliIgnoresOtherProjects(t *testing.T) {
+	store := withStore(t, "copilot")
+	work, other := t.TempDir(), t.TempDir()
+	mine := copilotSession(t, store, "mine", work)
+	theirs := copilotSession(t, store, "theirs", other)
+
+	w := Watch("copilot", work, time.Now())
+	append_(t, mine, `{"type":"assistant.message","data":{"usage":{"completion_tokens":70}}}`)
+	append_(t, theirs, `{"type":"assistant.message","data":{"usage":{"completion_tokens":5000}}}`)
+	w.poll(nil)
+	if got := w.Sample().Output; got != 70 {
+		t.Fatalf("output tokens %d, want 70: another project's session leaked in", got)
+	}
+}
+
+// copilotSession starts one session directory with its session.start header
+// and returns the events file to append to.
+func copilotSession(t *testing.T, store, name, cwd string) string {
+	t.Helper()
+	dir := filepath.Join(store, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "events.jsonl")
+	append_(t, path, `{"type":"session.start","id":"e0","data":{"sessionId":"s","context":{"cwd":`+jsonPath(cwd)+`}}}`)
+	return path
+}

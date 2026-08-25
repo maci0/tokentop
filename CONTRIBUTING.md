@@ -1,4 +1,4 @@
-# Contributing to tokentop
+# Contributing to toktop
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@
   if your gauntlet checkout lives elsewhere, point the `replace` line at the
   bottom of `go.mod` at it. Until that module is published, hosted CI fails
   at module resolution for the same reason. Mind the license asymmetry while
-  this stands: tokentop is MIT, but gauntlet-go is AGPL-3.0-or-later, so a
+  this stands: toktop is MIT, but gauntlet-go is AGPL-3.0-or-later, so a
   binary built with agent watching enabled is an AGPL-covered combined work
   regardless of what `LICENSE` says. Distributing binaries before that module
   is published (or rewritten under MIT) means distributing AGPL code.
@@ -23,7 +23,7 @@
 ## Quickstart
 
 ```
-git clone https://github.com/maci0/tokentop && cd tokentop
+git clone https://github.com/maci0/toktop && cd toktop
 make test        # all tests, race detector, shuffled order
 make demo        # build and run against a simulated fleet
 ```
@@ -40,8 +40,8 @@ go test -race ./internal/core -run TestSanitizeTextPreservesUTF8
 To see the dashboard render without an interactive terminal:
 
 ```
-./tokentop --demo --once --frames 2
-TOKENTOP_COLUMNS=120 TOKENTOP_LINES=38 ./tokentop --demo --once   # fixed size, for screenshots
+./toktop --demo --once --frames 2
+TOKTOP_COLUMNS=120 TOKTOP_LINES=38 ./toktop --demo --once   # fixed size, for screenshots
 ```
 
 While a TUI instance runs, rebuilding the binary restarts it into the fresh

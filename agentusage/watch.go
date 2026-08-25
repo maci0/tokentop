@@ -138,6 +138,18 @@ var adapters = map[string]adapter{
 		kind:   perMessage,
 		parse:  parseGeneric,
 	},
+	// GitHub Copilot CLI appends one event per line to
+	// ~/.copilot/session-state/<session>/events.jsonl. Only the opening
+	// session.start record carries the working directory (under
+	// data.context.cwd); the assistant.message records carry OpenAI-shaped
+	// usage, which the generic parser already reads.
+	"copilot": {
+		roots:      func(string) []string { return []string{home(".copilot", "session-state")} },
+		suffix:     "events.jsonl",
+		kind:       perMessage,
+		parse:      parseGeneric,
+		sessionCwd: genericSessionCwd,
+	},
 	"codex": {
 		roots:      func(string) []string { return []string{home(".codex", "sessions")} },
 		suffix:     ".jsonl",
@@ -245,6 +257,9 @@ func genericSessionCwd(line []byte) (string, bool) {
 
 // Supported reports whether live usage can be read for an agent.
 func Supported(tool string) bool {
+	if _, ok := sourceFor(tool); ok {
+		return true
+	}
 	adaptersMu.RLock()
 	_, ok := adapters[tool]
 	adaptersMu.RUnlock()
@@ -268,6 +283,9 @@ func home(parts ...string) string {
 
 // Watcher tails one agent's transcripts for one review.
 type Watcher struct {
+	// src is set for agents whose usage is not in files (opencode). When it
+	// is, every field below that describes file state is unused.
+	src     usageSource
 	ad      adapter
 	tool    string // the agent being followed
 	dir     string // the working directory usage is attributed to
@@ -324,6 +342,9 @@ func (w *Watcher) Dir() string {
 func (w *Watcher) Read() Sample { return w.Poll() }
 
 func newWatcher(tool, dir string, since time.Time) *Watcher {
+	if src, ok := sourceFor(tool); ok {
+		return &Watcher{src: src, tool: tool, dir: resolveDir(dir), since: since}
+	}
 	adaptersMu.RLock()
 	ad, ok := adapters[tool]
 	adaptersMu.RUnlock()
@@ -343,15 +364,8 @@ func newWatcher(tool, dir string, since time.Time) *Watcher {
 			return nil
 		}
 	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		abs = dir
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
 	w := &Watcher{
-		ad: ad, tool: tool, dir: abs, since: since,
+		ad: ad, tool: tool, dir: resolveDir(dir), since: since,
 		offsets: map[string]int64{}, preexisting: map[string]bool{}, mtimes: map[string]int64{},
 		owner: map[string]bool{}, base: map[string]int{}, baseThink: map[string]int{},
 		seen: map[string]values{}, total: map[string]int{},
@@ -373,6 +387,19 @@ func newWatcher(tool, dir string, since time.Time) *Watcher {
 		}
 	}
 	return w
+}
+
+// resolveDir is the form a working directory is compared in: absolute, with
+// symlinks resolved, since that is what agents record.
+func resolveDir(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	return abs
 }
 
 // baselineTailBytes bounds the seed read. Cumulative values only grow, so the
@@ -461,16 +488,26 @@ func (w *Watcher) Sample() Sample {
 func (w *Watcher) poll(onChange func(Sample)) {
 	w.pollMu.Lock()
 	defer w.pollMu.Unlock()
-	for _, path := range w.candidates() {
-		w.readNew(path)
-	}
 	var out, thinking, total int
-	for _, v := range w.seen {
-		out += v.output
-		thinking += v.thinking
-	}
-	for _, v := range w.total {
-		total += v
+	if w.src != nil {
+		// A source reports this review's usage in full each time, so there is
+		// no per-file bookkeeping to fold in.
+		v, ok := w.src.read(w.dir, w.since)
+		if !ok {
+			return
+		}
+		out, thinking, total = v.output, v.thinking, v.total
+	} else {
+		for _, path := range w.candidates() {
+			w.readNew(path)
+		}
+		for _, v := range w.seen {
+			out += v.output
+			thinking += v.thinking
+		}
+		for _, v := range w.total {
+			total += v
+		}
 	}
 	w.mu.Lock()
 	grew := out > w.sample.Output || total > w.sample.Total || thinking > w.sample.Thinking
