@@ -13,6 +13,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -34,33 +35,24 @@ jobs:
 
       - name: build all platforms
         id: build
-        env:
-          LDFLAGS: "-s -w -X main.version=${GITHUB_REF_NAME#v}"
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          OUT=dist
-          mkdir -p "$OUT"
-          for target in \
-            linux/amd64 linux/arm64 \
-            darwin/amd64 darwin/arm64 \
-            windows/amd64; do
-            goos=${target%/*}
-            goarch=${target#*/}
-            ext=""
-            [ "$goos" = "windows" ] && ext=".exe"
-            name="tokentop_${VERSION}_${goos}_${goarch}${ext}"
-            echo "building $name"
-            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-              go build -trimpath -ldflags "$LDFLAGS" -o "$OUT/$name" ./cmd/tokentop
-            ( cd "$OUT" && sha256sum "$name" >> checksums.txt )
-          done
-          ( cd "$OUT" && sha256sum -c checksums.txt )
+          # platform list lives in one place: the Makefile
+          make test-dist VERSION="$VERSION"
+          (
+            cd dist
+            sha256sum tokentop_* > checksums.txt
+            sha256sum -c checksums.txt
+          )
           # smoke test the host-platform artifact: proves the binary runs and
           # carries the release version, not the default stamp
           echo "smoke test: tokentop_${VERSION}_linux_amd64"
           test "$("./dist/tokentop_${VERSION}_linux_amd64" --version)" = "tokentop $VERSION"
-          ( cd "$OUT" && tar czf "tokentop_${VERSION}_checksums.tar.gz" checksums.txt && rm checksums.txt )
+          (
+            cd dist
+            tar czf "tokentop_${VERSION}_checksums.tar.gz" checksums.txt && rm checksums.txt
+          )
 
       - name: generate dependency sbom
         run: make sbom VERSION="${GITHUB_REF_NAME#v}"
@@ -69,4 +61,5 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: dist/*

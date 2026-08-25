@@ -96,4 +96,5 @@ test-dist: ## build every release platform without packaging
 
 .PHONY: install
 install: build ## install into ~/.local/bin
+	mkdir -p ~/.local/bin
 	install -m 0755 $(BINARY) ~/.local/bin/$(BINARY)
