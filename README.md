@@ -45,7 +45,9 @@ build without the driver says so on stderr rather than reporting a silent zero.
 
 Reading is done by this repo's own `agentusage` package, which gauntlet also
 imports, so both tools report the same numbers. Agents defined in
-`~/.gauntlet/agents.json` are picked up here too.
+`~/.gauntlet/agents.json` are picked up here too; a malformed file is reported
+at startup rather than silently shrinking the watch to the built-in agents.
+Set `GAUNTLET_HOME` to read that file from somewhere else.
 
 ## What it shows
 
@@ -104,6 +106,11 @@ is recorded, `400` for malformed JSON or a bad `ts`, `408` when a stream
 stalls mid-body, and `413` past the 1 MiB body cap. Error bodies are short
 plain-text reasons; unknown fields are ignored, so harnesses can include
 their own.
+
+Streams are recorded line by line: if a later line fails, events before it
+stay recorded and the error states how many, so a retry should resume after
+the failing line rather than replay the whole stream (replaying would
+duplicate the kept events).
 
 ## Zero vendor libraries
 
@@ -193,8 +200,8 @@ technology:
 --add URL         attach an openai-compatible endpoint (repeatable)
 ssh://user@host   positional; monitor remote hosts (repeatable)
 --ssh-key PATH    private key for ssh targets (overrides ~/.ssh/config)
---bearer TOKEN    bearer token sent to engines; OmniRoute API keys etc.
-                  (env: OMNIROUTE_API_KEY, then TOKTOP_BEARER)
+--bearer TOKEN    bearer token sent to --add endpoints only; OmniRoute API
+                  keys etc. (env: OMNIROUTE_API_KEY, then TOKTOP_BEARER)
 --probe N         auto-probe every N seconds
 --interval D      poll interval (default 1s)
 --ingest ADDR     agent event listen address (default 127.0.0.1:8420)
@@ -216,14 +223,21 @@ Password auth for ssh targets: interactive prompt, or `TOKTOP_SSH_PASSWORD`.
 | `OMNIROUTE_API_KEY` | bearer token fallback for `--bearer` (checked first) |
 | `TOKTOP_BEARER` | bearer token fallback for `--bearer` (checked after `OMNIROUTE_API_KEY`) |
 | `TOKTOP_SSH_PASSWORD` | ssh password for headless runs; otherwise an interactive prompt |
-| `TOKTOP_COLUMNS` / `TOKTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20 |
+| `TOKTOP_COLUMNS` / `TOKTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20, and a set-but-invalid value aborts with exit code 2 |
+| `GITHUB_TOKEN` | optional; authenticates `toktop update`'s GitHub API calls past the anonymous rate limit |
+| `GAUNTLET_HOME` | directory holding `agents.json` (default `~/.gauntlet`) |
 
 The flag always wins over its env fallback. Prefer an env var over
 `--bearer` for tokens: command-line arguments are visible in process
-listings to every user on the host. Unknown `TOKTOP_*` variables are
+listings to every user on the host. The token travels only to endpoints
+named with `--add`; engines found by port scanning receive no credentials,
+so a hostile listener on a probed port cannot collect your gateway key.
+An endpoint that needs the key must be attached explicitly, e.g.
+`toktop --add http://127.0.0.1:20128`. Unknown `TOKTOP_*` variables are
 reported at startup, so a typo fails loudly instead of doing nothing.
 Out-of-range flag values (`--interval 0`, negative `--probe`, `--frames < 1`
-with `--once`) abort with exit code 2 instead of being silently adjusted.
+with `--once`) abort with exit code 2 instead of being silently adjusted;
+so do out-of-range `TOKTOP_COLUMNS` / `TOKTOP_LINES` when `--once` renders.
 
 ## Build & test
 

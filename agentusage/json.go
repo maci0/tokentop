@@ -1,12 +1,8 @@
 // Copyright (C) 2026 Marcel W. Wysocki
 // SPDX-License-Identifier: MIT
 
-// Package streamjson reads the machine-readable output modes agent CLIs offer.
-//
-// Most agents can emit JSONL instead of prose (`--output-format stream-json`
-// and its variants). That stream carries three things gauntlet wants and the
-// text mode hides: token usage as it accrues, the split between reasoning and
-// visible output, and clean text free of spinners and escape codes.
+// Package streamjson reads token usage out of the JSONL transcripts agent CLIs
+// already write to disk.
 //
 // The envelopes differ per agent and change between releases, so this does not
 // model any one of them. It walks the decoded JSON and picks up values by key,
@@ -24,16 +20,9 @@ import (
 
 // jsonEvent is what one JSON line contributed.
 type jsonEvent struct {
-	// Text is visible assistant output, already concatenated.
-	Text string
-	// Thinking is reasoning output, which agents mark separately.
-	Thinking string
 	// Usage is any token counters found on the line. Absent counters stay at
 	// zero, and Has reports whether anything was found at all.
 	Usage jsonUsage
-	// Kind labels the record when the agent names it (assistant, tool_use,
-	// result, error). Empty when the line does not say.
-	Kind string
 	// Cwd is the working directory the record was produced in, when the agent
 	// records one. Transcripts use it to attribute a session to a review.
 	Cwd string
@@ -51,9 +40,6 @@ type jsonUsage struct {
 
 // Has reports whether any counter was found.
 func (u jsonUsage) Has() bool { return u.Output > 0 || u.Total > 0 || u.Input > 0 || u.Thinking > 0 }
-
-// Empty reports whether the line contributed nothing at all.
-func (e jsonEvent) Empty() bool { return e.Text == "" && e.Thinking == "" && !e.Usage.Has() }
 
 // Keys recognized as token counters, mapped onto the fields above. These are
 // the names used by the Anthropic, OpenAI, and Gemini shaped APIs, which every
@@ -76,12 +62,6 @@ var (
 		"input_tokens": true, "inputtokens": true, "prompt_tokens": true,
 		"prompttokens": true, "prompttokencount": true, "input": true,
 	}
-	// Fields whose string value is visible assistant text.
-	textKeys = map[string]bool{"text": true, "content": true, "delta": true, "message": true}
-	// Fields whose string value is reasoning output.
-	thinkingTextKeys = map[string]bool{
-		"thinking": true, "reasoning": true, "thought": true, "reasoning_content": true,
-	}
 	// Fields naming the working directory a record belongs to.
 	cwdKeys = map[string]bool{
 		"cwd": true, "working_directory": true, "workingdirectory": true,
@@ -89,11 +69,13 @@ var (
 	}
 )
 
-// Parse reads one line of an agent's JSON stream. ok is false when the line is
-// not JSON at all, which is how a caller knows to treat it as plain text.
+// parseJSON reads one line of an agent's transcript. ok is false when the line
+// is not a JSON object at all, which is how a caller knows the line carries
+// nothing this package reads.
 //
-// This runs once per output line, so nothing here copies the line: TrimSpace
-// slices it, and json.Unmarshal neither retains nor modifies its input.
+// This runs once per transcript record, so nothing here copies the line:
+// TrimSpace slices it, and json.Unmarshal neither retains nor modifies its
+// input.
 func parseJSON(line []byte) (jsonEvent, bool) {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
@@ -104,10 +86,7 @@ func parseJSON(line []byte) (jsonEvent, bool) {
 		return jsonEvent{}, false
 	}
 	var ev jsonEvent
-	var text, thinking strings.Builder
-	walk(doc, &ev, &text, &thinking, 0, false)
-	ev.Text = strings.TrimRight(text.String(), "\n")
-	ev.Thinking = strings.TrimRight(thinking.String(), "\n")
+	walk(doc, &ev, 0)
 	return ev, true
 }
 
@@ -115,61 +94,36 @@ func parseJSON(line []byte) (jsonEvent, bool) {
 // is a tool result payload, whose contents are not this package's business.
 const maxDepth = 8
 
-// walk descends one decoded line. The rule that makes this envelope-agnostic:
-// a text-ish key contributes text only when its value is a string, and any
-// container is descended into instead. That way "message" or "content" can be
-// a string in one agent's dialect and an object holding usage counters in
-// another's, and both work.
-//
-// inThinking is inherited: once inside a reasoning block, the plain text of
-// every nested part is reasoning too.
-func walk(node any, ev *jsonEvent, text, thinking *strings.Builder, depth int, inThinking bool) {
+// walk descends one decoded line collecting usage counters and the recorded
+// working directory. The rule that makes this envelope-agnostic: recognized
+// keys contribute their values wherever they sit in the tree, so "message"
+// wrapping "usage" in one agent's dialect and a flat "usageMetadata" in
+// another's both work.
+func walk(node any, ev *jsonEvent, depth int) {
 	if depth > maxDepth {
 		return
 	}
 	switch v := node.(type) {
 	case map[string]any:
-		if t, ok := v["type"].(string); ok && ev.Kind == "" {
-			ev.Kind = t
-		}
-		thinkingHere := inThinking || isThinkingBlock(v)
 		for k, child := range v {
 			lower := strings.ToLower(k)
-			str, isString := child.(string)
-			switch {
-			case isString && cwdKeys[lower]:
-				if ev.Cwd == "" {
+			if str, isString := child.(string); isString {
+				if cwdKeys[lower] && ev.Cwd == "" {
 					ev.Cwd = str
 				}
-			case isString && thinkingTextKeys[lower]:
-				appendText(thinking, str)
-			case isNumberKey(lower):
-				assign(ev, lower, child)
-			case isString && textKeys[lower]:
-				if thinkingHere {
-					appendText(thinking, str)
-				} else {
-					appendText(text, str)
-				}
-			case isString:
-				// Some other string field: not content, not a counter.
-			default:
-				walk(child, ev, text, thinking, depth+1, thinkingHere)
+				continue // other string fields are not content, not a counter
 			}
+			if isNumberKey(lower) {
+				assign(ev, lower, child)
+				continue
+			}
+			walk(child, ev, depth+1)
 		}
 	case []any:
 		for _, child := range v {
-			walk(child, ev, text, thinking, depth+1, inThinking)
+			walk(child, ev, depth+1)
 		}
 	}
-}
-
-// isThinkingBlock reports whether a record is a reasoning block, so the plain
-// text inside it is read as reasoning rather than as visible output.
-func isThinkingBlock(v map[string]any) bool {
-	t, _ := v["type"].(string)
-	t = strings.ToLower(t)
-	return strings.Contains(t, "thinking") || strings.Contains(t, "reasoning")
 }
 
 func isNumberKey(lower string) bool {
@@ -193,16 +147,6 @@ func assign(ev *jsonEvent, lower string, val any) {
 	case inputKeys[lower]:
 		ev.Usage.Input = max(ev.Usage.Input, n)
 	}
-}
-
-func appendText(into *strings.Builder, s string) {
-	if s == "" {
-		return
-	}
-	if into.Len() > 0 {
-		into.WriteString("\n")
-	}
-	into.WriteString(s)
 }
 
 func asInt(v any) (int, bool) {

@@ -32,8 +32,17 @@ jobs:
           if [ -n "$unformatted" ]; then
             echo "needs gofmt -s:"; echo "$unformatted"; exit 1
           fi
+      # staticcheck resolves build tags per GOOS, so every runner analyzes its
+      # own platform-specific files; the linux pass plus the matrix below
+      # together cover all of them.
+      - name: staticcheck
+        run: |
+          go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
+          go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 -tags sqlite ./agentusage/...
       - name: vet
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet -tags sqlite ./agentusage/...
       - name: govulncheck (linux only; source-level analysis is platform-independent)
         if: runner.os == 'Linux'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
@@ -61,11 +70,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: vet ${{ matrix.goos }}/${{ matrix.goarch }} (platform-specific files)
+      - name: install staticcheck (host binary; GOOS picks the analyzed platform)
+        run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.1
+      - name: vet and staticcheck ${{ matrix.goos }}/${{ matrix.goarch }} (platform-specific files)
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet -tags sqlite ./agentusage/...
+          staticcheck ./...
+          staticcheck -tags sqlite ./agentusage/...
       - name: compile ${{ matrix.goos }}/${{ matrix.goarch }}
         env:
           GOOS: ${{ matrix.goos }}

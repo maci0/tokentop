@@ -9,17 +9,25 @@ import (
 	"github.com/maci0/toktop/internal/core"
 )
 
-func collectOne(s *Source) core.Snapshot {
+func collectOne(t *testing.T, s *Source) core.Snapshot {
+	t.Helper()
 	ch := make(chan core.Snapshot, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go s.Run(ctx, ch)
-	return <-ch
+	select {
+	case snap := <-ch:
+		return snap
+	// A bound keeps a stalled source from hanging the whole suite.
+	case <-time.After(5 * time.Second):
+		t.Fatal("demo source produced no snapshot")
+		return core.Snapshot{}
+	}
 }
 
 func TestDeterministicPerSeed(t *testing.T) {
-	a := collectOne(NewSource(10*time.Millisecond, 7))
-	b := collectOne(NewSource(10*time.Millisecond, 7))
+	a := collectOne(t, NewSource(10*time.Millisecond, 7))
+	b := collectOne(t, NewSource(10*time.Millisecond, 7))
 	if len(a.Providers) == 0 || len(a.Providers) != len(b.Providers) {
 		t.Fatalf("provider count mismatch: %d vs %d", len(a.Providers), len(b.Providers))
 	}
@@ -41,7 +49,7 @@ func TestDeterministicPerSeed(t *testing.T) {
 }
 
 func TestSysSamplePresent(t *testing.T) {
-	snap := collectOne(NewSource(10*time.Millisecond, 5))
+	snap := collectOne(t, NewSource(10*time.Millisecond, 5))
 	if snap.Sys == nil {
 		t.Fatal("demo snapshot missing Sys")
 	}

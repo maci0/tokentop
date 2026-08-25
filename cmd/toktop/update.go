@@ -13,6 +13,26 @@ import (
 	"github.com/maci0/toktop/internal/selfupdate"
 )
 
+// updateUsage prints the subcommand's help screen to w. Error paths send it
+// to stderr; -h/--help sends it to stdout so piping works (`toktop update
+// --help | grep repo`), matching how the top-level command treats --help.
+func updateUsage(w io.Writer, fs *flag.FlagSet) {
+	prev := fs.Output()
+	fs.SetOutput(w)
+	defer fs.SetOutput(prev)
+	fmt.Fprint(w, `toktop update - install the latest release
+
+Usage:
+  toktop update [--check] [--repo owner/name]
+
+The download is verified against the release's checksums before anything is
+replaced; a mismatch leaves the running binary untouched.
+
+Flags:
+`)
+	fs.PrintDefaults()
+}
+
 // runUpdate implements `toktop update`, which replaces this binary with the
 // latest release after verifying its checksum.
 //
@@ -24,24 +44,22 @@ func runUpdate(ctx context.Context, out io.Writer, args []string) int {
 	fs.SetOutput(os.Stderr)
 	check := fs.Bool("check", false, "report the latest release without installing it")
 	repo := fs.String("repo", selfupdate.DefaultRepo, "GitHub repository to fetch releases from")
-	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `toktop update - install the latest release
-
-Usage:
-  toktop update [--check] [--repo owner/name]
-
-The download is verified against the release's checksums before anything is
-replaced; a mismatch leaves the running binary untouched.
-
-Flags:
-`)
-		fs.PrintDefaults()
-	}
+	var showHelp bool
+	fs.BoolVar(&showHelp, "help", false, "show help and exit")
+	fs.BoolVar(&showHelp, "h", false, "shorthand for --help")
+	// Defining -h/--help as real flags keeps the flag package from treating
+	// them as a parse error, so they can land on stdout with exit 0 the way
+	// the top-level command's --help does.
+	fs.Usage = func() { updateUsage(os.Stderr, fs) }
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if showHelp {
+		updateUsage(out, fs)
+		return 0
+	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(os.Stderr, "toktop update: unexpected argument %q\n", fs.Arg(0))
+		fmt.Fprintf(os.Stderr, "toktop update: unexpected argument %q (see 'toktop update --help')\n", fs.Arg(0))
 		return 2
 	}
 

@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/maci0/toktop/agentusage"
 )
 
 func TestValidateFlags(t *testing.T) {
@@ -91,6 +97,83 @@ func TestWarnUnknownEnv(t *testing.T) {
 	})
 }
 
+func TestValidateOnceEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		columns string
+		lines   string
+		wantErr string // empty means silence expected
+	}{
+		{name: "unset passes"},
+		{name: "empty means unset", columns: "", lines: ""},
+		{name: "typical values pass", columns: "120", lines: "38"},
+		{name: "floors accepted", columns: "41", lines: "21"},
+		{name: "below floor rejected", columns: "40", wantErr: "TOKTOP_COLUMNS"},
+		{name: "not a number rejected", lines: "full-hd", wantErr: "TOKTOP_LINES"},
+		{name: "negative rejected", columns: "-1", wantErr: "TOKTOP_COLUMNS"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TOKTOP_COLUMNS", tt.columns)
+			t.Setenv("TOKTOP_LINES", tt.lines)
+			err := validateOnceEnv()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateOnceEnv() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateOnceEnv() = %v, want error mentioning %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// writeAgentsJSON points GAUNTLET_HOME at a temp dir holding the given file
+// body ("" writes nothing, leaving agents.json absent).
+func writeAgentsJSON(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if body != "" {
+		path := filepath.Join(dir, "agents.json")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestLoadAgentDefs(t *testing.T) {
+	t.Run("missing file is silent", func(t *testing.T) {
+		t.Setenv("GAUNTLET_HOME", writeAgentsJSON(t, ""))
+		if got := captureStderr(t, loadAgentDefs); got != "" {
+			t.Fatalf("loadAgentDefs() printed %q, want silence", got)
+		}
+	})
+
+	t.Run("malformed file names itself and names the consequence", func(t *testing.T) {
+		t.Setenv("GAUNTLET_HOME", writeAgentsJSON(t, "{oops"))
+		got := captureStderr(t, loadAgentDefs)
+		for _, want := range []string{"agents.json", "built-in agents"} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("loadAgentDefs() printed %q, want mention of %q", got, want)
+			}
+		}
+	})
+
+	t.Run("valid file loads quietly", func(t *testing.T) {
+		t.Setenv("GAUNTLET_HOME", writeAgentsJSON(t,
+			`{"deftest-agent":{"usage":{"roots":["~/.deftest/sessions"]}}}`))
+		if got := captureStderr(t, loadAgentDefs); got != "" {
+			t.Fatalf("loadAgentDefs() printed %q, want silence", got)
+		}
+		if !slices.Contains(agentusage.Agents(), "deftest-agent") {
+			t.Fatalf("defined agent missing from %v", agentusage.Agents())
+		}
+	})
+}
+
 func TestUsage(t *testing.T) {
 	var buf strings.Builder
 	usage(&buf)
@@ -106,6 +189,60 @@ func TestUsage(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("usage() missing %q", want)
 		}
+	}
+}
+
+// runUpdate must answer -h/--help the way the top-level command does: full
+// usage on stdout with exit 0, so `toktop update --help | grep repo` works.
+func TestRunUpdateHelp(t *testing.T) {
+	for _, arg := range []string{"--help", "-h"} {
+		t.Run(arg, func(t *testing.T) {
+			var out bytes.Buffer
+			var code int
+			got := captureStderr(t, func() {
+				code = runUpdate(context.Background(), &out, []string{arg})
+			})
+			if code != 0 {
+				t.Fatalf("runUpdate(%q) = %d, want 0", arg, code)
+			}
+			if out.Len() == 0 {
+				t.Fatalf("runUpdate(%q) wrote nothing to stdout", arg)
+			}
+			if got != "" {
+				t.Fatalf("runUpdate(%q) leaked %q to stderr", arg, got)
+			}
+			for _, want := range []string{"Usage:", "--check", "--repo"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("update help missing %q", want)
+				}
+			}
+		})
+	}
+}
+
+func TestRunUpdateUsageErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantSub string // required substring on stderr
+	}{
+		{name: "unknown flag", args: []string{"--bogus"}, wantSub: "flag provided but not defined"},
+		{name: "unexpected argument", args: []string{"extra"}, wantSub: "unexpected argument"},
+		{name: "unexpected argument points at help", args: []string{"extra"}, wantSub: "toktop update --help"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var code int
+			got := captureStderr(t, func() {
+				code = runUpdate(context.Background(), io.Discard, tt.args)
+			})
+			if code != 2 {
+				t.Fatalf("runUpdate(%v) = %d, want 2", tt.args, code)
+			}
+			if !strings.Contains(got, tt.wantSub) {
+				t.Fatalf("stderr = %q, want mention of %q", got, tt.wantSub)
+			}
+		})
 	}
 }
 
@@ -142,5 +279,25 @@ func TestWarnIgnoredFlags(t *testing.T) {
 				t.Fatalf("warnIgnoredFlags() printed %q, want mention of %q", got, tt.wantSub)
 			}
 		})
+	}
+}
+
+func TestRoutableBind(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:8420", false},
+		{"[::1]:8420", false},
+		{"localhost:8420", false}, // resolved form is what Addr reports; a literal name errs into quiet
+		{":8420", true},
+		{"0.0.0.0:8420", true},
+		{"[::]:8420", true},
+		{"192.168.1.7:8420", true},
+	}
+	for _, tt := range tests {
+		if got := routableBind(tt.addr); got != tt.want {
+			t.Errorf("routableBind(%q) = %v, want %v", tt.addr, got, tt.want)
+		}
 	}
 }

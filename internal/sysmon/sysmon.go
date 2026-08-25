@@ -4,7 +4,6 @@
 package sysmon
 
 import (
-	"bytes"
 	"context"
 	"strconv"
 	"strings"
@@ -69,10 +68,21 @@ func ParseMeminfo(b []byte, s *core.SysSample) {
 		}
 	}
 	total := vals["MemTotal"]
-	s.MemTotal = total << 10 // meminfo reports KiB
-	s.MemUsed = satSub(total, vals["MemAvailable"]) << 10
-	s.SwapTotal = vals["SwapTotal"] << 10
-	s.SwapUsed = satSub(vals["SwapTotal"], vals["SwapFree"]) << 10
+	s.MemTotal = kibBytes(total)
+	s.MemUsed = kibBytes(satSub(total, vals["MemAvailable"]))
+	s.SwapTotal = kibBytes(vals["SwapTotal"])
+	s.SwapUsed = kibBytes(satSub(vals["SwapTotal"], vals["SwapFree"]))
+}
+
+// kibBytes converts a meminfo KiB count to bytes. The remote vitals path
+// feeds this parser text from another host, so an absurd magnitude must
+// saturate rather than wrap to a small byte count in the shift.
+func kibBytes(kib uint64) uint64 {
+	const capKib = ^uint64(0) >> 10
+	if kib >= capKib {
+		return ^uint64(0)
+	}
+	return kib << 10
 }
 
 // satSub subtracts saturating at zero: some ballooning/virtualized kernels
@@ -84,14 +94,6 @@ func satSub(a, b uint64) uint64 {
 		return 0
 	}
 	return a - b
-}
-
-// utsField converts a NUL-padded Utsname char array to a string.
-func utsField(b []byte) string {
-	if before, _, ok := bytes.Cut(b, []byte{0}); ok {
-		return string(before)
-	}
-	return string(b)
 }
 
 func cutMeminfoLine(line string) (string, uint64, bool) {

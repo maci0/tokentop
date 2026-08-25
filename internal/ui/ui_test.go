@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -152,6 +153,19 @@ func TestMinimalViewNamesDownEngines(t *testing.T) {
 	}
 }
 
+// The pre-ready frame must name itself, and its status marker comes from the
+// dashboard's monochrome glyph set (●), not a color emoji.
+func TestWarmupFrameUsesStatusGlyphs(t *testing.T) {
+	m := New(Config{Version: "t"}, nil) // ready stays false until WindowSizeMsg
+	out := strip(m.View())
+	if !strings.Contains(out, "warming up") {
+		t.Errorf("warmup frame does not say what it is doing:\n%s", out)
+	}
+	if strings.ContainsRune(out, '⏳') {
+		t.Errorf("warmup frame uses an emoji instead of the status glyphs:\n%s", out)
+	}
+}
+
 // feedLine must render event timestamps in the viewer's zone: ingest events
 // carry sender-supplied RFC 3339 stamps whose offset (or absent offset,
 // decoded as UTC) is otherwise shown as-is.
@@ -178,6 +192,12 @@ func TestGaugeBar(t *testing.T) {
 	}
 	if lipgloss.Width(GaugeBar(-5, 10, kvHeat)) != 13 { // clamps to "0%"
 		t.Error("negative pct not clamped")
+	}
+	// A NaN gauge (a 0/0 upstream, or a sensor that slipped past the parse
+	// filters) must render as an empty bar: int(NaN) is implementation-
+	// defined and fed strings.Repeat a huge negative count on amd64.
+	if got := GaugeBar(math.NaN(), 10, kvHeat); !strings.Contains(got, "0%") {
+		t.Errorf("NaN pct = %q, want it clamped to 0%%", strip(got))
 	}
 }
 
@@ -393,10 +413,68 @@ func TestStaticFrameNoSensors(t *testing.T) {
 	}
 }
 
+// The timescale toggle lives in the chart title; both modes must show the
+// current one plus a clearly delimited key, not a run-together "←t".
+func TestThroughputTitleAdvertisesTimescaleToggle(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	if got := strip(m.throughputTitle()); !strings.Contains(got, "compressed") || !strings.Contains(got, "[t]") {
+		t.Errorf("compressed title = %q, want mode word plus [t] switch", got)
+	}
+	m.chartCompressed = false
+	if got := strip(m.throughputTitle()); !strings.Contains(got, "uniform") || !strings.Contains(got, "[t]") {
+		t.Errorf("uniform title = %q, want mode word plus [t] switch", got)
+	}
+}
+
+// The help screen is the only in-app reference: both ways of pointing
+// toktop at engines away from localhost must be discoverable there.
+func TestHelpCoversAttachModes(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.help = true
+	m.w, m.h, m.ready = 110, 36, true
+	out := strip(m.View())
+	for _, want := range []string{"ssh://host", "--agents"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// An empty AGENT FEED may promise automatic pickup only when --agents is on;
+// otherwise it must name the knob (or the POST target) that fills it.
+func TestFeedEmptyStateGuidesByMode(t *testing.T) {
+	view := func(cfg Config) string {
+		m := New(cfg, nil)
+		m.w, m.h, m.ready = 110, 36, true
+		return strip(m.renderFeed())
+	}
+	if out := view(Config{Version: "t", Agents: true}); !strings.Contains(out, "picked up automatically") {
+		t.Errorf("--agents on, but the feed does not say so:\n%s", out)
+	}
+	out := view(Config{Version: "t", IngestAddr: "127.0.0.1:8420"})
+	if !strings.Contains(out, "point your harness") {
+		t.Errorf("ingest-only run lost the POST hint:\n%s", out)
+	}
+	if strings.Contains(out, "picked up automatically") {
+		t.Errorf("feed promises automatic pickup with --agents off:\n%s", out)
+	}
+	if out := view(Config{Version: "t"}); !strings.Contains(out, "--agents") {
+		t.Errorf("nothing watching: feed must point at --agents:\n%s", out)
+	}
+}
+
 func TestStaticFrameEmptyState(t *testing.T) {
 	out := StaticFrame(Config{Version: "t"}, core.Snapshot{}, 90, 30)
-	if !strings.Contains(strip(out), "no inference engines detected") {
+	plain := strip(out)
+	if !strings.Contains(plain, "no inference engines detected") {
 		t.Error("empty state hint missing")
+	}
+	// Every recovery path is named: attaching an endpoint, agent watching,
+	// and the zero-setup demo.
+	for _, want := range []string{"--add", "--agents", "--demo"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("empty state missing %q recovery hint", want)
+		}
 	}
 }
 

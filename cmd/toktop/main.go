@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"maps"
+	"net"
 	"os"
 	"os/signal"
 	"slices"
@@ -85,6 +86,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
 		os.Exit(2)
 	}
+	if *once {
+		if err := validateOnceEnv(); err != nil {
+			fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
+			os.Exit(2)
+		}
+	}
 	warnUnknownEnv()
 
 	// Flags the user passed explicitly, for warnings about no-op combos.
@@ -144,6 +151,10 @@ func main() {
 	default:
 		providers := provider.Discover(ctx)
 		for _, raw := range adds {
+			// The token rides only to endpoints the operator named: discovery
+			// probes every well-known port on spec, and whatever answers there
+			// must not be able to harvest the credential.
+			bearer.Allow(raw)
 			if p := provider.Attach(ctx, strings.TrimRight(raw, "/")); p != nil {
 				providers = append(providers, p)
 			} else {
@@ -227,6 +238,9 @@ func main() {
 	// Opt-in, because it means scanning this machine's processes and reading
 	// files the operator never pointed at toktop. Watching engines does not
 	// imply consent to that.
+	if *agents {
+		loadAgentDefs()
+	}
 	if *agents && *opencode && !agentusage.EnableOpenCodeDB(true) {
 		// Silence here would look like an agent that generates nothing.
 		fmt.Fprintln(os.Stderr, "toktop: --opencode-db needs a build with -tags sqlite; opencode will report no tokens")
@@ -249,6 +263,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "toktop: ingest disabled (%v)\n", err)
 		} else {
 			feedAddr = srv.Addr()
+			if routableBind(feedAddr) {
+				fmt.Fprintf(os.Stderr, "toktop: warning: ingest endpoint %s accepts unauthenticated events from any reachable peer\n", feedAddr)
+			}
 			go func() {
 				if err := srv.Serve(); err != nil {
 					fmt.Fprintf(os.Stderr, "toktop: ingest stopped: %v\n", err)
@@ -269,6 +286,7 @@ func main() {
 		PollEvery:  *interval,
 		Prober:     prober,
 		FeedErr:    feedErr,
+		Agents:     *agents,
 	}
 
 	if *once {
@@ -277,6 +295,22 @@ func main() {
 	}
 
 	runTUI(ctx, cfg, ch, !*noReload)
+}
+
+// routableBind reports whether a bound listen address is reachable from
+// beyond this host: a wildcard or non-loopback interface rather than
+// loopback. The ingest endpoint authenticates nothing, so such a bind is
+// worth naming at startup instead of leaving the widening silent.
+func routableBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false // no port to split: treat as local, not as an alarm
+	}
+	if host == "" {
+		return true // ":port" binds every interface
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && !ip.IsLoopback()
 }
 
 // runTUI runs the dashboard, restarting into a fresh binary whenever the
@@ -318,23 +352,22 @@ func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotRelo
 	}
 	if reloaded.Load() {
 		fmt.Fprintln(os.Stderr, "toktop: binary changed, restarting…")
-		if err := selfreload.ReExec(self, os.Args, os.Environ()); err != nil {
-			fmt.Fprintln(os.Stderr, "toktop:", err)
-		}
+		selfreload.Restart(self, os.Args, os.Environ())
 	}
 }
 
 // runOnce prints a single rendered frame sized to the terminal (or 120x38).
-// TOKTOP_COLUMNS / TOKTOP_LINES override detection (useful for capture).
+// TOKTOP_COLUMNS / TOKTOP_LINES override detection (useful for capture);
+// validateOnceEnv rejected unusable values before this runs.
 func runOnce(cfg ui.Config, ch <-chan core.Snapshot, n int) {
 	w, h := 120, 38
 	if tw, th, err := term.GetSize(int(os.Stdout.Fd())); err == nil && tw > 40 && th > 20 {
 		w, h = tw, th
 	}
-	if v, err := strconv.Atoi(os.Getenv("TOKTOP_COLUMNS")); err == nil && v > 40 {
+	if v, err := strconv.Atoi(os.Getenv("TOKTOP_COLUMNS")); err == nil && v >= minFrameColumns {
 		w = v
 	}
-	if v, err := strconv.Atoi(os.Getenv("TOKTOP_LINES")); err == nil && v > 20 {
+	if v, err := strconv.Atoi(os.Getenv("TOKTOP_LINES")); err == nil && v >= minFrameLines {
 		h = v
 	}
 	// Snapshots land one poll interval apart, so a slow-polling host needs a
@@ -373,7 +406,7 @@ func usage(w io.Writer) {
 
 Usage:
   toktop [flags] [ssh://user@host ...]
-  toktop update [--check]      install the latest release
+  toktop update [--check] [--repo owner/name]   install the latest release
 
 Examples:
   toktop --demo                simulated fleet, works instantly
@@ -426,6 +459,37 @@ func validateFlags(once bool, interval time.Duration, probeSecs, frames int) err
 	return nil
 }
 
+// Frame floors: below these the static frame cannot lay out legibly. The
+// README documents the overrides as "> 40" / "> 20".
+const (
+	minFrameColumns = 41
+	minFrameLines   = 21
+)
+
+// validateOnceEnv rejects a set-but-unusable frame override before --once
+// renders: a capture sized by a typo'd variable must fail loudly rather than
+// come out at the fallback size with nothing explaining why. Unset or empty
+// means default, matching how every other optional setting reads here.
+func validateOnceEnv() error {
+	for _, e := range [...]struct {
+		name  string
+		least int
+	}{
+		{"TOKTOP_COLUMNS", minFrameColumns},
+		{"TOKTOP_LINES", minFrameLines},
+	} {
+		v := os.Getenv(e.name)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < e.least {
+			return fmt.Errorf("$%s must be an integer >= %d, got %q", e.name, e.least, v)
+		}
+	}
+	return nil
+}
+
 // toktopEnvVars are the TOKTOP_* environment variables this build reads;
 // see also OMNIROUTE_API_KEY, SSH_AUTH_SOCK and the ssh defaults.
 var toktopEnvVars = map[string]bool{
@@ -453,6 +517,21 @@ func warnUnknownEnv() {
 	}
 }
 
+// loadAgentDefs pulls in ~/.gauntlet/agents.json so --agents can follow
+// agents toktop was not built to know (in-house wrappers, the pi family),
+// including where they keep their transcripts. A missing file is the normal
+// case; a malformed one is reported instead of swallowed, because agents
+// silently missing from the watch look exactly like agents doing nothing.
+func loadAgentDefs() {
+	path := agentusage.DefinitionsPath()
+	if path == "" {
+		return // no home directory resolved; nothing to load
+	}
+	if err := agentusage.LoadDefinitions(path); err != nil {
+		fmt.Fprintf(os.Stderr, "toktop: %s: %v; watching only the built-in agents\n", path, err)
+	}
+}
+
 // attachRemote connects to an ssh target, discovers engines, relays their
 // ports through the connection and starts remote stats sampling. Everything
 // shares one in-process ssh client; its death mid-run is reported once.
@@ -477,6 +556,14 @@ func attachRemote(ctx context.Context, tgt remote.Target) ([]provider.Provider, 
 	if err != nil {
 		cli.Close()
 		return nil, nil, err
+	}
+	// Forward skips a port whose local listener cannot be bound; without
+	// this line the engine behind it silently vanishes from the dashboard.
+	for _, p := range ports {
+		if _, ok := fwd[p]; !ok {
+			fmt.Fprintf(os.Stderr, "toktop: %s:%d could not be forwarded locally; engines on that port are invisible\n",
+				tgt.Host, p)
+		}
 	}
 	go func() {
 		select {

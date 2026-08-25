@@ -23,13 +23,24 @@ func (m *memRecorder) RecordAgent(ev core.AgentEvent) { m.evs = append(m.evs, ev
 // keep-alive connections are reusable.
 func post(t *testing.T, url, body string) int {
 	t.Helper()
+	code, _ := postBody(t, url, body)
+	return code
+}
+
+// postBody sends body and returns the status code plus the response text,
+// draining the response so keep-alive connections are reusable.
+func postBody(t *testing.T, url, body string) (int, string) {
+	t.Helper()
 	resp, err := http.Post(url, "application/json", bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, string(b)
 }
 
 func TestIngestAcceptsEvents(t *testing.T) {
@@ -101,6 +112,46 @@ func TestIngestAcceptsNaiveTimestampsAsUTC(t *testing.T) {
 	}
 }
 
+// SQL-style stamps separate date and time with a space (`date '+%F %T'`,
+// SQLite and Postgres text output). One of them used to fail both accepted
+// shapes and abort the whole NDJSON batch with 400, dropping every event
+// queued behind it; they must parse on the same terms as T-separated ones:
+// an offset is honored, its absence decodes as UTC.
+func TestIngestAcceptsSpaceSeparatedTimestamps(t *testing.T) {
+	rec := &memRecorder{}
+	s, err := New("127.0.0.1:0", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	defer s.Close()
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"sql","ts":"2026-01-02 03:04:05"}`+"\n"+
+			`{"agent":"sql","ts":"2026-01-02 03:04:05.25"}`+"\n"+
+			`{"agent":"pg","ts":"2026-01-02 05:04:05+02:00"}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != 3 {
+		t.Fatalf("events = %d, want 3 (a space-separated ts must not drop the stream)", len(rec.evs))
+	}
+	want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if got := rec.evs[0].At; !got.Equal(want) || got.Location() != time.UTC {
+		t.Errorf("space-separated naive stamp = %v (%v), want 03:04:05 UTC", got, got.Location())
+	}
+	if got := rec.evs[1].At; !got.Equal(want.Add(250*time.Millisecond)) {
+		t.Errorf("fractional stamp = %v, want %v", got, want.Add(250*time.Millisecond))
+	}
+	if got := rec.evs[2].At; !got.Equal(want) {
+		t.Errorf("+02:00 space-separated stamp = %v, want same instant as %v", got, want)
+	}
+}
+
 // A ts that is neither RFC 3339 nor an offset-less variant stays a hard
 // error so sender bugs surface instead of silently becoming "now".
 func TestIngestRejectsGarbageTimestamp(t *testing.T) {
@@ -136,6 +187,66 @@ func TestIngestDefaultsAndBadJSON(t *testing.T) {
 	resp = post(t, base, `{not json`)
 	if resp != http.StatusBadRequest {
 		t.Fatalf("bad json status = %d", resp)
+	}
+}
+
+// An empty body carries no event at all; the error must say so instead of
+// the cryptic decode-level "bad json: EOF".
+func TestIngestEmptyBodyRejected(t *testing.T) {
+	s, _ := New("127.0.0.1:0", &memRecorder{})
+	go s.Serve()
+	defer s.Close()
+
+	code, body := postBody(t, "http://"+s.Addr()+"/v1/events", "")
+	if code != http.StatusBadRequest {
+		t.Fatalf("empty body status = %d, want 400", code)
+	}
+	if !strings.Contains(body, "empty body") {
+		t.Errorf("body should name the problem, got %q", body)
+	}
+}
+
+// Streams record incrementally: when a later line fails, events before it
+// stay recorded and the error must say how many, so senders resume instead
+// of replaying the whole stream and duplicating what was kept.
+func TestIngestPartialStreamReportsRecordedCount(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+	go s.Serve()
+	defer s.Close()
+
+	code, body := postBody(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"kept"}`+"\n"+`{"agent":"dropped","ts":"yesterday"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", code)
+	}
+	if !strings.Contains(body, "; 1 earlier event in this stream were recorded") {
+		t.Errorf("error should state the recorded count, got %q", body)
+	}
+	if len(rec.evs) != 1 || rec.evs[0].Agent != "kept" {
+		t.Fatalf("events = %+v, want only the first line kept", rec.evs)
+	}
+}
+
+// The recorded-count note rides along on every stream-level failure,
+// including the size cap.
+func TestIngestOversizedAfterEventsReportsRecordedCount(t *testing.T) {
+	rec := &memRecorder{}
+	s, _ := New("127.0.0.1:0", rec)
+
+	body := `{"agent":"kept"}` + "\n" + `{"agent":"` + strings.Repeat("a", maxEventBody) + `"}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/events", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handlePost(w, r)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d, want 413", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "; 1 earlier event in this stream were recorded") {
+		t.Errorf("error should state the recorded count, got %q", w.Body.String())
+	}
+	if len(rec.evs) != 1 {
+		t.Fatalf("events = %d, want 1", len(rec.evs))
 	}
 }
 

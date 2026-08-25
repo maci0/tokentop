@@ -31,6 +31,18 @@ import (
 // time_created) index rather than a scan.
 type openCodeDBSource struct{ path string }
 
+// registerSource makes an agent readable through a source instead of files.
+// Passing nil removes it, which is how the runtime switch turns one off.
+func registerSource(tool string, s usageSource) {
+	sourcesMu.Lock()
+	defer sourcesMu.Unlock()
+	if s == nil {
+		delete(sources, tool)
+		return
+	}
+	sources[tool] = s
+}
+
 func setOpenCodeDB(on bool) bool {
 	if !on {
 		registerSource("opencode", nil)
@@ -51,6 +63,31 @@ func openCodeDBPath() string {
 		return ""
 	}
 	return filepath.Join(dir, ".local", "share", "opencode", "opencode.db")
+}
+
+// readOnlyDSN builds the read-only URI DSN for the session database. SQLite
+// parses file: URIs itself, so the three characters that carry URI syntax must
+// travel percent-encoded inside the path, as its own documentation requires;
+// anything else, Windows drive letters and separators included, passes through
+// untouched. A raw % would fail the parse outright, and ? or # would end the
+// filename early, either way reading nothing.
+func readOnlyDSN(path string) string {
+	var b strings.Builder
+	b.WriteString("file:")
+	for i := 0; i < len(path); i++ {
+		switch path[i] {
+		case '%':
+			b.WriteString("%25")
+		case '?':
+			b.WriteString("%3F")
+		case '#':
+			b.WriteString("%23")
+		default:
+			b.WriteByte(path[i])
+		}
+	}
+	b.WriteString("?mode=ro")
+	return b.String()
 }
 
 // usageQuery sums what this directory's sessions spent after a point in time.
@@ -79,7 +116,7 @@ func (o openCodeDBSource) read(dirs []string, since time.Time) (values, bool) {
 	// mode=ro leaves the database alone; a missing or unreadable one is an
 	// answer ("nothing to report"), not an error worth surfacing, since most
 	// machines running this have no opencode at all.
-	db, err := sql.Open("sqlite", "file:"+o.path+"?mode=ro")
+	db, err := sql.Open("sqlite", readOnlyDSN(o.path))
 	if err != nil {
 		return values{}, false
 	}

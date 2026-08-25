@@ -26,6 +26,9 @@ type Config struct {
 	IngestAddr string
 	PollEvery  time.Duration // sampling cadence; anchors the chart timescale
 	Prober     Prober        // nil disables manual probing
+	// Agents reports that local agent watching (--agents) is on: only then
+	// may empty-feed guidance promise that running agents are picked up.
+	Agents bool
 	// FeedErr receives one message if the ingest endpoint dies after startup.
 	// nil (or silent) means it is up: stderr is invisible under the alternate
 	// screen, so without this in-band signal the UI would advertise a dead
@@ -180,7 +183,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	if !m.ready {
-		return "\n  ⏳ toktop is warming up…"
+		// Same glyph the probe panel uses for work in progress: the status
+		// vocabulary stays monochrome terminal glyphs, no color emoji.
+		return "\n  " + styleWarn.Render("● toktop is warming up…")
 	}
 	if m.help {
 		return m.renderHelp()
@@ -395,12 +400,14 @@ func (m Model) outSeries(w int, cadence time.Duration) ([]float64, map[int]bool)
 func (m Model) throughputTitle() string {
 	title := "THROUGHPUT " + styleHot.Render("▲ "+fmtRate(m.lastAgg)+" tok/s") + dim("  decode")
 	// Advertise the toggle in both modes: the hint only showing while
-	// compressed hid how to get back to the uniform timescale.
-	mode := dim(" · compressed ←")
+	// compressed hid how to get back to the uniform timescale. Brackets mark
+	// the key so "compressed [t]" reads as mode plus switch rather than one
+	// run-together token.
+	mode := dim(" · compressed ")
 	if !m.chartCompressed {
-		mode = dim(" · uniform ←")
+		mode = dim(" · uniform ")
 	}
-	return title + mode + styleInfo.Render("t")
+	return title + mode + styleInfo.Render("[t]")
 }
 
 // timedVal is one sample with its absolute timestamp.
@@ -861,10 +868,14 @@ func (m Model) renderFeed() string {
 			// on stderr, invisible under the alternate screen.
 			reason := clip(shorten(core.SanitizeText("ingest stopped: "+m.feedDown), w), w)
 			lines = append(lines, styleBad.Render(reason))
+		case m.cfg.Agents:
+			lines = append(lines, dim("no agent activity yet — agents running locally are picked up automatically"))
 		case m.cfg.IngestAddr != "":
 			lines = append(lines, dim("no agent activity yet — point your harness at the endpoint above"))
 		default:
-			lines = append(lines, dim("no agent activity yet — agents running locally are picked up automatically"))
+			// Ingest off and agent watching off: without naming a knob this
+			// panel reads as a feature that silently never works.
+			lines = append(lines, dim("no agent activity yet — run with --agents to watch coding agents on this machine"))
 		}
 	}
 	content := strings.Join(lines, "\n")
@@ -928,6 +939,8 @@ func (m Model) renderEmpty() string {
 		"",
 		"attach anything openai-compatible:",
 		styleInfo.Render("  toktop --add http://127.0.0.1:9999"),
+		"or watch coding agents on this machine:",
+		styleInfo.Render("  toktop --agents"),
 		"or preview the dashboard:",
 		styleHot.Render("  toktop --demo"),
 	}
@@ -950,6 +963,8 @@ func (m Model) renderHelp() string {
 		{"", ""},
 		{"--demo", "simulated fleet, zero setup"},
 		{"--add URL", "attach an openai-compatible endpoint"},
+		{"ssh://host", "watch engines on another host"},
+		{"--agents", "also watch coding agents on this machine"},
 		{"--probe N", "auto-probe every N seconds"},
 		{"--once", "print one frame and exit"},
 	}

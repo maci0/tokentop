@@ -13,8 +13,12 @@ func TestSamplerLinuxTree(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, content string) {
 		p := filepath.Join(root, rel)
-		os.MkdirAll(filepath.Dir(p), 0o755)
-		os.WriteFile(p, []byte(content), 0o644)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// fake ollama: comm-less cmdline NUL-separated; stat with utime+stime
 	// (fields 14,15) and rss in pages (field 24: 512 pages = 2 MiB)

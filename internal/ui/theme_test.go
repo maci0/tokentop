@@ -84,3 +84,22 @@ func TestFadeClampPassthrough(t *testing.T) {
 		t.Errorf("deep fade did not darken at all: %q", got)
 	}
 }
+
+// heatColor colors chart marks (WCAG 1.4.11: >= 3:1 on cBase) and also text:
+// the header out-rate and the per-agent rates in the agents-only view ride
+// ramp colors at 4.5:1 (WCAG 1.4.3). Its quiet end once returned cSurface,
+// ~1.3:1, hiding small-but-real rates right after startup or from slow
+// agents; every point of the ramp must stay legible.
+func TestHeatRampMeetsContrastFloors(t *testing.T) {
+	for i := range 101 {
+		f := float64(i) / 100
+		c := heatColor(f)
+		got := contrastRatioT(t, c, cBase)
+		if got < minGraphicContrast {
+			t.Errorf("heatColor(%.2f) on cBase = %.2f:1, want >= %.1f:1", f, got, minGraphicContrast)
+		}
+		if f <= 0.02 && got < 4.5 {
+			t.Errorf("heatColor(%.2f) styles text too: %.2f:1 on cBase, want >= 4.5:1", f, got)
+		}
+	}
+}

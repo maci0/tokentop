@@ -126,30 +126,48 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	defer r.Body.Close()
 	n := 0
+	// fail reports a stream-level error. Events decode-and-record one by one,
+	// so everything before the failing line is already in the feed; saying so
+	// lets senders resume after the failure instead of replaying the whole
+	// stream and duplicating what was kept.
+	fail := func(status int, msg string) {
+		if n > 0 {
+			unit := "events"
+			if n == 1 {
+				unit = "event"
+			}
+			msg += fmt.Sprintf("; %d earlier %s in this stream were recorded", n, unit)
+		}
+		http.Error(w, msg, status)
+	}
 	for {
 		var wire agentEventWire
 		if err := dec.Decode(&wire); err != nil {
 			if n > 0 && errors.Is(err, io.EOF) {
 				break // clean end of stream after at least one event
 			}
+			if errors.Is(err, io.EOF) {
+				fail(http.StatusBadRequest, "empty body: expected one JSON object or an NDJSON stream")
+				return
+			}
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				http.Error(w, "request stalled", http.StatusRequestTimeout)
+				fail(http.StatusRequestTimeout, "request stalled")
 				return
 			}
 			var maxBytes *http.MaxBytesError
 			if errors.As(err, &maxBytes) {
 				// A size failure is not a JSON failure; senders need the
 				// distinction to know trimming (not re-encoding) is the fix.
-				http.Error(w, fmt.Sprintf("event stream exceeds %d byte cap", maxBytes.Limit),
-					http.StatusRequestEntityTooLarge)
+				fail(http.StatusRequestEntityTooLarge,
+					fmt.Sprintf("event stream exceeds %d byte cap", maxBytes.Limit))
 				return
 			}
-			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+			fail(http.StatusBadRequest, "bad json: "+err.Error())
 			return
 		}
 		at, err := parseEventTime(wire.At)
 		if err != nil {
-			http.Error(w, "bad ts: "+err.Error(), http.StatusBadRequest)
+			fail(http.StatusBadRequest, "bad ts: "+err.Error())
 			return
 		}
 		ev := core.AgentEvent{
@@ -219,10 +237,12 @@ type agentEventWire struct {
 // parseEventTime decodes an event's ts field. Offset-aware RFC 3339 stamps
 // are taken as sent (any zone, sub-second precision); stamps without an
 // offset decode as UTC, matching what senders like Python's
-// datetime.isoformat() emit. Absent or null yields the zero Time, which the
-// caller replaces with the arrival instant. An empty or whitespace-only
-// string counts as absent, matching the empty-means-default behavior of
-// every other event field.
+// datetime.isoformat() emit. SQL-style stamps separated by a space instead
+// of a T (`date '+%F %T'`, SQLite and Postgres text output) are accepted on
+// the same terms: the zone is honored when present, UTC is assumed when not.
+// Absent or null yields the zero Time, which the caller replaces with the
+// arrival instant. An empty or whitespace-only string counts as absent,
+// matching the empty-means-default behavior of every other event field.
 func parseEventTime(raw json.RawMessage) (time.Time, error) {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" {
@@ -238,7 +258,19 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, v); err == nil {
 		return t, nil
 	}
-	return time.ParseInLocation("2006-01-02T15:04:05", v, time.UTC)
+	// Offset-less layouts decode as UTC; the fraction, if any, is accepted
+	// after the seconds field even though the layout does not spell it out.
+	layouts := []string{
+		"2006-01-02T15:04:05",       // RFC 3339 without the offset
+		"2006-01-02 15:04:05Z07:00", // SQL-style stamp carrying its zone
+		"2006-01-02 15:04:05",       // SQL / date-style stamp without one
+	}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, v, time.UTC); err == nil {
+			return t, nil
+		}
+	}
+	return time.ParseInLocation(layouts[0], v, time.UTC)
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {

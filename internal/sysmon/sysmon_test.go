@@ -57,6 +57,23 @@ func TestParseMeminfoAvailableExceedsTotal(t *testing.T) {
 	}
 }
 
+// A KiB count at or past 2^54 would shift into a wrong small byte count;
+// the ssh vitals path feeds parser text from another host, so it must
+// saturate instead.
+func TestParseMeminfoHugeValuesSaturate(t *testing.T) {
+	var s core.SysSample
+	ParseMeminfo([]byte("MemTotal: 18446744073709551615 kB\nMemAvailable: 1 kB\nSwapTotal: 20000000000000000 kB\nSwapFree: 0 kB\n"), &s)
+	if want := ^uint64(0); s.MemTotal != want {
+		t.Errorf("MemTotal = %d, want saturated max", s.MemTotal)
+	}
+	if s.MemUsed == 0 {
+		t.Error("MemUsed saturated away with MemTotal")
+	}
+	if want := ^uint64(0); s.SwapTotal != want {
+		t.Errorf("SwapTotal = %d, want saturated max", s.SwapTotal)
+	}
+}
+
 func TestParseLoadavg(t *testing.T) {
 	l1, l5, l15 := ParseLoadavg("4.98 2.71 1.03 3/5123 4242")
 	if l1 != 4.98 || l5 != 2.71 || l15 != 1.03 {

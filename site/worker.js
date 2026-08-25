@@ -15,7 +15,8 @@ const HTML = `<!doctype html>
 <meta property="og:description" content="btop for AI: a terminal dashboard for LLM inference engines and the coding agents hammering them.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://toktop.ai">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<!-- the icon is the h1 cursor block in --accent/--panel, not a placeholder emoji -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2311161d'/><rect x='37' y='25' width='26' height='50' rx='5' fill='%234cc38a'/></svg>">
 <style>
   :root {
     --bg: #0d1117; --panel: #11161d; --line: #222b36;
@@ -36,8 +37,13 @@ const HTML = `<!doctype html>
   }
   main { max-width: 62rem; margin: 0 auto; }
   h1 { font-size: 2.6rem; margin: 0; letter-spacing: -0.03em; }
-  h1 .cursor { color: var(--accent); animation: blink 1.2s step-end infinite; }
-  @keyframes blink { 50% { opacity: 0; } }
+  /* Blinking content that starts automatically must be pausable/stoppable
+     (WCAG 2.2.2); honoring prefers-reduced-motion is the static-page remedy,
+     so the cursor only blinks for users who have not asked for stillness. */
+  @media (prefers-reduced-motion: no-preference) {
+    h1 .cursor { color: var(--accent); animation: blink 1.2s step-end infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+  }
   .tag { color: var(--dim); margin: .6rem 0 2.4rem; font-size: 1.05rem; }
   h2 { font-size: .82rem; letter-spacing: .16em; text-transform: uppercase;
        color: var(--dim); font-weight: 600; margin: 3rem 0 .9rem; }
@@ -45,6 +51,9 @@ const HTML = `<!doctype html>
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
     padding: 1rem 1.15rem; overflow-x: auto; margin: 0 0 1rem; font-size: 13.5px;
   }
+  /* Narrow viewports clip code lines into a scroll container; a mouse-only
+     scrollbar would lock keyboard users out (WCAG 2.1.1). */
+  pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   code { color: inherit; }
   .up { color: var(--accent); }
   .warm { color: var(--warm); }
@@ -52,7 +61,10 @@ const HTML = `<!doctype html>
   ul { padding-left: 1.1rem; margin: 0; }
   li { margin-bottom: .5rem; }
   li b { font-weight: 600; }
-  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  /* Links must not be identified by color alone (WCAG 1.4.1): underline at
+     rest, not just on hover. */
+  a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px;
+      border-bottom: 1px solid transparent; }
   a:hover { border-bottom-color: currentColor; }
   footer { margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line);
            color: var(--dim); font-size: 13px; display: flex; gap: 1.5rem; flex-wrap: wrap; }
@@ -60,11 +72,11 @@ const HTML = `<!doctype html>
 </head>
 <body>
 <main>
-  <h1>toktop<span class="cursor">_</span></h1>
+  <h1>toktop<span class="cursor" aria-hidden="true">_</span></h1>
   <p class="tag"><code>btop</code> for AI: a terminal dashboard for LLM inference
   engines and the coding agents hammering them.</p>
 
-<pre><code>ENGINES  <span class="dim">local + ssh</span>
+<pre tabindex="0"><code>ENGINES  <span class="dim">local + ssh</span>
   llama.cpp   <span class="up">▲ 42.1 tok/s</span>   kv <span class="warm">61%</span>   q 2   qwen3-30b
   vLLM        <span class="up">▲ 18.7 tok/s</span>   kv 12%   q 0   llama-3.3-70b
 
@@ -74,11 +86,11 @@ AGENTS  <span class="dim">read from their own session logs</span>
   opencode    <span class="up">▲ 612 tok/s</span>    41k tok    <span class="up">● live</span></code></pre>
 
   <h2>Install</h2>
-<pre><code>go install github.com/maci0/toktop/cmd/toktop@latest
+<pre tabindex="0"><code>go install github.com/maci0/toktop/cmd/toktop@latest
 <span class="dim"># or grab a binary: linux / macos / windows, amd64 + arm64</span></code></pre>
 
   <h2>Run</h2>
-<pre><code>toktop --demo             <span class="dim"># simulated fleet, works instantly</span>
+<pre tabindex="0"><code>toktop --demo             <span class="dim"># simulated fleet, works instantly</span>
 toktop                    <span class="dim"># auto-discovers local engines</span>
 toktop --agents           <span class="dim"># also watch coding agents on this machine</span>
 toktop ssh://you@box      <span class="dim"># watch another host over ssh</span></code></pre>
@@ -131,6 +143,7 @@ export default {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "public, max-age=300",
         "x-content-type-options": "nosniff",
+        "strict-transport-security": "max-age=31536000",
         "referrer-policy": "strict-origin-when-cross-origin",
         "content-security-policy":
           "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",

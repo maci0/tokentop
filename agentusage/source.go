@@ -27,18 +27,6 @@ var (
 	sources   = map[string]usageSource{}
 )
 
-// registerSource makes an agent readable through a source instead of files.
-// Passing nil removes it, which is how the runtime switch turns one off.
-func registerSource(tool string, s usageSource) {
-	sourcesMu.Lock()
-	defer sourcesMu.Unlock()
-	if s == nil {
-		delete(sources, tool)
-		return
-	}
-	sources[tool] = s
-}
-
 func sourceFor(tool string) (usageSource, bool) {
 	sourcesMu.RLock()
 	defer sourcesMu.RUnlock()

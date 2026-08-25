@@ -2,10 +2,13 @@
 
 package selfreload
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
-// ReExec is not possible on Windows without spawning a child; the caller
-// prints a hint instead.
-func ReExec(string, []string, []string) error {
-	return fmt.Errorf("hot-reload unsupported on windows; restart toktop")
+// Restart cannot swap the process image on Windows the way exec(2) allows,
+// so it reports the manual step instead and lets the caller exit normally.
+func Restart(string, []string, []string) {
+	fmt.Fprintln(os.Stderr, "toktop: hot-reload unsupported on windows; restart toktop")
 }
