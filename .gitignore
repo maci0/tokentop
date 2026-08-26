@@ -5,3 +5,5 @@
 *.out
 dist/
 .scratch/
+.gauntlet.lock
+.gauntlet/
