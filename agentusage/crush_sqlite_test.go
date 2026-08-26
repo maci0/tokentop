@@ -121,7 +121,7 @@ func TestWatchUsesTheCrushSource(t *testing.T) {
 	if w == nil {
 		t.Fatal("crush is readable in this build, so Watch must return a watcher")
 	}
-	if got := w.Read(); got.Output != 7 {
+	if got := w.Poll(); got.Output != 7 {
 		t.Fatalf("watcher read %+v, want 7 output tokens", got)
 	}
 	if !Supported("crush") {
