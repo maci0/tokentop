@@ -257,8 +257,8 @@ func download(ctx context.Context, url string, w io.Writer) (string, error) {
 }
 
 // ChecksumListing pulls checksums.txt out of the tar.gz the release ships it
-// in. The archive holds exactly that one file, so anything else in it is a
-// reason to stop rather than to keep looking.
+// in. Entries are matched by base name, so a wrapper directory around the
+// file does not matter; everything else in the archive is skipped.
 func ChecksumListing(archive []byte) (string, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {

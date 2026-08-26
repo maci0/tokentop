@@ -11,29 +11,36 @@ import (
 	"testing"
 )
 
-func TestParseHexAddrPort(t *testing.T) {
-	cases := map[string]string{
-		// The kernel writes each 32-bit word little endian: 0100007F is
-		// 127.0.0.1, and 1F90 is port 8080.
-		"0100007F:1F90":                         "127.0.0.1:8080",
-		"0100007F:2CAA":                         "127.0.0.1:11434",
-		"00000000:0050":                         "0.0.0.0:80",
-		"00000000000000000000000001000000:1F90": "[::1]:8080",
+func TestParseLsofPeers(t *testing.T) {
+	out := "p4242\n" +
+		"n127.0.0.1:52154->127.0.0.1:11434\n" +
+		"n*:8000\n" + // listening socket: no remote end
+		"n192.168.1.7:53000->10.0.0.5:8000\n" +
+		"n*:*->*:*?\n" + // unconnected UDP: remote does not parse as an endpoint
+		"fcwd\nn/some/path\n" // non-socket field lines
+
+	got := parseLsofPeers(out)
+	want := []netip.AddrPort{
+		netip.MustParseAddrPort("127.0.0.1:11434"),
+		netip.MustParseAddrPort("10.0.0.5:8000"),
 	}
-	for in, want := range cases {
-		got, ok := parseHexAddrPort(in)
-		if !ok {
-			t.Errorf("%s: not parsed", in)
-			continue
-		}
-		if got.String() != want {
-			t.Errorf("%s = %s, want %s", in, got, want)
+	if len(got) != len(want) {
+		t.Fatalf("peers = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("peer[%d] = %v, want %v", i, got[i], want[i])
 		}
 	}
-	for _, bad := range []string{"", "nocolon", "ZZ:1F90", "0100007F:ZZZZ", "01:1F90"} {
-		if _, ok := parseHexAddrPort(bad); ok {
-			t.Errorf("%q should not parse", bad)
-		}
+
+	// A loopback spelling must survive parsing so sameEndpoint can collapse
+	// it against an engine advertised on ::1.
+	if peers := parseLsofPeers("p1\nn[::1]:40000->[::1]:11434\n"); len(peers) != 1 ||
+		peers[0].String() != "[::1]:11434" {
+		t.Errorf("IPv6 peer = %v, want [::1]:11434", peers)
+	}
+	if peers := parseLsofPeers(""); len(peers) != 0 {
+		t.Errorf("empty output gave %v", peers)
 	}
 }
 
@@ -58,8 +65,8 @@ func TestSameEndpointTreatsLoopbackSpellingsAsOne(t *testing.T) {
 // talking to an engine must be recognizable, so its tokens are not counted
 // twice.
 func TestConnectedToSeesARealConnection(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("reads /proc/net/tcp")
+	if runtime.GOOS == "windows" {
+		t.Skip("no connection table without native APIs")
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

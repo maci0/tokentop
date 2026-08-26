@@ -133,17 +133,18 @@ func clampPct(v float64) float64 {
 
 // ExtractPort scans argv for explicit listen-port flags. Exported so the
 // remote ssh path can reuse the same convention for command lines gathered
-// from another host.
+// from another host. Anything outside the TCP port range reads as absent: a
+// garbage or hostile --port must never become a tunnel target.
 func ExtractPort(args []string) int {
 	for i, a := range args {
 		for _, flag := range []string{"--port", "--http-port", "--listen-port"} {
 			if a == flag && i+1 < len(args) {
-				if p, err := strconv.Atoi(strings.TrimSpace(args[i+1])); err == nil {
+				if p, err := strconv.Atoi(strings.TrimSpace(args[i+1])); err == nil && isPort(p) {
 					return p
 				}
 			}
 			if after, ok := strings.CutPrefix(a, flag+"="); ok {
-				if p, err := strconv.Atoi(after); err == nil {
+				if p, err := strconv.Atoi(after); err == nil && isPort(p) {
 					return p
 				}
 			}
@@ -151,6 +152,9 @@ func ExtractPort(args []string) int {
 	}
 	return 0
 }
+
+// isPort reports whether p is a number a process can listen on.
+func isPort(p int) bool { return p >= 1 && p <= 65535 }
 
 // ListenPort returns the process's effective listen port: an explicit --port
 // flag on the command line when present, else the matched engine's default.

@@ -4,9 +4,7 @@
 package agentusage
 
 import (
-	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -19,73 +17,37 @@ type Process struct {
 	// Dir is the process's working directory, which is what attributes a
 	// transcript to it.
 	Dir string
-	// Started is when the process began, as far as the OS reports it.
+	// Started is when the process began, as far as the OS reports it; the
+	// zero time when the platform does not report it.
 	Started time.Time
 }
 
 // Discover lists the agent CLIs running on this machine, so a monitor can show
-// what is generating right now without being told.
+// what is generating right now without being told. It has one implementation
+// per platform: discover_linux.go walks /proc, discover_darwin.go asks ps(1)
+// and lsof(8), and platforms where a process's working directory cannot be
+// read without native calls report nothing at all.
 //
-// It walks /proc rather than shelling out to pgrep: the answer is three reads
-// per process, and spawning a process to count processes is how a monitor ends
-// up measuring itself. On systems without /proc it returns nothing, which
-// callers should treat as "cannot tell" rather than "nothing is running".
-func Discover() []Process {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return nil
-	}
-	known := map[string]bool{}
-	for _, a := range Agents() {
-		known[a] = true
-	}
+// An empty result means "cannot tell" rather than "nothing is running", which
+// callers should surface as no local agents rather than an error.
+//
+// None of these implementations shell out to pgrep-style helpers to find the
+// processes themselves: spawning a process to count processes is how a monitor
+// ends up measuring itself.
 
-	var out []Process
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		tool := toolOf(pid, known)
-		if tool == "" {
-			continue
-		}
-		dir, err := os.Readlink(filepath.Join("/proc", e.Name(), "cwd"))
-		if err != nil {
-			continue // exited, or another user's process
-		}
-		out = append(out, Process{PID: pid, Tool: tool, Dir: dir, Started: startedAt(pid)})
-	}
-	return out
-}
-
-// toolOf names the agent a process is running, or "" when it is not one.
+// agentName names the known agent a process is running, or "" when it is not
+// one.
 //
 // The executable name alone is not enough: agents ship as node and bun scripts,
 // so the process is called "node" and the agent name is in the command line.
-// Both are checked, and only whole path components count, so a shell that
-// merely mentions an agent in an argument is not mistaken for one.
-func toolOf(pid int, known map[string]bool) string {
-	dir := filepath.Join("/proc", strconv.Itoa(pid))
-
-	if name, err := os.ReadFile(filepath.Join(dir, "comm")); err == nil {
-		if t := strings.TrimSpace(string(name)); known[t] {
-			return t
-		}
+// Both the kernel's short name (comm / ucomm) and the first two command-line
+// words are checked, and only whole path components count, so a shell that
+// merely mentions an agent in a later argument is not mistaken for one.
+func agentName(comm string, argv []string, known map[string]bool) string {
+	if t := strings.TrimSpace(comm); known[t] {
+		return t
 	}
-
-	raw, err := os.ReadFile(filepath.Join(dir, "cmdline"))
-	if err != nil || len(raw) == 0 {
-		return ""
-	}
-	args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
-	// Only the program and its immediate subject are considered: `node
-	// /path/to/claude ...` names the agent in argv[1], while a later argument
-	// is just text that happens to contain the word.
-	for i, a := range args {
+	for i, a := range argv {
 		if i > 1 || a == "" {
 			break
 		}
@@ -94,14 +56,4 @@ func toolOf(pid int, known map[string]bool) string {
 		}
 	}
 	return ""
-}
-
-// startedAt reads a process's start time, falling back to the zero time when
-// it cannot be determined.
-func startedAt(pid int) time.Time {
-	fi, err := os.Stat(filepath.Join("/proc", strconv.Itoa(pid)))
-	if err != nil {
-		return time.Time{}
-	}
-	return fi.ModTime()
 }

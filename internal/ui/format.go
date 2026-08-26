@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rivo/uniseg"
 
 	"github.com/maci0/toktop/internal/core"
 )
@@ -59,7 +60,12 @@ func fmtDur(d time.Duration) string {
 	if d < time.Minute {
 		return d.String()
 	}
-	return fmt.Sprintf("%dm%02ds", d/time.Minute, int(d/time.Second)%60)
+	// Past an hour, minutes-only strings ("75m30s") make the reader do the
+	// hours math; uptimes and agent idle spans routinely cross that mark.
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%02ds", d/time.Minute, int(d/time.Second)%60)
+	}
+	return fmt.Sprintf("%dh%02dm", int(d/time.Hour), int(d/time.Minute)%60)
 }
 
 func humanBytes(b uint64) string {
@@ -85,6 +91,9 @@ func humanBytesShort(b uint64) string {
 // shorten truncates s to n visible cells with an ellipsis. Cells, not
 // runes: CJK and other wide glyphs occupy two columns, and cutting by rune
 // count would let the result render wider than n and break panel alignment.
+// The cut also only ever lands between grapheme clusters (user-perceived
+// characters): slicing a flag emoji into lone regional indicators or an
+// accented letter off its combining mark would print garbage in the pane.
 func shorten(s string, n int) string {
 	if n <= 0 {
 		return ""
@@ -94,12 +103,15 @@ func shorten(s string, n int) string {
 	}
 	var b strings.Builder
 	w := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
+	state := -1
+	for rest := s; rest != ""; {
+		var cluster string
+		cluster, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		rw := lipgloss.Width(cluster)
 		if w+rw > n-1 { // reserve one cell for the ellipsis
 			break
 		}
-		b.WriteRune(r)
+		b.WriteString(cluster)
 		w += rw
 	}
 	b.WriteRune('…')
@@ -126,6 +138,14 @@ func strip(s string) string { return core.SanitizeText(s) }
 func padTo(s string, w int) string {
 	for lipgloss.Width(s) < w {
 		s += " "
+	}
+	return s
+}
+
+// padStart right-aligns s within w visible cells.
+func padStart(s string, w int) string {
+	if gap := w - lipgloss.Width(s); gap > 0 {
+		return strings.Repeat(" ", gap) + s
 	}
 	return s
 }

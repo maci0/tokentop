@@ -272,6 +272,9 @@ func TestClientConnectRunForward(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer cli.Close()
+	if err := cli.Err(); err != nil {
+		t.Fatalf("fresh connection reported a loss: %v", err)
+	}
 
 	out, err := cli.Run(t.Context(), "echo hello-remote")
 	if err != nil {
@@ -315,7 +318,8 @@ func TestClientConnectRunForward(t *testing.T) {
 		t.Errorf("relay roundtrip = %q", buf)
 	}
 
-	// Close must be idempotent and fire Done.
+	// Close must be idempotent, fire Done, and stay a non-loss: Err must
+	// not grow a reason for a shutdown the operator asked for.
 	done := cli.Done()
 	cli.Close()
 	cli.Close()
@@ -323,6 +327,9 @@ func TestClientConnectRunForward(t *testing.T) {
 	case <-done:
 	default:
 		t.Error("Done should be closed after Close")
+	}
+	if got := cli.Err(); got != nil {
+		t.Errorf("deliberate Close recorded a loss: %v", got)
 	}
 }
 
@@ -421,6 +428,40 @@ func TestKeepaliveDetectsSilentPeer(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("silent peer not detected within probe window")
 	}
+	// The drop must carry its reason: Done alone says only that it ended.
+	if got := cli.Err(); got == nil || !strings.Contains(got.Error(), "lost") {
+		t.Fatalf("silent peer drop reported %v, want the loss reason", got)
+	}
+}
+
+// stallingHost listens on an ephemeral port and accepts one connection,
+// writing banner first when non-empty, then holds it open without sending
+// anything more. The port is the Connect target.
+func stallingHost(t *testing.T, banner string) int {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lis.Close() })
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, err := lis.Accept()
+		if err == nil {
+			if banner != "" {
+				fmt.Fprint(c, banner)
+			}
+			accepted <- c // hold TCP open
+		}
+	}()
+	t.Cleanup(func() {
+		select {
+		case c := <-accepted:
+			c.Close()
+		default:
+		}
+	})
+	return lis.Addr().(*net.TCPAddr).Port
 }
 
 // A host that completes TCP accept but never sends its ssh banner must fail
@@ -431,28 +472,10 @@ func TestConnectFailsOnSilentHost(t *testing.T) {
 	bannerTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { bannerTimeout = old })
 
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { lis.Close() })
-	accepted := make(chan net.Conn, 1)
-	go func() {
-		c, err := lis.Accept()
-		if err == nil {
-			accepted <- c // hold TCP open, send nothing
-		}
-	}()
-	t.Cleanup(func() {
-		select {
-		case c := <-accepted:
-			c.Close()
-		default:
-		}
-	})
+	port := stallingHost(t, "")
 
 	start := time.Now()
-	_, err = Connect(t.Context(), testTarget(t, lis.Addr().(*net.TCPAddr).Port))
+	_, err := Connect(t.Context(), testTarget(t, port))
 	if err == nil {
 		t.Fatal("silent host must fail Connect")
 	}
@@ -472,29 +495,10 @@ func TestConnectFailsOnPartialBanner(t *testing.T) {
 	bannerTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { bannerTimeout = old })
 
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { lis.Close() })
-	accepted := make(chan net.Conn, 1)
-	go func() {
-		c, err := lis.Accept()
-		if err == nil {
-			fmt.Fprint(c, "SSH-2.0-trickle") // no newline, then silence
-			accepted <- c                    // hold TCP open
-		}
-	}()
-	t.Cleanup(func() {
-		select {
-		case c := <-accepted:
-			c.Close()
-		default:
-		}
-	})
+	port := stallingHost(t, "SSH-2.0-trickle") // no newline, then silence
 
 	start := time.Now()
-	_, err = Connect(t.Context(), testTarget(t, lis.Addr().(*net.TCPAddr).Port))
+	_, err := Connect(t.Context(), testTarget(t, port))
 	if err == nil {
 		t.Fatal("partial-banner host must fail Connect")
 	}
@@ -606,6 +610,56 @@ func TestClientHostKeyChangeRefused(t *testing.T) {
 	_, err = Connect(t.Context(), testTarget(t, port))
 	if err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("changed host key must be refused, got: %v", err)
+	}
+}
+
+// An abnormal drop must reclaim the forward listeners. After an unattended
+// loss nobody calls Close (the attach-site watcher only reports it), so
+// listeners left bound would hold an fd and a relay goroutine apiece for the
+// rest of the dashboard while serving connections that can never succeed.
+func TestDropReclaimsForwardListeners(t *testing.T) {
+	withKnownHosts(t)
+	oldEvery, oldWait := keepaliveEvery, keepaliveReplies
+	keepaliveEvery, keepaliveReplies = 10*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { keepaliveEvery, keepaliveReplies = oldEvery, oldWait })
+
+	srv := newSilentSSHServer(t)
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer cli.Close() // no-op after the drop; must stay safe
+
+	up, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer up.Close()
+	rport := up.Addr().(*net.TCPAddr).Port
+	fwd, err := cli.Forward([]int{rport})
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	laddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(fwd[rport]))
+
+	select {
+	case <-cli.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("silent peer not detected within probe window")
+	}
+
+	cli.mu.Lock()
+	left := len(cli.listeners)
+	cli.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d forward listener(s) still tracked after the drop", left)
+	}
+	if c, derr := net.DialTimeout("tcp", laddr, time.Second); derr == nil {
+		c.Close()
+		t.Fatal("forward listener still accepting after the connection dropped")
+	}
+	if got := cli.Err(); got == nil || !strings.Contains(got.Error(), "lost") {
+		t.Fatalf("drop reported %v, want the loss reason", got)
 	}
 }
 

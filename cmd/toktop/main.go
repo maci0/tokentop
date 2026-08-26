@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -56,6 +57,7 @@ func main() {
 		agents    = flag.Bool("agents", false, "watch AI coding agents on this machine by reading their session transcripts")
 		opencode  = flag.Bool("opencode-db", false, "with --agents: also read opencode's SQLite session database (needs a build with -tags sqlite)")
 		once      = flag.Bool("once", false, "render one frame and exit (non-interactive)")
+		plain     = flag.Bool("plain", false, "with --once: render a linear text report instead of the dashboard frame (screen-reader friendly)")
 		frames    = flag.Int("frames", 2, "with --once: snapshots to accumulate before rendering")
 		noReload  = flag.Bool("no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
 		seed      = flag.Int64("seed", 42, "demo RNG seed")
@@ -91,13 +93,21 @@ func main() {
 			fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
 			os.Exit(2)
 		}
+	} else if !term.IsTerminal(int(os.Stdout.Fd())) {
+		// The live dashboard paints with alt-screen sequences; piped or
+		// redirected they are garbage bytes in the capture, and --once is
+		// the supported way to get output without a terminal.
+		fmt.Fprintln(os.Stderr, "toktop: stdout is not a terminal; the live dashboard needs one (use --once for static output)")
+		os.Exit(2)
 	}
 	warnUnknownEnv()
 
 	// Flags the user passed explicitly, for warnings about no-op combos.
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	warnIgnoredFlags(explicit, *demoMode, *once, *agents)
+	warnIgnoredFlags(explicit, *demoMode, *once, *agents, *plain)
+	// Same reasoning for the frame-size variables, which only --once reads.
+	warnIgnoredFrameEnv(*once)
 
 	// Only when --ingest was given explicitly should an unusable listen
 	// address abort the run; the default-enabled endpoint degrades gracefully.
@@ -290,7 +300,7 @@ func main() {
 	}
 
 	if *once {
-		runOnce(cfg, ch, *frames)
+		runOnce(ctx, cfg, ch, *frames, *plain)
 		return
 	}
 
@@ -356,10 +366,38 @@ func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotRelo
 	}
 }
 
+// errInterrupted reports ctx cancellation while waiting for frames, so the
+// caller can exit with the shell's SIGINT convention instead of the timeout
+// message.
+var errInterrupted = errors.New("interrupted")
+
+// waitForFrames collects n snapshots, each allowed `wait` to arrive. It
+// returns early on interrupt: a Ctrl+C during --once must kill the run at
+// once, not leave it hanging until the timeout fires.
+func waitForFrames(ctx context.Context, ch <-chan core.Snapshot, n int, wait time.Duration) (core.Snapshot, error) {
+	var snap core.Snapshot
+	for range n { // several ticks so charts carry some history
+		t := time.NewTimer(wait)
+		select {
+		case snap = <-ch:
+			t.Stop()
+		case <-ctx.Done():
+			t.Stop()
+			return snap, errInterrupted
+		case <-t.C:
+			return snap, errors.New("timed out waiting for telemetry")
+		}
+	}
+	return snap, nil
+}
+
 // runOnce prints a single rendered frame sized to the terminal (or 120x38).
 // TOKTOP_COLUMNS / TOKTOP_LINES override detection (useful for capture);
-// validateOnceEnv rejected unusable values before this runs.
-func runOnce(cfg ui.Config, ch <-chan core.Snapshot, n int) {
+// validateOnceEnv rejected unusable values before this runs. With plain, the
+// frame is a linear text report instead of the dashboard layout: the braille
+// chart rows and box-drawing borders of the visual frame read as noise (or
+// silence) through a screen reader.
+func runOnce(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, n int, plain bool) {
 	w, h := 120, 38
 	if tw, th, err := term.GetSize(int(os.Stdout.Fd())); err == nil && tw > 40 && th > 20 {
 		w, h = tw, th
@@ -377,14 +415,17 @@ func runOnce(cfg ui.Config, ch <-chan core.Snapshot, n int) {
 	if d := 3 * cfg.PollEvery; d > wait {
 		wait = d
 	}
-	var snap core.Snapshot
-	for range n { // several ticks so charts carry some history
-		select {
-		case snap = <-ch:
-		case <-time.After(wait):
-			fmt.Fprintln(os.Stderr, "toktop: timed out waiting for telemetry")
-			os.Exit(1)
+	snap, err := waitForFrames(ctx, ch, n, wait)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
+		if errors.Is(err, errInterrupted) {
+			os.Exit(130) // 128+SIGINT: what an interrupted child would report
 		}
+		os.Exit(1)
+	}
+	if plain {
+		fmt.Println(ui.PlainTextFrame(cfg, snap))
+		return
 	}
 	fmt.Println(ui.StaticFrame(cfg, snap, w, h))
 }
@@ -416,6 +457,7 @@ Examples:
   toktop --agents              also watch coding agents on this machine
   toktop --agents --opencode-db  ...including opencode's session database
   toktop --once >frame.txt     render one static frame and exit
+  toktop --once --plain        one frame as a linear text report (screen readers)
 
 Flags:
 `)
@@ -430,7 +472,7 @@ or $TOKTOP_SSH_PASSWORD. See README.md for all environment variables.
 
 // warnIgnoredFlags names flags passed explicitly but with no effect in the
 // chosen mode: a silently dropped knob looks like a broken feature.
-func warnIgnoredFlags(set map[string]bool, demo, once, agents bool) {
+func warnIgnoredFlags(set map[string]bool, demo, once, agents, plain bool) {
 	if set["opencode-db"] && !agents {
 		fmt.Fprintln(os.Stderr, "toktop: --opencode-db has no effect without --agents")
 	}
@@ -439,6 +481,24 @@ func warnIgnoredFlags(set map[string]bool, demo, once, agents bool) {
 	}
 	if set["frames"] && !once {
 		fmt.Fprintln(os.Stderr, "toktop: --frames has no effect without --once")
+	}
+	if set["plain"] && !once {
+		fmt.Fprintln(os.Stderr, "toktop: --plain has no effect without --once")
+	}
+}
+
+// warnIgnoredFrameEnv names TOKTOP_COLUMNS / TOKTOP_LINES when they are set
+// but --once is not running: the overrides only size static frames, and a
+// silently ignored variable looks like a broken knob, same as a flag passed
+// into a mode that never reads it.
+func warnIgnoredFrameEnv(once bool) {
+	if once {
+		return
+	}
+	for _, name := range [...]string{"TOKTOP_COLUMNS", "TOKTOP_LINES"} {
+		if os.Getenv(name) != "" {
+			fmt.Fprintf(os.Stderr, "toktop: $%s has no effect without --once\n", name)
+		}
 	}
 }
 

@@ -10,8 +10,8 @@
 // write to their own session transcripts, and feeds the same event stream, so
 // a claude or codex working in a terminal shows up next to the engines.
 //
-// The reading is done by github.com/maci0/gauntlet/agentusage, which is the
-// same code gauntlet uses for its dashboard. Its contract carries over: every
+// The reading is done by github.com/maci0/toktop/agentusage, the same code
+// gauntlet uses for its dashboard. Its contract carries over: every
 // number came from an agent that reported it, and an agent that reports
 // nothing produces no rate rather than a zero.
 package agentwatch
@@ -68,6 +68,12 @@ type tracked struct {
 	// viaEngine names the monitored engine this agent generates through, when
 	// it has one. Its tokens are then the engine's to report.
 	viaEngine string
+	// viaAdvertised is the engine last named in an attribution note. The note
+	// carries state, not progress: re-sending it on every read while the
+	// agent keeps generating would pour an event per polling interval into a
+	// retained feed that holds AgentHistoryLen rows, evicting the events that
+	// carry real numbers - this agent's own included.
+	viaAdvertised string
 }
 
 // New returns a watcher feeding rec. Zero intervals take the defaults, and a
@@ -205,7 +211,7 @@ func (w *Watcher) read() {
 	w.mu.Unlock()
 
 	for _, t := range snapshot {
-		cur := t.watch.Read()
+		cur := t.watch.Poll()
 		if cur.Empty() {
 			continue
 		}
@@ -220,7 +226,13 @@ func (w *Watcher) read() {
 		}
 		if t.viaEngine != "" {
 			// The engine is already reporting these tokens. Saying so keeps
-			// the agent visible without counting its output twice.
+			// the agent visible without counting its output twice; saying it
+			// once per engine is attribution, while repeating it every read
+			// is noise that starves the feed of real events.
+			if t.viaEngine == t.viaAdvertised {
+				continue
+			}
+			t.viaAdvertised = t.viaEngine
 			w.rec.RecordAgent(core.AgentEvent{
 				At:    cur.At,
 				Agent: t.proc.Tool,

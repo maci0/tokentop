@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Marcel W. Wysocki
 // SPDX-License-Identifier: MIT
 
-// Package streamjson reads token usage out of the JSONL transcripts agent CLIs
-// already write to disk.
+// Generic parsing of one transcript JSON line: usage counters are picked up
+// by key rather than modeled per agent.
 //
 // The envelopes differ per agent and change between releases, so this does not
 // model any one of them. It walks the decoded JSON and picks up values by key,

@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/maci0/toktop/internal/core"
@@ -46,4 +47,63 @@ func FuzzParseVitals(f *testing.F) {
 			}
 		}
 	})
+}
+
+// FuzzParseDiscoveryOutput throws arbitrary bytes at the remote-discovery
+// parsers: parseNetTCP and parseProcScan read whatever a hostile SSH host
+// prints for the /proc sweeps, and enginePorts plus ForwardSet turn that into
+// the tunnel set. Nothing a remote prints may plant an impossible port (a
+// tunnel target outside the TCP range is a broken connection at best), lists
+// must stay sorted and duplicate-free, and parsing is deterministic.
+func FuzzParseDiscoveryOutput(f *testing.F) {
+	for _, seed := range []string{
+		netTCPSample,
+		netTCPSample + "   9: 0100007F:FFFFF 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 1 ffff8ba0c4a48000 100 0 0 10 1\n",
+		"   0: 0100007F:10000 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 f 100 0 0 10 1\n",
+		"1 llama-server --port=99999999\n2 ollama serve\n3 python -m vllm.entrypoints.openai.api_server --port -7\n",
+		"102 python -m vllm.entrypoints.openai.api_server --port 9911\n103 \nnotapid junk\n",
+		"2147483647 x --port 65535\n-5 ollama serve\n0 proc\n",
+		"garbage\n\n0:\n x:y z A\n::::\n",
+		"",
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		out := string(data)
+
+		listening := parseNetTCP(out)
+		assertPorts(t, "listening", listening)
+		if again := parseNetTCP(out); !slices.Equal(again, listening) {
+			t.Fatal("parseNetTCP is not deterministic")
+		}
+
+		var d Discovery
+		d.Listening = listening
+		d.EnginePorts = assertPorts(t, "engine", enginePorts(parseProcScan(out)))
+		assertPorts(t, "forward set", d.ForwardSet([]int{11434, 8080, 3000}))
+
+		for _, info := range parseProcScan(out) {
+			if info.PID <= 0 {
+				t.Fatalf("pid %d survived parseProcScan: %+v", info.PID, info)
+			}
+			if len(info.Args) == 0 {
+				t.Fatalf("info %d has no argv: %+v", info.PID, info)
+			}
+		}
+	})
+}
+
+// assertPorts fails unless every port is a number something can listen on and
+// the list is strictly increasing, which is what sorted+deduped looks like.
+func assertPorts(t *testing.T, which string, ports []int) []int {
+	t.Helper()
+	for i, p := range ports {
+		if p < 1 || p > 65535 {
+			t.Fatalf("%s[%d] = %d is not a port", which, i, p)
+		}
+		if i > 0 && p <= ports[i-1] {
+			t.Fatalf("%s not sorted/deduped at %d: %v", which, i, ports)
+		}
+	}
+	return ports
 }

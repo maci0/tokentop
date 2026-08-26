@@ -48,7 +48,7 @@ func sampleMemoryLinux(s *core.SysSample) {
 
 // hostStaticInfo gathers everything that cannot change while the process
 // runs: distro name, kernel release, driver versions and the NPU inventory.
-// Without the cache each poll would re-read five files and re-walk the
+// Without the cache each poll would re-read three files and re-walk the
 // accel class for identical answers; all of it is resolved once and copied
 // into each fresh sample.
 type hostStatic struct {

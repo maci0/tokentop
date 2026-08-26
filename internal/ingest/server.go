@@ -48,6 +48,7 @@ func New(addr string, rec Recorder) (*Server, error) {
 	mux.HandleFunc("POST /v1/events", s.handlePost)
 	mux.HandleFunc("GET /v1/events", s.handleGet)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
 	})
@@ -119,6 +120,16 @@ func (b *progressBody) Read(p []byte) (int, error) {
 }
 
 func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
+	// A POST carrying an Origin header is browser-driven: every browser
+	// attaches Origin to a cross-site write, while curl, scripts and agent
+	// harnesses never send one. Without this check any web page the operator
+	// visits could fire a no-preflight POST here (the endpoint does not read
+	// Content-Type, so text/plain sails past CORS preflight) and forge rows
+	// into the live feed.
+	if r.Header.Get("Origin") != "" {
+		http.Error(w, "browser-originated requests are not accepted; post from a script or agent without an Origin header", http.StatusForbidden)
+		return
+	}
 	rc := http.NewResponseController(w)
 	until := time.Now().Add(maxEventLifetime)
 	_ = rc.SetReadDeadline(until) // covers reads before the first progress extension
@@ -132,11 +143,11 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	// stream and duplicating what was kept.
 	fail := func(status int, msg string) {
 		if n > 0 {
-			unit := "events"
 			if n == 1 {
-				unit = "event"
+				msg += "; 1 earlier event in this stream was recorded"
+			} else {
+				msg += fmt.Sprintf("; %d earlier events in this stream were recorded", n)
 			}
-			msg += fmt.Sprintf("; %d earlier %s in this stream were recorded", n, unit)
 		}
 		http.Error(w, msg, status)
 	}
@@ -278,9 +289,11 @@ func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintln(w, `{"hint":"POST /v1/events with {ts,agent,kind,model,prompt_tokens,output_tokens,note}"}`)
 }
 
-// clampField caps a free-form event field at n runes. Events are retained
-// (count-capped) for the process lifetime, so unbounded strings would let a
-// single oversized event pin memory until count-evicted.
+// clampField caps a free-form event field at n user-perceived characters
+// (grapheme clusters), cutting between characters so a retained emoji or
+// accented name never ends mid-character. Events are retained (count-capped)
+// for the process lifetime, so unbounded strings would let a single oversized
+// event pin memory until count-evicted.
 func clampField(s string, n int) string {
 	if len(s) <= n { // fast path: ASCII within cap, no scan
 		return s
@@ -288,5 +301,5 @@ func clampField(s string, n int) string {
 	if utf8.RuneCountInString(s) <= n {
 		return s
 	}
-	return string([]rune(s)[:n])
+	return core.TruncateClusters(s, n)
 }

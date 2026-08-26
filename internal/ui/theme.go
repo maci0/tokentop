@@ -12,8 +12,7 @@ import (
 
 // Catppuccin-mocha-leaning palette; degrades to nearest 256/16 colors on old terminals.
 var (
-	cBase    = lipgloss.Color("#1e1e2e")
-	cSurface = lipgloss.Color("#313244")
+	cBase = lipgloss.Color("#1e1e2e")
 	// Secondary text must stay >= 4.5:1 on cBase (WCAG 1.4.3): the old
 	// #6c7086 measured ~3.4:1. overlay1 keeps hierarchy below cText.
 	cDim      = lipgloss.Color("#9399b2")
@@ -129,11 +128,12 @@ func fmtKind(k string) string {
 }
 
 // heatColor maps 0..1 intensity onto a cold->hot ramp. The quiet end floors
-// at cDim, not cSurface: the ramp also colors text (header and per-agent
-// rates) that must hold 4.5:1 on cBase (WCAG 1.4.3), and its near-zero cells
-// are data-bearing chart marks bound by the same 3:1 floor as the faded
-// columns (WCAG 1.4.11). cSurface measured ~1.3:1, invisible to low-vision
-// users exactly when the rate it labels is small next to the session peak.
+// at cDim, not the surface gray #313244: the ramp also colors text (header
+// and per-agent rates) that must hold 4.5:1 on cBase (WCAG 1.4.3), and its
+// near-zero cells are data-bearing chart marks bound by the same 3:1 floor
+// as the faded columns (WCAG 1.4.11). The surface gray measured ~1.3:1,
+// invisible to low-vision users exactly when the rate it labels is small
+// next to the session peak.
 func heatColor(f float64) lipgloss.Color {
 	switch {
 	case f <= 0.02:

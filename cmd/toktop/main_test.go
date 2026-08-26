@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/maci0/toktop/agentusage"
+	"github.com/maci0/toktop/internal/core"
 )
 
 func TestValidateFlags(t *testing.T) {
@@ -253,6 +255,7 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		demo    bool
 		once    bool
 		agents  bool
+		plain   bool
 		wantSub string // empty means silence expected
 	}{
 		{name: "seed outside demo warns", set: map[string]bool{"seed": true}, wantSub: "--seed"},
@@ -265,10 +268,12 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		{name: "opencode-db without agents warns", set: map[string]bool{"opencode-db": true},
 			wantSub: "--opencode-db"},
 		{name: "opencode-db with agents silent", set: map[string]bool{"opencode-db": true}, agents: true},
+		{name: "plain outside once warns", set: map[string]bool{"plain": true}, wantSub: "--plain"},
+		{name: "plain inside once silent", set: map[string]bool{"plain": true}, once: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents) })
+			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents, tt.plain) })
 			if tt.wantSub == "" {
 				if got != "" {
 					t.Fatalf("warnIgnoredFlags() printed %q, want silence", got)
@@ -277,6 +282,75 @@ func TestWarnIgnoredFlags(t *testing.T) {
 			}
 			if !strings.Contains(got, tt.wantSub) {
 				t.Fatalf("warnIgnoredFlags() printed %q, want mention of %q", got, tt.wantSub)
+			}
+		})
+	}
+}
+
+func TestWaitForFrames(t *testing.T) {
+	mark := core.Snapshot{Uptime: 7 * time.Second} // comparable field identifies the frame
+	t.Run("collects the requested frames", func(t *testing.T) {
+		ch := make(chan core.Snapshot, 2)
+		ch <- mark
+		ch <- mark
+		got, err := waitForFrames(context.Background(), ch, 2, time.Second)
+		if err != nil || got.Uptime != mark.Uptime {
+			t.Fatalf("waitForFrames() = %+v, %v; want the sent frame, nil", got, err)
+		}
+	})
+	t.Run("timeout names the cause", func(t *testing.T) {
+		ch := make(chan core.Snapshot)
+		if _, err := waitForFrames(context.Background(), ch, 1, 10*time.Millisecond); err == nil ||
+			strings.Contains(err.Error(), "interrupted") || !strings.Contains(err.Error(), "timed out") {
+			t.Fatalf("waitForFrames() = %q, want timeout error", err)
+		}
+	})
+	// A Ctrl+C during --once must abort the wait at once rather than hang
+	// until the per-frame timeout fires.
+	t.Run("canceled context interrupts immediately", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		start := time.Now()
+		_, err := waitForFrames(ctx, make(chan core.Snapshot), 3, time.Minute)
+		if !errors.Is(err, errInterrupted) {
+			t.Fatalf("waitForFrames() = %v, want errInterrupted", err)
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Fatalf("waitForFrames() took %s after cancellation, want prompt return", elapsed)
+		}
+	})
+}
+
+func TestWarnIgnoredFrameEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		once    bool
+		columns string
+		lines   string
+		wantSub string // empty means silence expected
+	}{
+		{name: "unset is silent"},
+		{name: "columns outside once warns", columns: "120", wantSub: "TOKTOP_COLUMNS"},
+		{name: "lines outside once warns", lines: "38", wantSub: "TOKTOP_LINES"},
+		{name: "both set warn twice", columns: "120", lines: "38", wantSub: "TOKTOP_COLUMNS"},
+		{name: "inside once silent", once: true, columns: "120", lines: "38"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TOKTOP_COLUMNS", tt.columns)
+			t.Setenv("TOKTOP_LINES", tt.lines)
+			got := captureStderr(t, func() { warnIgnoredFrameEnv(tt.once) })
+			if tt.wantSub == "" {
+				if got != "" {
+					t.Fatalf("warnIgnoredFrameEnv() printed %q, want silence", got)
+				}
+				return
+			}
+			if n := strings.Count(got, "has no effect"); tt.columns != "" && tt.lines != "" && n < 2 {
+				t.Fatalf("warnIgnoredFrameEnv() printed %d warnings, want 2 for both variables", n)
+			}
+			if !strings.Contains(got, tt.wantSub) {
+				t.Fatalf("warnIgnoredFrameEnv() printed %q, want mention of %q", got, tt.wantSub)
 			}
 		})
 	}

@@ -61,8 +61,8 @@ var (
 	}
 )
 
-// definedSpec returns a transcript location supplied at runtime rather than
-// compiled in.
+// definedSpec returns an agent's transcript location, whether compiled in
+// (the pi family) or loaded at runtime by LoadDefinitions.
 func definedSpec(tool string) (Spec, bool) {
 	defsMu.RLock()
 	defer defsMu.RUnlock()

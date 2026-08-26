@@ -87,9 +87,9 @@ func TestFadeClampPassthrough(t *testing.T) {
 
 // heatColor colors chart marks (WCAG 1.4.11: >= 3:1 on cBase) and also text:
 // the header out-rate and the per-agent rates in the agents-only view ride
-// ramp colors at 4.5:1 (WCAG 1.4.3). Its quiet end once returned cSurface,
-// ~1.3:1, hiding small-but-real rates right after startup or from slow
-// agents; every point of the ramp must stay legible.
+// ramp colors at 4.5:1 (WCAG 1.4.3). Its quiet end once returned the surface
+// gray #313244, ~1.3:1, hiding small-but-real rates right after startup or
+// from slow agents; every point of the ramp must stay legible.
 func TestHeatRampMeetsContrastFloors(t *testing.T) {
 	for i := range 101 {
 		f := float64(i) / 100

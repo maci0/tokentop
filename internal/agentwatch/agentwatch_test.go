@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maci0/toktop/agentusage"
 	"github.com/maci0/toktop/internal/core"
 )
 
@@ -287,4 +288,58 @@ func port(t *testing.T, ln net.Listener) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestEngineNoteEmittedOncePerEngine pins the difference between state and
+// events: an agent generating through the same engine reads as one note no
+// matter how many readings pass, and a switch of engines says so once. A
+// fresh note per reading would flood the retained feed (AgentHistoryLen
+// rows) and evict every event carrying real numbers.
+func TestEngineNoteEmittedOncePerEngine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	work := t.TempDir()
+	transcript := filepath.Join(home, ".claude", "projects", "p")
+	if err := os.MkdirAll(transcript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recorder{}
+	w := New(rec, nil, time.Hour, time.Hour)
+	tr := &tracked{
+		proc:  agentusage.Process{PID: 1, Tool: "claude", Dir: work},
+		watch: agentusage.Watch("claude", work, time.Now()),
+	}
+	if tr.watch == nil {
+		t.Fatal("no claude adapter")
+	}
+	w.tracked[tr.proc.PID] = tr
+
+	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 100))
+	tr.viaEngine = "http://127.0.0.1:11434"
+	w.read() // first growth through this engine: attributed once
+
+	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 150))
+	w.read() // same engine again: attribution is unchanged, no new note
+
+	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 180))
+	tr.viaEngine = "http://127.0.0.1:8080"
+	w.read() // engine changed: said once
+
+	evs := rec.all()
+	if len(evs) != 2 {
+		t.Fatalf("got %d events, want one note per engine: %+v", len(evs), evs)
+	}
+	for _, ev := range evs {
+		if ev.Kind != "note" || !strings.Contains(ev.Note, "counted by engine") {
+			t.Fatalf("expected an attribution note, got: %+v", ev)
+		}
+		if ev.OutputTokens != 0 {
+			t.Fatalf("counted tokens the engine already reports: %+v", ev)
+		}
+	}
+	if !strings.Contains(evs[0].Note, "11434") || !strings.Contains(evs[1].Note, "8080") {
+		t.Fatalf("notes name the wrong engines: %q, %q", evs[0].Note, evs[1].Note)
+	}
 }

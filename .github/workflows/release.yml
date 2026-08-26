@@ -21,21 +21,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: install staticcheck (host binary; GOOS picks the analyzed platform)
-        run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.1
-
       - name: vet and staticcheck before shipping (every release platform)
-        run: |
-          set -euo pipefail
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
-            goos=${target%/*}; goarch=${target#*/}
-            echo "vetting $goos/$goarch"
-            GOOS="$goos" GOARCH="$goarch" go vet ./...
-            GOOS="$goos" GOARCH="$goarch" go vet -tags sqlite ./agentusage/...
-            echo "staticchecking $goos/$goarch"
-            GOOS="$goos" GOARCH="$goarch" staticcheck ./...
-            GOOS="$goos" GOARCH="$goarch" staticcheck -tags sqlite ./agentusage/...
-          done
+        # Per-platform gate lives in the Makefile; PLATFORMS there is the
+        # single source of truth so CI and local checks cannot drift apart.
+        run: make vet-cross
 
       - name: test before shipping
         run: go test -race -shuffle=on ./...
@@ -45,21 +34,14 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          # platform list lives in one place: the Makefile
-          make test-dist VERSION="$VERSION"
-          (
-            cd dist
-            sha256sum toktop_* > checksums.txt
-            sha256sum -c checksums.txt
-          )
+          # Platform list, checksum generation and deterministic archive
+          # metadata live in the Makefile so local and CI releases cannot
+          # drift apart.
+          make release VERSION="$VERSION"
           # smoke test the host-platform artifact: proves the binary runs and
           # carries the release version, not the default stamp
           echo "smoke test: toktop_${VERSION}_linux_amd64"
           test "$("./dist/toktop_${VERSION}_linux_amd64" --version)" = "toktop $VERSION"
-          (
-            cd dist
-            tar czf "toktop_${VERSION}_checksums.tar.gz" checksums.txt && rm checksums.txt
-          )
 
       - name: generate dependency sbom
         run: make sbom VERSION="${GITHUB_REF_NAME#v}"

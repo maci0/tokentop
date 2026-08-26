@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/maci0/toktop/internal/core"
 )
@@ -44,5 +47,55 @@ func TestRenderAgentsOnlySanitizesNames(t *testing.T) {
 	}
 	if !strings.Contains(out, "evil") {
 		t.Errorf("agents-only view lost the visible name:\n%s", out)
+	}
+}
+
+// The rate column must start at the same cell in every row. Padding by rune
+// or byte counts (fmt width verbs, len) counts the ANSI bytes of styled
+// cells and drifts whenever a name's visible width differs from either.
+func TestAgentRowsAlignRateColumn(t *testing.T) {
+	now := time.Now()
+	ev := func(agent string, at time.Time) core.AgentEvent {
+		return core.AgentEvent{At: at, Agent: agent, Kind: "turn", OutputTokens: 10}
+	}
+	events := []core.AgentEvent{
+		ev("a", now.Add(-3*time.Second)), ev("a", now.Add(-2*time.Second)),
+		ev("日本語エージェント", now.Add(-3*time.Second)), ev("日本語エージェント", now.Add(-2*time.Second)),
+	}
+	rows := agentRows(agentRates(events, now), now)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	rateCol := func(row string) int {
+		i := strings.Index(row, "▲")
+		if i < 0 {
+			t.Fatalf("row lacks a rate cell: %q", strip(row))
+		}
+		return lipgloss.Width(row[:i])
+	}
+	if got := rateCol(rows[0]); got != rateCol(rows[1]) {
+		t.Errorf("rate columns misaligned: %d vs %d cells\n%s\n%s",
+			got, rateCol(rows[1]), strip(rows[0]), strip(rows[1]))
+	}
+}
+
+// feedLines renders the newest n events oldest-first, so the feed reads like
+// a log tail; it must never reorder or drop within the tail.
+func TestFeedLinesNewestLast(t *testing.T) {
+	base := time.Now()
+	var events []core.AgentEvent
+	for i := range 6 {
+		events = append(events, core.AgentEvent{
+			At: base.Add(time.Duration(i) * time.Second), Agent: fmt.Sprint(i), Kind: "turn",
+		})
+	}
+	lines := feedLines(events, 4, 80)
+	if len(lines) != 4 {
+		t.Fatalf("lines = %d, want 4", len(lines))
+	}
+	for i, want := range []string{"2", "3", "4", "5"} {
+		if got := strip(lines[i]); !strings.Contains(got, want) {
+			t.Errorf("line %d = %q, want oldest-first event %s", i, got, want)
+		}
 	}
 }

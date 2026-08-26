@@ -123,6 +123,48 @@ func TestUpdateKeyMap(t *testing.T) {
 	}
 }
 
+// Help covers the whole screen: keys that act on the dashboard behind it
+// must be inert while it is up. Otherwise a keyboard user reading help
+// silently pauses (space) or fires real probe generations (p) with no
+// feedback until the overlay is dismissed.
+func TestHelpOverlayMutesActionKeys(t *testing.T) {
+	var probes atomic.Int32
+	m := New(Config{Version: "t", Prober: proberFunc(func() { probes.Add(1) })}, nil)
+	key := func(s string) tea.Cmd {
+		nm, cmd := m.Update(keyMsg(s))
+		m = nm.(Model)
+		return cmd
+	}
+
+	key("?")
+	if !m.help {
+		t.Fatal("? did not open help")
+	}
+	key(" ")
+	if m.paused {
+		t.Error("space acted while help was open")
+	}
+	before := m.chartCompressed
+	key("t")
+	if m.chartCompressed != before {
+		t.Error("t toggled the timescale while help was open")
+	}
+	key("p")
+	if probes.Load() != 0 {
+		t.Error("p fired probes while help was open")
+	}
+	if key("esc") != nil {
+		t.Error("esc with help open must close help, not quit")
+	}
+	if m.help {
+		t.Fatal("esc did not close help")
+	}
+	// Dismissed, the same keys work again.
+	if key(" "); !m.paused {
+		t.Error("space did not pause after help closed")
+	}
+}
+
 // Terminals below the minimum geometry degrade to a one-line-per-engine
 // strip; it must still carry each engine's label and live rate.
 func TestMinimalViewRendersRates(t *testing.T) {
@@ -135,6 +177,17 @@ func TestMinimalViewRendersRates(t *testing.T) {
 	out := strip(m.View())
 	if !strings.Contains(out, "ollama") || !strings.Contains(out, "42") || !strings.Contains(out, "tok/s") {
 		t.Errorf("minimal view missing engine rate:\n%s", out)
+	}
+}
+
+// space pauses in the compact strip too: without an in-view badge the frozen
+// rates are indistinguishable from a stalled feed.
+func TestMinimalViewShowsPaused(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.paused = true
+	m.w, m.h, m.ready = 40, 10, true
+	if out := strip(m.View()); !strings.Contains(out, "PAUSED") {
+		t.Errorf("paused minimal view lacks PAUSED badge:\n%s", out)
 	}
 }
 
@@ -300,6 +353,42 @@ func TestCompressSeriesWideTerminalKeepsSamples(t *testing.T) {
 	}
 }
 
+// Compressed columns are fleet aggregates: engines reporting at the same
+// instant must sum, or the chart reads N times below the aggregate its own
+// panel title prints (uniform mode and aggHist both sum).
+func TestCompressSeriesSumsAcrossEngines(t *testing.T) {
+	end := time.Unix(1_000_000_000, 0)
+	tv := []timedVal{
+		{t: end.Add(-time.Second), v: 100, s: 0},
+		{t: end.Add(-time.Second), v: 200, s: 1},
+	}
+	grid, _ := compressSeries(tv, 24, compressBlock)
+	if got := grid[len(grid)-1]; got != 300 {
+		t.Fatalf("newest column = %v, want 300 (engines sum, not average)", got)
+	}
+}
+
+// Time downsampling still averages within one engine: several cadences share
+// a coarse bucket, and their mean is that engine's rate over the span.
+func TestCompressSeriesAveragesWithinEngine(t *testing.T) {
+	end := time.Unix(1_000_000_000, 0)
+	tv := []timedVal{
+		{t: end.Add(-30 * time.Second), v: 100, s: 0},
+		{t: end.Add(-29 * time.Second), v: 300, s: 0},
+		{t: end.Add(-time.Second), v: 50, s: 1},
+	}
+	grid, _ := compressSeries(tv, 24, compressBlock)
+	var nonzero []float64
+	for _, g := range grid {
+		if g > 0 {
+			nonzero = append(nonzero, g)
+		}
+	}
+	if len(nonzero) != 2 || nonzero[0]+nonzero[1] != 250 {
+		t.Fatalf("columns = %v, want one 200 bucket (mean of 100,300) and one 50", nonzero)
+	}
+}
+
 func TestProbeSeriesStepHold(t *testing.T) {
 	base := time.Now()
 	s := core.Snapshot{Probes: []core.ProbeSample{
@@ -413,6 +502,36 @@ func TestStaticFrameNoSensors(t *testing.T) {
 	}
 }
 
+// With GPU devices present, hwmon GPU readings are filtered out of the CPU
+// temp list (they already render as GPU segments). The "+N more" overflow
+// marker must then still appear when the remaining CPU temps alone exceed
+// the four shown, counting only the filtered list.
+func TestSystemStripCountsFilteredTempsInMore(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.snap = core.Snapshot{
+		Providers: []core.ProviderSnapshot{{Label: "x", Kind: core.KindOllama, OK: true}},
+		Sys: &core.SysSample{
+			MemTotal: 32 << 30, MemUsed: 16 << 30,
+			Temps: []core.TempReading{
+				{Label: "cpu1", MilliC: 50000},
+				{Label: "cpu2", MilliC: 51000},
+				{Label: "cpu3", MilliC: 52000},
+				{Label: "cpu4", MilliC: 53000},
+				{Label: "cpu5", MilliC: 54000},
+				{Label: "cpu6", MilliC: 55000},
+				{Label: "edge", MilliC: 71000, IsGPU: true}, // filtered: renders as nv0
+			},
+			GPUs: []core.GPUDevice{{Vendor: "nvidia", Index: 0, MilliC: 70000}},
+		},
+	}
+	m.w, m.h, m.ready = 170, 40, true
+	out := strip(m.renderSystem())
+	if !strings.Contains(out, "+2 more") {
+		t.Errorf("strip = %q, want exactly the two hidden cpu temps counted as +2 more:\n%s",
+			out, out)
+	}
+}
+
 // The timescale toggle lives in the chart title; both modes must show the
 // current one plus a clearly delimited key, not a run-together "←t".
 func TestThroughputTitleAdvertisesTimescaleToggle(t *testing.T) {
@@ -482,7 +601,8 @@ func TestFmtDurMinuteRollover(t *testing.T) {
 	cases := map[time.Duration]string{
 		42 * time.Second:                          "42s",
 		5*time.Minute + 30*time.Second:            "5m30s",
-		time.Hour + 2*time.Minute + 3*time.Second: "62m03s",
+		time.Hour + 2*time.Minute + 3*time.Second: "1h02m",
+		3*time.Hour + 5*time.Minute:               "3h05m",
 	}
 	for d, want := range cases {
 		if got := fmtDur(d); got != want {

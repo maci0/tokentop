@@ -87,7 +87,9 @@ func Discover(ctx context.Context, c *Client, wellKnown []int) (*Discovery, erro
 const netTCPScript = "(cat /proc/net/tcp 2>/dev/null; cat /proc/net/tcp6 2>/dev/null; true)"
 
 // parseNetTCP extracts listening ports (state 0A) from /proc/net/tcp text.
-// The local address column is hex like 0100007F:2CA6.
+// The local address column is hex like 0100007F:2CA6. Ports are parsed as
+// 16-bit: a wider reading would let a hostile remote plant impossible
+// listeners that later drive the tunnel set.
 func parseNetTCP(out string) []int {
 	seen := map[int]bool{}
 	for line := range strings.SplitSeq(out, "\n") {
@@ -102,8 +104,8 @@ func parseNetTCP(out string) []int {
 		if !ok {
 			continue
 		}
-		p, err := strconv.ParseUint(hexPort, 16, 32)
-		if err != nil {
+		p, err := strconv.ParseUint(hexPort, 16, 16)
+		if err != nil || p == 0 { // port 0 is not a listener anything can reach
 			continue
 		}
 		seen[int(p)] = true

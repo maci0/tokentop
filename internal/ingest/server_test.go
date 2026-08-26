@@ -12,6 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/rivo/uniseg"
+
 	"github.com/maci0/toktop/internal/core"
 )
 
@@ -43,14 +45,35 @@ func postBody(t *testing.T, url, body string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
-func TestIngestAcceptsEvents(t *testing.T) {
-	rec := &memRecorder{}
+// startIngest serves on an ephemeral port backed by rec and closes it at
+// cleanup.
+func startIngest(t *testing.T, rec *memRecorder) *Server {
+	t.Helper()
 	s, err := New("127.0.0.1:0", rec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	go s.Serve()
-	defer s.Close()
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+// awaitEvents waits up to a second for rec to hold n events, failing if they
+// never arrive.
+func awaitEvents(t *testing.T, rec *memRecorder, n int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for len(rec.evs) < n && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if len(rec.evs) != n {
+		t.Fatalf("events = %d, want %d", len(rec.evs), n)
+	}
+}
+
+func TestIngestAcceptsEvents(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
 
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
 		`{"agent":"coder","kind":"tool","prompt_tokens":100,"output_tokens":5}`+"\n"+
@@ -58,13 +81,7 @@ func TestIngestAcceptsEvents(t *testing.T) {
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
-	deadline := time.Now().Add(time.Second)
-	for len(rec.evs) < 2 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(rec.evs) != 2 {
-		t.Fatalf("events = %d, want 2", len(rec.evs))
-	}
+	awaitEvents(t, rec, 2)
 	if rec.evs[0].Agent != "coder" || rec.evs[0].Kind != "tool" {
 		t.Errorf("event 0 = %+v", rec.evs[0])
 	}
@@ -79,12 +96,7 @@ func TestIngestAcceptsEvents(t *testing.T) {
 // Offset-aware stamps keep their zone; all forms must land on the instant.
 func TestIngestAcceptsNaiveTimestampsAsUTC(t *testing.T) {
 	rec := &memRecorder{}
-	s, err := New("127.0.0.1:0", rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
 		`{"agent":"py","ts":"2026-01-02T03:04:05"}`+"\n"+
@@ -93,13 +105,7 @@ func TestIngestAcceptsNaiveTimestampsAsUTC(t *testing.T) {
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
-	deadline := time.Now().Add(time.Second)
-	for len(rec.evs) < 3 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(rec.evs) != 3 {
-		t.Fatalf("events = %d, want 3", len(rec.evs))
-	}
+	awaitEvents(t, rec, 3)
 	want := time.Date(2026, 1, 2, 3, 4, 5, 123456000, time.UTC)
 	if got := rec.evs[0].At; !got.Equal(want.Truncate(time.Second)) || got.Location() != time.UTC {
 		t.Errorf("naive stamp = %v (%v), want 03:04:05 UTC", got, got.Location())
@@ -119,12 +125,7 @@ func TestIngestAcceptsNaiveTimestampsAsUTC(t *testing.T) {
 // an offset is honored, its absence decodes as UTC.
 func TestIngestAcceptsSpaceSeparatedTimestamps(t *testing.T) {
 	rec := &memRecorder{}
-	s, err := New("127.0.0.1:0", rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
 		`{"agent":"sql","ts":"2026-01-02 03:04:05"}`+"\n"+
@@ -133,18 +134,12 @@ func TestIngestAcceptsSpaceSeparatedTimestamps(t *testing.T) {
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
-	deadline := time.Now().Add(time.Second)
-	for len(rec.evs) < 3 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(rec.evs) != 3 {
-		t.Fatalf("events = %d, want 3 (a space-separated ts must not drop the stream)", len(rec.evs))
-	}
+	awaitEvents(t, rec, 3)
 	want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	if got := rec.evs[0].At; !got.Equal(want) || got.Location() != time.UTC {
 		t.Errorf("space-separated naive stamp = %v (%v), want 03:04:05 UTC", got, got.Location())
 	}
-	if got := rec.evs[1].At; !got.Equal(want.Add(250*time.Millisecond)) {
+	if got := rec.evs[1].At; !got.Equal(want.Add(250 * time.Millisecond)) {
 		t.Errorf("fractional stamp = %v, want %v", got, want.Add(250*time.Millisecond))
 	}
 	if got := rec.evs[2].At; !got.Equal(want) {
@@ -156,9 +151,7 @@ func TestIngestAcceptsSpaceSeparatedTimestamps(t *testing.T) {
 // error so sender bugs surface instead of silently becoming "now".
 func TestIngestRejectsGarbageTimestamp(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	resp := post(t, "http://"+s.Addr()+"/v1/events", `{"agent":"x","ts":"yesterday"}`)
 	if resp != http.StatusBadRequest {
@@ -171,15 +164,14 @@ func TestIngestRejectsGarbageTimestamp(t *testing.T) {
 
 func TestIngestDefaultsAndBadJSON(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 	base := "http://" + s.Addr() + "/v1/events"
 
 	resp := post(t, base, `{"prompt_tokens":1}`)
 	if resp != http.StatusAccepted {
 		t.Fatalf("anonymous event rejected: %d", resp)
 	}
+	awaitEvents(t, rec, 1)
 	if rec.evs[0].Agent != "anonymous" || rec.evs[0].Kind != "turn" {
 		t.Errorf("defaults not applied: %+v", rec.evs[0])
 	}
@@ -193,9 +185,7 @@ func TestIngestDefaultsAndBadJSON(t *testing.T) {
 // An empty body carries no event at all; the error must say so instead of
 // the cryptic decode-level "bad json: EOF".
 func TestIngestEmptyBodyRejected(t *testing.T) {
-	s, _ := New("127.0.0.1:0", &memRecorder{})
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, &memRecorder{})
 
 	code, body := postBody(t, "http://"+s.Addr()+"/v1/events", "")
 	if code != http.StatusBadRequest {
@@ -211,16 +201,14 @@ func TestIngestEmptyBodyRejected(t *testing.T) {
 // of replaying the whole stream and duplicating what was kept.
 func TestIngestPartialStreamReportsRecordedCount(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	code, body := postBody(t, "http://"+s.Addr()+"/v1/events",
 		`{"agent":"kept"}`+"\n"+`{"agent":"dropped","ts":"yesterday"}`)
 	if code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", code)
 	}
-	if !strings.Contains(body, "; 1 earlier event in this stream were recorded") {
+	if !strings.Contains(body, "; 1 earlier event in this stream was recorded") {
 		t.Errorf("error should state the recorded count, got %q", body)
 	}
 	if len(rec.evs) != 1 || rec.evs[0].Agent != "kept" {
@@ -242,7 +230,7 @@ func TestIngestOversizedAfterEventsReportsRecordedCount(t *testing.T) {
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversized body status = %d, want 413", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "; 1 earlier event in this stream were recorded") {
+	if !strings.Contains(w.Body.String(), "; 1 earlier event in this stream was recorded") {
 		t.Errorf("error should state the recorded count, got %q", w.Body.String())
 	}
 	if len(rec.evs) != 1 {
@@ -255,9 +243,7 @@ func TestIngestOversizedAfterEventsReportsRecordedCount(t *testing.T) {
 // encoding", instead of reading `bad json` on a perfectly encoded stream.
 func TestIngestRejectsOversizedBody(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	// The body must stay well formed up to the cap, or decoding fails with a
 	// syntax error before the limit is ever reached: one event whose string
@@ -278,26 +264,48 @@ func TestIngestRejectsOversizedBody(t *testing.T) {
 	}
 }
 
-// Token counts are unsigned quantities; a sender pushing negatives must not
-// plant junk values in the retained feed.
-func TestIngestClampsNegativeTokenCounts(t *testing.T) {
+// A POST with an Origin header is browser-driven, and the only way a browser
+// reaches this endpoint is a drive-by write from a page the operator is
+// visiting (no preflight: text/plain is a simple request). Such requests are
+// refused outright; documented senders never set Origin.
+func TestIngestRejectsBrowserOriginatedPost(t *testing.T) {
 	rec := &memRecorder{}
 	s, _ := New("127.0.0.1:0", rec)
 	go s.Serve()
 	defer s.Close()
+
+	req, err := http.NewRequest(http.MethodPost, "http://"+s.Addr()+"/v1/events",
+		strings.NewReader(`{"agent":"forger","kind":"turn","output_tokens":9999}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if len(rec.evs) != 0 {
+		t.Fatalf("events = %d, want none from a browser-originated post", len(rec.evs))
+	}
+}
+
+// Token counts are unsigned quantities; a sender pushing negatives must not
+// plant junk values in the retained feed.
+func TestIngestClampsNegativeTokenCounts(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
 
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
 		`{"agent":"buggy","prompt_tokens":-500,"output_tokens":-99999999999}`)
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
-	deadline := time.Now().Add(time.Second)
-	for len(rec.evs) < 1 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(rec.evs) != 1 {
-		t.Fatal("event not recorded")
-	}
+	awaitEvents(t, rec, 1)
 	if rec.evs[0].PromptTokens != 0 || rec.evs[0].OutputTokens != 0 {
 		t.Errorf("negative token counts retained: %+v", rec.evs[0])
 	}
@@ -309,9 +317,7 @@ func TestIngestClampsNegativeTokenCounts(t *testing.T) {
 // Modest skew stays honored.
 func TestIngestClampsFarFutureTimestamps(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	farFuture := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	nearFuture := time.Now().Add(10 * time.Second).UTC().Format(time.RFC3339)
@@ -321,13 +327,7 @@ func TestIngestClampsFarFutureTimestamps(t *testing.T) {
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
-	deadline := time.Now().Add(time.Second)
-	for len(rec.evs) < 2 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(rec.evs) != 2 {
-		t.Fatalf("events = %d, want 2", len(rec.evs))
-	}
+	awaitEvents(t, rec, 2)
 	if got := rec.evs[0].At; got.After(time.Now()) {
 		t.Errorf("far-future stamp retained: %v", got)
 	}
@@ -342,22 +342,14 @@ func TestIngestClampsFarFutureTimestamps(t *testing.T) {
 // missing field both decode to "stamp on arrival".
 func TestIngestTreatsEmptyTimestampAsAbsent(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
 		`{"agent":"a","ts":""}`+"\n"+`{"agent":"b","ts":"   "}`)
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
-	deadline := time.Now().Add(time.Second)
-	for len(rec.evs) < 2 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(rec.evs) != 2 {
-		t.Fatalf("events = %d, want 2", len(rec.evs))
-	}
+	awaitEvents(t, rec, 2)
 	for i, ev := range rec.evs {
 		if ev.At.IsZero() {
 			t.Errorf("event %d: empty ts not stamped", i)
@@ -369,9 +361,7 @@ func TestIngestTreatsEmptyTimestampAsAbsent(t *testing.T) {
 // application/json like every other JSON response from this server,
 // leaving clients nothing to sniff.
 func TestIngestAckContentType(t *testing.T) {
-	s, _ := New("127.0.0.1:0", &memRecorder{})
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, &memRecorder{})
 
 	resp, err := http.Post("http://"+s.Addr()+"/v1/events", "application/json",
 		strings.NewReader(`{"agent":"x"}`))
@@ -388,9 +378,7 @@ func TestIngestAckContentType(t *testing.T) {
 // The GET hint is the schema documentation senders see first; it must list
 // every accepted field, including ts.
 func TestIngestHintListsAllFields(t *testing.T) {
-	s, _ := New("127.0.0.1:0", &memRecorder{})
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, &memRecorder{})
 
 	resp, err := http.Get("http://" + s.Addr() + "/v1/events")
 	if err != nil {
@@ -409,9 +397,7 @@ func TestIngestHintListsAllFields(t *testing.T) {
 }
 
 func TestHealthz(t *testing.T) {
-	s, _ := New("127.0.0.1:0", &memRecorder{})
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, &memRecorder{})
 	resp, err := http.Get("http://" + s.Addr() + "/healthz")
 	if err != nil {
 		t.Fatal(err)
@@ -424,13 +410,14 @@ func TestHealthz(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
 		t.Fatalf("healthz = %d %q, want 200 ok", resp.StatusCode, body)
 	}
+	if got := resp.Header.Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Errorf("healthz content-type = %q, want text/plain; charset=utf-8", got)
+	}
 }
 
 func TestIngestClampsOversizedFields(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	huge := strings.Repeat("x", 10_000)
 	body := fmt.Sprintf(`{"agent":%q,"model":%q,"note":%q}`, huge, huge, huge)
@@ -438,17 +425,48 @@ func TestIngestClampsOversizedFields(t *testing.T) {
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
-	deadline := time.Now().Add(time.Second)
-	for len(rec.evs) < 1 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(rec.evs) != 1 {
-		t.Fatal("event not recorded")
-	}
+	awaitEvents(t, rec, 1)
 	ev := rec.evs[0]
 	if len(ev.Agent) > 64 || len(ev.Model) > 128 || utf8.RuneCountInString(ev.Note) > 512 {
 		t.Errorf("oversized fields retained: agent=%d model=%d note=%d",
 			len(ev.Agent), len(ev.Model), utf8.RuneCountInString(ev.Note))
+	}
+}
+
+// A retained field cut mid-character renders garbage downstream: half a flag
+// emoji is a lone regional indicator, a cut after U+200D leaves a dangling
+// joiner. Caps are counted in characters, so the cut must land between them.
+func TestIngestClampKeepsCharactersWhole(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	agent := strings.Repeat("\U0001F1E9\U0001F1EA", 48) // 96 flags: past the 64-character cap
+	note := strings.Repeat("👩‍💻", 300)                  // ZWJ sequences: past the 512-character cap
+	body := fmt.Sprintf(`{"agent":%q,"note":%q}`, agent, note)
+	resp := post(t, "http://"+s.Addr()+"/v1/events", body)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 1)
+	ev := rec.evs[0]
+
+	// The first n whole grapheme clusters, which is what a character-safe cap
+	// must retain.
+	wholeClusters := func(v string, n int) string {
+		var b strings.Builder
+		state := -1
+		for rest := v; n > 0 && rest != ""; n-- {
+			var c string
+			c, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+			b.WriteString(c)
+		}
+		return b.String()
+	}
+	if want := wholeClusters(agent, 64); ev.Agent != want {
+		t.Errorf("retained agent was cut mid-character: got %q, want the whole clusters %q", ev.Agent, want)
+	}
+	if want := wholeClusters(note, 512); ev.Note != want {
+		t.Errorf("retained note was cut mid-character: got %q, want the whole clusters %q", ev.Note, want)
 	}
 }
 
@@ -459,12 +477,7 @@ func TestIdleKeepAliveConnsReaped(t *testing.T) {
 	idleTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { idleTimeout = old })
 
-	s, err := New("127.0.0.1:0", &memRecorder{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, &memRecorder{})
 
 	conn, err := net.Dial("tcp", s.Addr())
 	if err != nil {
@@ -493,22 +506,14 @@ func TestIdleKeepAliveConnsReaped(t *testing.T) {
 // sequences must be stripped before the value enters the retained feed.
 func TestIngestSanitizesCustomKind(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
 		`{"agent":"x","kind":"\u001b]0;pwned\u0007weird"}`)
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
-	deadline := time.Now().Add(time.Second)
-	for len(rec.evs) < 1 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(rec.evs) != 1 {
-		t.Fatal("event not recorded")
-	}
+	awaitEvents(t, rec, 1)
 	if got := rec.evs[0].Kind; strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, 0x07) {
 		t.Errorf("kind retained escape sequences: %q", got)
 	}
@@ -555,10 +560,7 @@ func TestIngestReapsStalledBody(t *testing.T) {
 	maxEventLifetime, bodyIdleTimeout = time.Minute, 150*time.Millisecond
 	t.Cleanup(func() { maxEventLifetime, bodyIdleTimeout = oldLife, oldIdle })
 
-	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, &memRecorder{})
 
 	conn := startPost(t, s.Addr())
 	defer conn.Close()
@@ -577,9 +579,7 @@ func TestIngestAcceptsSlowProgressingStream(t *testing.T) {
 	t.Cleanup(func() { maxEventLifetime, bodyIdleTimeout = oldLife, oldIdle })
 
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	conn := startPost(t, s.Addr())
 	defer conn.Close()
@@ -595,13 +595,7 @@ func TestIngestAcceptsSlowProgressingStream(t *testing.T) {
 	if !strings.HasPrefix(resp, "HTTP/1.1 202") {
 		t.Fatalf("progressing stream response = %q, want 202", resp)
 	}
-	deadline := time.Now().Add(time.Second)
-	for len(rec.evs) < 2 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if len(rec.evs) != 2 {
-		t.Fatalf("events = %d, want 2", len(rec.evs))
-	}
+	awaitEvents(t, rec, 2)
 }
 
 // Progress alone must not extend a POST forever: past the absolute lifetime
@@ -611,10 +605,7 @@ func TestIngestCutsBodyPastAbsoluteLifetime(t *testing.T) {
 	maxEventLifetime, bodyIdleTimeout = 300*time.Millisecond, time.Minute // idle longer than life
 	t.Cleanup(func() { maxEventLifetime, bodyIdleTimeout = oldLife, oldIdle })
 
-	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, &memRecorder{})
 
 	conn := startPost(t, s.Addr())
 	defer conn.Close()

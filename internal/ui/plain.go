@@ -1,0 +1,337 @@
+package ui
+
+// PlainTextFrame renders one snapshot as a linear, text-only report: the
+// non-visual counterpart to StaticFrame. The dashboard frame draws charts as
+// braille dot-matrix rows, panels as box-drawing borders and meters as bar
+// glyphs; a screen reader meets those as floods of "braille pattern dots-…"
+// announcements or skips them silently, and the side-by-side mid-row scrambles
+// into interleaved column fragments when read line by line. This frame carries
+// every number as words in reading order instead (WCAG 1.1.1): no braille, no
+// borders, no bars, no multi-column layout. It is what `--once --plain` prints.
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/maci0/toktop/internal/core"
+)
+
+func PlainTextFrame(cfg Config, s core.Snapshot) string {
+	var b strings.Builder
+	if cfg.Demo {
+		b.WriteString("[demo] ")
+	}
+	b.WriteString("toktop v" + cfg.Version)
+	if s.Sys != nil && s.Sys.RemoteHost != "" {
+		b.WriteString(" via ssh:" + core.SanitizeText(s.Sys.RemoteHost))
+	}
+	b.WriteString("\n\n")
+
+	if len(s.Providers) == 0 {
+		if len(s.Agents) > 0 {
+			writeAgentsPlain(&b, s)
+			return b.String()
+		}
+		b.WriteString("no inference engines detected\n")
+		b.WriteString("attach an engine with --add URL, watch agents with --agents,")
+		b.WriteString(" or preview with --demo\n")
+		return b.String()
+	}
+
+	up, tot := 0, 0
+	for _, p := range s.Providers {
+		tot++
+		if p.OK {
+			up++
+		}
+	}
+	state := fmt.Sprintf("%d/%d engines up", up, tot)
+	switch {
+	case up == 0:
+		state += " (all down)"
+	case up < tot:
+		state += " (partial)"
+	}
+	fmt.Fprintf(&b, "%s · out %s tok/s · in %s tok/s",
+		state, fmtRate(aggOut(s)), fmtRate(aggIn(s)))
+	if s.Uptime > 0 {
+		b.WriteString(" · session " + fmtDur(s.Uptime))
+	}
+	b.WriteString("\n")
+
+	writeEnginesPlain(&b, s)
+	writeSystemPlain(&b, s.Sys)
+	writeProbesPlain(&b, s)
+	writeFeedPlain(&b, s, cfg)
+	return b.String()
+}
+
+// writeEnginesPlain lists every backend as its own block of lines, healthy or
+// not: the TUI hides down engines' telemetry behind an error line, and both
+// halves must survive here.
+func writeEnginesPlain(b *strings.Builder, s core.Snapshot) {
+	b.WriteString("\nENGINES\n")
+	for _, p := range s.Providers {
+		head := core.SanitizeText(p.Label)
+		if head == "" {
+			head = core.SanitizeText(p.Addr)
+		}
+		if k := core.SanitizeText(p.Kind); k != "" {
+			head += " (" + k + ")"
+		}
+		if p.OK {
+			b.WriteString("up   " + head + "\n")
+		} else {
+			b.WriteString("down " + head + "\n")
+		}
+		var detail []string
+		if model := core.SanitizeText(p.PrimaryModel()); model != "" && model != "-" {
+			detail = append(detail, model)
+		}
+		if p.Version != "" {
+			detail = append(detail, "version "+core.SanitizeText(p.Version))
+		}
+		if len(detail) > 0 {
+			b.WriteString("       " + strings.Join(detail, " · ") + "\n")
+		}
+		if !p.OK {
+			if msg := strings.TrimSpace(core.SanitizeText(p.Err)); msg != "" {
+				b.WriteString("       error: " + shorten(msg, 120) + "\n")
+			}
+			continue
+		}
+		var stats []string
+		stats = append(stats,
+			"out "+fmtRate(p.OutTokPS)+" tok/s",
+			"in "+fmtRate(p.InTokPS)+" tok/s",
+			fmt.Sprintf("kv cache %.0f%%", clamp01(p.KVPct/100)*100))
+		stats = append(stats,
+			fmt.Sprintf("running %d", p.Running),
+			fmt.Sprintf("waiting %d", p.Waiting))
+		if p.TTFTms > 0 {
+			stats = append(stats, "ttft "+fmtMs(p.TTFTms))
+		}
+		if p.ProcRSS > 0 {
+			rss := "rss " + humanBytesShort(p.ProcRSS)
+			if p.ProcCPU > 0 {
+				rss += fmt.Sprintf(" %.0f%% cpu", p.ProcCPU)
+			}
+			stats = append(stats, rss)
+		}
+		b.WriteString("       " + strings.Join(stats, " · ") + "\n")
+	}
+}
+
+// writeSystemPlain mirrors the SYS strip: memory, swap, load, accelerators,
+// identity and temperatures, each as its own labelled line.
+func writeSystemPlain(b *strings.Builder, sy *core.SysSample) {
+	if sy == nil {
+		return
+	}
+	b.WriteString("\nSYSTEM\n")
+	if sy.MemTotal == 0 {
+		b.WriteString("memory n/a\n")
+	} else {
+		memPct := float64(sy.MemUsed) / float64(sy.MemTotal) * 100
+		line := fmt.Sprintf("memory %.0f%% (%s/%s)", memPct,
+			humanBytesShort(sy.MemUsed), humanBytesShort(sy.MemTotal))
+		if sy.SwapTotal > 0 {
+			swPct := float64(sy.SwapUsed) / float64(sy.SwapTotal) * 100
+			line += fmt.Sprintf(" · swap %.0f%%", swPct)
+		}
+		if sy.Load1 > 0 || sy.Load5 > 0 {
+			line += fmt.Sprintf(" · load %.2f", sy.Load1)
+		}
+		b.WriteString(line + "\n")
+	}
+	for _, g := range sy.GPUs {
+		line := fmt.Sprintf("gpu %s%d", shortVendor(g.Vendor), g.Index)
+		if g.Name != "" {
+			line += " " + shorten(core.SanitizeText(g.Name), 30)
+		}
+		if g.MilliC > 0 {
+			line += " " + fmtTempC(g.MilliC)
+		}
+		if g.UtilPct > 0 {
+			line += fmt.Sprintf(" %.0f%% util", g.UtilPct)
+		}
+		if g.MemTotal > 0 {
+			line += " vram " + humanBytesShort(g.MemUsed) + "/" + humanBytesShort(g.MemTotal)
+		}
+		if g.PowerW > 0 {
+			line += fmt.Sprintf(" %.0fW", g.PowerW)
+		}
+		b.WriteString(line + "\n")
+	}
+	if sy.CPUModel != "" || sy.OsName != "" || sy.Kernel != "" ||
+		len(sy.Drivers) > 0 || len(sy.NPUs) > 0 {
+		var ident []string
+		if sy.CPUModel != "" {
+			ident = append(ident, core.SanitizeText(sy.CPUModel))
+		}
+		if sy.OsName != "" || sy.Kernel != "" {
+			osPart := core.SanitizeText(sy.OsName)
+			if sy.Kernel != "" {
+				osPart = strings.TrimSpace(osPart + " " + core.SanitizeText(sy.Kernel))
+			}
+			ident = append(ident, osPart)
+		}
+		for _, k := range sortedKeys(sy.Drivers) {
+			ident = append(ident, core.SanitizeText(k)+" "+core.SanitizeText(sy.Drivers[k]))
+		}
+		if len(sy.NPUs) > 0 {
+			ident = append(ident, "npu "+strings.Join(sy.NPUs, ","))
+		}
+		b.WriteString(strings.Join(ident, " · ") + "\n")
+	}
+	shown := 0
+	for _, t := range sysCPUTemps(sy) {
+		if shown >= 4 {
+			break
+		}
+		b.WriteString(fmt.Sprintf("temp %s %s\n",
+			strings.TrimSuffix(strings.Fields(t.Label + ",")[0], ","),
+			fmtTempC(t.MilliC)))
+		shown++
+	}
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// writeProbesPlain lists the most recent probe results newest-first, with the
+// ok/failed verdict spelled out and failure reasons attached.
+func writeProbesPlain(b *strings.Builder, s core.Snapshot) {
+	if len(s.Probes) == 0 {
+		return
+	}
+	b.WriteString("\nPROBES\n")
+	shown := 0
+	for i := len(s.Probes) - 1; i >= 0 && shown < 2; i-- {
+		p := s.Probes[i]
+		if !p.OK {
+			line := fmt.Sprintf("failed %s", shorten(core.SanitizeText(p.Model), 40))
+			if msg := strings.TrimSpace(core.SanitizeText(p.Err)); msg != "" {
+				line += " error: " + shorten(msg, 100)
+			}
+			b.WriteString(line + "\n")
+			shown++
+			continue
+		}
+		fmt.Fprintf(b, "ok %s ttft %s %s tok/s\n",
+			shorten(core.SanitizeText(p.Model), 40), fmtMs(p.TTFTms),
+			fmtRate(p.TokPS))
+		shown++
+	}
+}
+
+// writeFeedPlain tails the agent feed oldest-first like the panel does, with
+// per-kind words instead of icons. An empty feed keeps the panel's setup
+// guidance: which knob feeds this panel is invisible from a bare "empty".
+func writeFeedPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
+	b.WriteString("\nAGENT FEED\n")
+	if rates := agentRates(s.Agents, time.Now()); len(rates) > 0 {
+		var parts []string
+		for i, r := range rates {
+			if i == 3 {
+				parts = append(parts, fmt.Sprintf("+%d more", len(rates)-3))
+				break
+			}
+			name := core.SanitizeText(r.Agent)
+			if r.TokPS > 0 {
+				parts = append(parts, fmt.Sprintf("%s %s tok/s", name, fmtRate(r.TokPS)))
+			} else {
+				parts = append(parts, fmt.Sprintf("%s %s tok", name, fmtCount(r.Tokens)))
+			}
+		}
+		b.WriteString(strings.Join(parts, " · ") + "\n")
+	}
+	if len(s.Agents) == 0 {
+		switch {
+		case cfg.Agents:
+			b.WriteString("no agent activity yet; local agents are picked up automatically\n")
+		case cfg.IngestAddr != "":
+			b.WriteString(fmt.Sprintf("no agent activity yet; POST events to http://%s/v1/events\n",
+				core.SanitizeText(cfg.IngestAddr)))
+		default:
+			b.WriteString("no agent activity yet; run with --agents to watch coding agents on this machine\n")
+		}
+		return
+	}
+	const maxFeedEvents = 8
+	start := max(len(s.Agents)-maxFeedEvents, 0)
+	for _, ev := range s.Agents[start:] {
+		fmt.Fprintf(b, "%s %s %s model %s prompt %s output %s",
+			ev.At.Local().Format("15:04:05"), kindWord(ev.Kind),
+			core.SanitizeText(ev.Agent),
+			orDash(core.SanitizeText(ev.Model)),
+			fmtCount(ev.PromptTokens), fmtCount(ev.OutputTokens))
+		if ev.Note != "" {
+			b.WriteString(" note " + shorten(core.SanitizeText(ev.Note), 60))
+		}
+		b.WriteString("\n")
+	}
+}
+
+// writeAgentsPlain is the plain counterpart of renderAgentsOnly: agents but
+// no engines.
+func writeAgentsPlain(b *strings.Builder, s core.Snapshot) {
+	now := time.Now()
+	b.WriteString("no inference engines detected; --add URL attaches one\n\nAGENTS\n")
+	rows := 0
+	for _, r := range agentRates(s.Agents, now) {
+		name := core.SanitizeText(r.Agent)
+		recency := "idle " + fmtDur(now.Sub(r.Last).Truncate(time.Second))
+		if now.Sub(r.Last) < 3*time.Second {
+			recency = "live"
+		}
+		if r.TokPS > 0 {
+			fmt.Fprintf(b, "%s %s tok/s %s tok %s\n", name, fmtRate(r.TokPS),
+				fmtCount(r.Tokens), recency)
+		} else {
+			fmt.Fprintf(b, "%s no rate yet %s tok %s\n", name,
+				fmtCount(r.Tokens), recency)
+		}
+		rows++
+	}
+	if rows == 0 {
+		b.WriteString("waiting for an agent to report tokens\n")
+	}
+	writeFeedPlain(b, s, Config{})
+}
+
+// kindWord names an event kind in text; unknown kinds pass through like the
+// feed's dot glyph does.
+func kindWord(kind string) string {
+	switch kind {
+	case "turn":
+		return "turn"
+	case "tool":
+		return "tool"
+	case "error":
+		return "error"
+	case "note":
+		return "note"
+	default:
+		k := core.SanitizeText(kind)
+		if k == "" {
+			return "event"
+		}
+		return k
+	}
+}
+
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "-"
+	}
+	return s
+}

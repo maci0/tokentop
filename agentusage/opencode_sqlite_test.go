@@ -37,16 +37,16 @@ func opencodeDB(t *testing.T) string {
 
 func addSession(t *testing.T, path, id, dir string) {
 	t.Helper()
-	exec(t, path, `INSERT INTO session (id, directory) VALUES (?, ?)`, id, dir)
+	execSQL(t, path, `INSERT INTO session (id, directory) VALUES (?, ?)`, id, dir)
 }
 
 func addMessage(t *testing.T, path, id, session string, at time.Time, data string) {
 	t.Helper()
-	exec(t, path, `INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)`,
+	execSQL(t, path, `INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)`,
 		id, session, at.UnixMilli(), data)
 }
 
-func exec(t *testing.T, path, stmt string, args ...any) {
+func execSQL(t *testing.T, path, stmt string, args ...any) {
 	t.Helper()
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -140,8 +140,8 @@ func TestReadOnlyDSNEscapesURISyntax(t *testing.T) {
 // file: DSN; those paths must still open and read as themselves.
 func TestOpenCodeDBReadsPathWithURISyntaxCharacters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "50%.db")
-	exec(t, path, `CREATE TABLE session (id text PRIMARY KEY, directory text NOT NULL)`)
-	exec(t, path, `CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL,
+	execSQL(t, path, `CREATE TABLE session (id text PRIMARY KEY, directory text NOT NULL)`)
+	execSQL(t, path, `CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL,
 		time_created integer NOT NULL, data text NOT NULL)`)
 
 	dir := t.TempDir()

@@ -53,7 +53,9 @@ type Model struct {
 }
 
 func New(cfg Config, ch <-chan core.Snapshot) Model {
-	return Model{cfg: cfg, ch: ch, chartCompressed: chartCompressedDefault}
+	// The header clock only advances on ticks, so until the first one lands
+	// (~1s in) it must show the launch time rather than a zero-value midnight.
+	return Model{cfg: cfg, ch: ch, chartCompressed: chartCompressedDefault, clock: time.Now()}
 }
 
 // StaticFrame renders one snapshot for non-interactive output (--once).
@@ -150,7 +152,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitSnap(m.ch)
 
 	case tea.KeyMsg:
-		switch msg.String() {
+		key := msg.String()
+		// Help is a full-screen replacement view: action keys must not act
+		// blind on the dashboard it covers (space silently paused mid-read,
+		// p fired real probe generations). Only the dismiss and toggle keys
+		// stay live while help is up.
+		if m.help && key != "q" && key != "ctrl+c" && key != "esc" &&
+			key != "?" && key != "h" {
+			return m, nil
+		}
+		switch key {
 		case "q", "ctrl+c", "esc":
 			if m.help {
 				m.help = false
@@ -410,14 +421,17 @@ func (m Model) throughputTitle() string {
 	return title + mode + styleInfo.Render("[t]")
 }
 
-// timedVal is one sample with its absolute timestamp.
+// timedVal is one sample with its absolute timestamp, its value, and the
+// engine it came from.
 type timedVal struct {
 	t time.Time
 	v float64
+	s int
 }
 
 // timedSeries flattens every provider's history onto absolute timestamps
-// spaced one cadence apart.
+// spaced one cadence apart, tagging each sample with its engine: compressed
+// buckets must tell engines apart to average within one and sum across all.
 func timedSeries(s core.Snapshot, out bool, cadence time.Duration) []timedVal {
 	var tv []timedVal
 	for i := range s.Providers {
@@ -430,7 +444,7 @@ func timedSeries(s core.Snapshot, out bool, cadence time.Duration) []timedVal {
 			continue
 		}
 		for j, v := range vals {
-			tv = append(tv, timedVal{t0.Add(time.Duration(j) * cadence), v})
+			tv = append(tv, timedVal{t: t0.Add(time.Duration(j) * cadence), v: v, s: i})
 		}
 	}
 	sort.Slice(tv, func(i, j int) bool { return tv[i].t.Before(tv[j].t) })
@@ -441,6 +455,12 @@ func timedSeries(s core.Snapshot, out bool, cadence time.Duration) []timedVal {
 // every `block` columns moving away from the newest sample: right edge shows
 // per-cadence detail, the far left packs hours. bounds marks where each
 // coarser block begins so charts can draw faint separators.
+//
+// Aggregation matches uniform mode (aggHist) and the aggregate the panel
+// title prints: engines sum. Within one engine, samples sharing a coarse
+// bucket average into that span's mean rate. Dividing a bucket by its total
+// sample count instead would scale the chart down by the engine count and
+// make the two timescale modes disagree about what a column means.
 func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 	if len(tv) == 0 || w <= 0 {
 		return nil, nil
@@ -457,14 +477,21 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 		total += spans[j]
 	}
 
-	grid := make([]float64, w)
-	counts := make([]int, w)
 	bounds := map[int]bool{}
-	for j := range grid {
+	for j := range w {
 		if (w-1-j)%block == 0 && j < w-1 {
 			bounds[j] = true
 		}
 	}
+
+	nEngines := 0
+	for _, s := range tv {
+		nEngines = max(nEngines, s.s+1)
+	}
+	// Per-engine bucket sums and counts; rows materialize only for buckets
+	// samples actually land in.
+	sums := make([][]float64, w)
+	cnts := make([][]int, w)
 	for _, s := range tv {
 		offset := end.Sub(s.t)
 		if offset < 0 || offset >= total {
@@ -480,12 +507,19 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 			}
 			break
 		}
-		grid[j] += s.v
-		counts[j]++
+		if sums[j] == nil {
+			sums[j] = make([]float64, nEngines)
+			cnts[j] = make([]int, nEngines)
+		}
+		sums[j][s.s] += s.v
+		cnts[j][s.s]++
 	}
+	grid := make([]float64, w)
 	for j := range grid {
-		if counts[j] > 0 {
-			grid[j] /= float64(counts[j])
+		for e, cnt := range cnts[j] { // nil row for empty buckets: loop body skipped
+			if cnt > 0 {
+				grid[j] += sums[j][e] / float64(cnt)
+			}
 		}
 	}
 	return grid, bounds
@@ -553,12 +587,16 @@ func (m Model) renderSystem() string {
 		ident = hostSegments(sy)
 	}
 
+	cpuTemps := sysCPUTemps(sy)
 	shownTemps := 0
-	for _, t := range sysCPUTemps(sy) {
+	for _, t := range cpuTemps {
 		if shownTemps >= 4 {
 			break
 		}
-		label := shorten(strings.Fields(t.Label + ",")[0], 7)
+		// Labels come from local sysfs and (for remote hosts) parsed vendor
+		// tooling output; they pass the terminal sanitizer like every other
+		// externally sourced string.
+		label := shorten(core.SanitizeText(strings.Fields(t.Label + ",")[0]), 7)
 		label = strings.TrimSuffix(label, ",")
 		c := tempColor(float64(t.MilliC) / 1000)
 		ident = append(ident, dim(label+" ")+
@@ -570,8 +608,10 @@ func (m Model) renderSystem() string {
 	case shownTemps == 0 && len(sy.GPUs) == 0 && sy.CPUModel == "" &&
 		len(sy.Drivers) == 0 && sy.OsName == "":
 		ident = append(ident, dim("no sensors found"))
-	case len(sy.GPUs) == 0 && len(sy.Temps) > shownTemps:
-		ident = append(ident, dim(fmt.Sprintf("+%d more", len(sy.Temps)-shownTemps)))
+	case len(cpuTemps) > shownTemps:
+		// Counted on the filtered list: GPU readings already render as their
+		// own segments, so they are neither hidden nor counted here.
+		ident = append(ident, dim(fmt.Sprintf("+%d more", len(cpuTemps)-shownTemps)))
 	}
 
 	row1 := padBlock(joinSpreadLeft(vitals, w), w, 1)
@@ -851,16 +891,7 @@ func (m Model) renderFeed() string {
 	case m.cfg.IngestAddr != "":
 		add(dim("  ← POST http://" + m.cfg.IngestAddr + "/v1/events"))
 	}
-	lines := make([]string, 0, feedIn)
-	n := len(m.snap.Agents)
-	for i := n - 1; i >= 0 && len(lines) < feedIn; i-- {
-		ev := m.snap.Agents[i]
-		lines = append(lines, clip(feedLine(ev), w))
-	}
-	// newest at bottom
-	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
-		lines[i], lines[j] = lines[j], lines[i]
-	}
+	lines := feedLines(m.snap.Agents, feedIn, w)
 	if len(lines) == 0 {
 		switch {
 		case m.feedDown != "":
@@ -883,6 +914,19 @@ func (m Model) renderFeed() string {
 }
 
 var kindIcons = map[string]string{"turn": "▸", "tool": "⚙", "error": "✗", "note": "✎"}
+
+// feedLines renders the newest n events oldest-first, so a feed panel reads
+// top down like a log tail with the newest line at the bottom.
+func feedLines(events []core.AgentEvent, n, w int) []string {
+	if n <= 0 || len(events) == 0 {
+		return nil
+	}
+	out := make([]string, 0, min(n, len(events)))
+	for _, ev := range events[max(len(events)-n, 0):] {
+		out = append(out, clip(feedLine(ev), w))
+	}
+	return out
+}
 
 func feedLine(ev core.AgentEvent) string {
 	icon := kindIcons[ev.Kind]
@@ -959,7 +1003,7 @@ func (m Model) renderHelp() string {
 		{"space", "pause / resume streaming"},
 		{"p", "fire synthetic probe at every backend"},
 		{"t", "toggle compressed timescale + grid"},
-		{"?", "toggle this help"},
+		{"? / h", "toggle this help"},
 		{"", ""},
 		{"--demo", "simulated fleet, zero setup"},
 		{"--add URL", "attach an openai-compatible endpoint"},
@@ -967,6 +1011,7 @@ func (m Model) renderHelp() string {
 		{"--agents", "also watch coding agents on this machine"},
 		{"--probe N", "auto-probe every N seconds"},
 		{"--once", "print one frame and exit"},
+		{"--plain", "with --once: linear text report"},
 	}
 	var b strings.Builder
 	for _, r := range rows {
@@ -974,7 +1019,15 @@ func (m Model) renderHelp() string {
 		b.WriteString(key + dim(r[1]) + "\n")
 	}
 	box := helpStyle.Render(strings.TrimSuffix(b.String(), "\n"))
-	return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, box)
+	placed := lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, box)
+	// The minimal view advertises ? on panes far narrower than this box: an
+	// over-wide help line wraps and drags every row below it out of alignment,
+	// so clip like renderAgentsOnly does.
+	out := strings.Split(placed, "\n")
+	for i, ln := range out {
+		out[i] = clip(ln, m.w)
+	}
+	return strings.Join(out, "\n")
 }
 
 // renderMinimal is the degraded view for panes too small for the dashboard:
@@ -983,6 +1036,11 @@ func (m Model) renderHelp() string {
 func (m Model) renderMinimal() string {
 	var b strings.Builder
 	b.WriteString(dim(clip("enlarge window for the full dashboard", m.w)) + "\n")
+	// space pauses here too: without a badge a frozen strip is
+	// indistinguishable from a feed that stalled.
+	if m.paused {
+		b.WriteString(styleWarn.Render("‖ PAUSED") + "\n")
+	}
 	if len(m.snap.Providers) == 0 {
 		b.WriteString(styleWarn.Render("no inference engines detected") + "\n")
 		b.WriteString(dim(clip("try toktop --demo or --add URL", m.w)) + "\n")
@@ -1003,11 +1061,10 @@ func (m Model) renderMinimal() string {
 		}
 		b.WriteString(line + "\n")
 	}
-	keys := "q quit · space pause · p probe"
-	if m.w >= 52 {
-		keys += " · t timescale"
-	}
-	keys += " · ? help"
+	// Only keys with a visible effect in this layout are advertised: p and t
+	// still work, but their results (probe rows, chart timescale) render only
+	// in the full dashboard, where ? help points to them.
+	keys := "q quit · space pause · ? help"
 	return b.String() + dim(clip(keys, m.w))
 }
 

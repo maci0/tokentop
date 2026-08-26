@@ -213,8 +213,9 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 
 // sseErrorMessage extracts an engine-reported failure from a streaming data
 // payload. Gateways disagree on the shape: {"error":{"message":…}},
-// {"error":"…"}, or other junk; null and absent mean no error. The text is
-// bounded so one giant failure cannot flood a probe readout.
+// {"error":"…"}, or other junk; null and absent mean no error. Unrecognized
+// junk is capped by httperr.Snippet; a recognized message passes through as
+// sent, clipped to the readout's line width at render time.
 func sseErrorMessage(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""

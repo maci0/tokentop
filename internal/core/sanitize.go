@@ -13,8 +13,9 @@ import (
 
 // SanitizeText strips ANSI/ECMA-48 escape sequences (CSI, OSC, DCS, SOS, PM,
 // APC and two-byte forms) plus C0 and C1 control characters from s. Newlines
-// and tabs survive so layout text is unaffected. UTF-8 is preserved: only
-// ASCII control bytes and well-formed escape sequences are removed.
+// and tabs survive so layout text is unaffected. Other multi-byte runes are
+// preserved: only control characters and well-formed escape sequences are
+// removed.
 func SanitizeText(s string) string {
 	if !needsSanitize(s) {
 		return s
@@ -49,8 +50,9 @@ func SanitizeText(s string) string {
 }
 
 // needsSanitize reports whether s contains any byte that SanitizeText would
-// remove. All such bytes are ASCII controls below 0x20 (including ESC) or
-// DEL; multi-byte UTF-8 takes the slow path.
+// remove. Such bytes are the ASCII controls below 0x20 (including ESC), DEL,
+// or lead bytes 0xC2-0xC3, which may encode a C1 control; other multi-byte
+// UTF-8 takes the slow path.
 func needsSanitize(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]

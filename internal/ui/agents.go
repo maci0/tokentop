@@ -4,8 +4,8 @@ package ui
 //
 // The engines report their own rate; agents do not, so it is computed here
 // from what they spent and when. Nothing is extrapolated: an agent with a
-// single reading has no rate yet, and one that has gone quiet decays to zero
-// rather than holding its last value.
+// single reading has no rate yet, and one that has gone quiet falls out of
+// the window (and the list) rather than holding its last value forever.
 
 import (
 	"fmt"
@@ -103,6 +103,34 @@ func agentSummary(rates []agentRate) string {
 	return strings.Join(parts, dim("  ·  "))
 }
 
+// agentRows lays out one row per agent: name, rate, tokens, recency. Cells
+// are padded by visible cells (padTo/padStart), never %-Ns width verbs:
+// styled cells carry ANSI bytes whose rune counts would skew the columns.
+func agentRows(rates []agentRate, now time.Time) []string {
+	names := make([]string, len(rates))
+	nameW := 10
+	for i, r := range rates {
+		names[i] = core.SanitizeText(r.Agent)
+		nameW = max(nameW, lipgloss.Width(names[i]))
+	}
+	out := make([]string, 0, len(rates))
+	for i, r := range rates {
+		rate := dim("no rate yet")
+		if r.TokPS > 0 {
+			rate = styleValue.Foreground(heatColor(clamp01(r.TokPS / 60))).
+				Render("▲ " + fmtRate(r.TokPS) + " tok/s")
+		}
+		since := dim("idle " + fmtDur(now.Sub(r.Last).Truncate(time.Second)))
+		if now.Sub(r.Last) < 3*time.Second {
+			since = styleOK.Render("● live")
+		}
+		tok := dim(fmtCount(r.Tokens) + " tok")
+		out = append(out, "  "+padTo(styleValue.Render(names[i]), nameW)+
+			"  "+padTo(rate, 22)+"  "+padStart(tok, 10)+"  "+since)
+	}
+	return out
+}
+
 // renderAgentsOnly is the view for a machine with agents but no engines: the
 // agents themselves, their measured throughput, and the recent feed. It is a
 // real dashboard, not a placeholder, because for someone driving claude or
@@ -111,39 +139,13 @@ func (m Model) renderAgentsOnly() string {
 	w := m.w - 4
 	rates := agentRates(m.snap.Agents, m.clock)
 
-	rows := make([]string, 0, len(rates)+1)
-	nameW := 10
-	names := make([]string, len(rates))
-	for i, r := range rates {
-		names[i] = core.SanitizeText(r.Agent)
-		nameW = max(nameW, len(names[i]))
-	}
-	for i, r := range rates {
-		rate := dim("no rate yet")
-		if r.TokPS > 0 {
-			rate = styleValue.Foreground(heatColor(clamp01(r.TokPS / 60))).
-				Render("▲ " + fmtRate(r.TokPS) + " tok/s")
-		}
-		since := dim("idle " + fmtDur(m.clock.Sub(r.Last).Truncate(time.Second)))
-		if m.clock.Sub(r.Last) < 3*time.Second {
-			since = styleOK.Render("● live")
-		}
-		rows = append(rows, fmt.Sprintf("  %-*s  %-22s  %10s  %s",
-			nameW, styleValue.Render(names[i]), rate,
-			dim(fmtCount(r.Tokens)+" tok"), since))
-	}
+	rows := agentRows(rates, m.clock)
 	if len(rows) == 0 {
 		rows = append(rows, dim("  waiting for an agent to report tokens…"))
 	}
 
 	feedH := clampi(m.h-len(rows)-12, 3, 14)
-	feed := make([]string, 0, feedH)
-	for i := len(m.snap.Agents) - 1; i >= 0 && len(feed) < feedH; i-- {
-		feed = append(feed, clip(feedLine(m.snap.Agents[i]), w))
-	}
-	for i, j := 0, len(feed)-1; i < j; i, j = i+1, j-1 {
-		feed[i], feed[j] = feed[j], feed[i]
-	}
+	feed := feedLines(m.snap.Agents, feedH, w)
 
 	title := "AGENTS"
 	if hint := dim("  local, read from their own session logs"); m.w >= 78 {

@@ -318,6 +318,34 @@ func TestPollReusesFreshListingUntilItExpires(t *testing.T) {
 	}
 }
 
+// An empty listing is cached like any other: with no transcript matching yet,
+// the store must be walked once per rescanEvery, not on every poll. A session
+// created inside the window surfaces when it expires.
+func TestPollCachesEmptyListingUntilItExpires(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	w := Watch("claude", work, time.Now()) // attach walks the empty store once
+	if w == nil {
+		t.Fatal("claude should be supported")
+	}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("output tokens %d, want 0", got)
+	}
+
+	append_(t, filepath.Join(store, "late.jsonl"), claudeLine(work, 55))
+	if got := w.Poll().Output; got != 0 {
+		t.Fatalf("empty listing was re-walked: output %d, want 0", got)
+	}
+
+	w.pollMu.Lock()
+	w.scanned = time.Now().Add(-rescanEvery)
+	w.pollMu.Unlock()
+	if got := w.Poll().Output; got != 55 {
+		t.Fatalf("output tokens after rescan %d, want 55", got)
+	}
+}
+
 func TestDefinedAgentTranscriptsAreReadGenerically(t *testing.T) {
 	// An agent gauntlet was never compiled to know about: its transcript is
 	// readable as long as the records carry recognizable counters and a cwd.
@@ -453,6 +481,62 @@ func TestCopilotCliIgnoresOtherProjects(t *testing.T) {
 	w.poll(nil)
 	if got := w.Sample().Output; got != 70 {
 		t.Fatalf("output tokens %d, want 70: another project's session leaked in", got)
+	}
+}
+
+// A transcript caught between file creation and its header flush has no
+// verdict yet: the empty first sight must not harden into a permanent
+// "not mine" that silently drops the whole session.
+func TestHeaderNotYetWrittenIsRetriedNotCached(t *testing.T) {
+	store := withStore(t, "copilot")
+	work := t.TempDir()
+	path := filepath.Join(store, "sess-late", "events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	w := Watch("copilot", work, time.Now())
+	append_(t, path) // create the file empty: the agent has not flushed its header
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("output tokens %d, want 0: an empty undecided file counts for nothing yet", got)
+	}
+
+	append_(t, path,
+		`{"type":"session.start","id":"e0","data":{"sessionId":"s","context":{"cwd":`+jsonPath(work)+`}}}`,
+		`{"type":"assistant.message","data":{"usage":{"completion_tokens":120}}}`)
+	w.poll(nil)
+	if got := w.Sample().Output; got != 120 {
+		t.Fatalf("output tokens %d, want 120: a headerless first sight was cached as not ours", got)
+	}
+}
+
+// A file deep enough to rule out a pending header is refused for good, even
+// when usage records show up later: without a header there is nothing to
+// attribute them to.
+func TestHeaderlessFilePastScanCapIsRefusedDurably(t *testing.T) {
+	store := withStore(t, "copilot")
+	work, other := t.TempDir(), t.TempDir()
+	path := filepath.Join(store, "sess-orphan", "events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	w := Watch("copilot", work, time.Now())
+	for i := 0; i < ownerScanLines; i++ {
+		append_(t, path, `{"type":"other.event"}`)
+	}
+	append_(t, path, `{"type":"assistant.message","data":{"usage":{"completion_tokens":999}}}`)
+	w.poll(nil)
+
+	// A late header naming this directory must not resurrect it either: the
+	// refusal was earned, and re-reading history would misattribute it.
+	append_(t, path,
+		`{"type":"session.start","id":"e0","data":{"sessionId":"s","context":{"cwd":`+jsonPath(other)+`}}}`,
+		`{"type":"assistant.message","data":{"usage":{"completion_tokens":40}}}`)
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("output tokens %d, want 0: a headerless file was credited to this review", got)
 	}
 }
 

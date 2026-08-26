@@ -74,9 +74,11 @@ type passwordSource struct {
 }
 
 var interactivePassword = func(t Target) (string, error) {
-	fmt.Printf("toktop: password for %s: ", t.userHost())
+	// The prompt rides stderr, not stdout: stdout carries the dashboard (or
+	// a capture of it), and diagnostics must never mix into either.
+	fmt.Fprintf(os.Stderr, "toktop: password for %s: ", t.userHost())
 	b, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Println()
+	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", err
 	}

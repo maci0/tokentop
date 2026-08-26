@@ -37,6 +37,22 @@ TOKTOP_COLUMNS=120 TOKTOP_LINES=38 ./toktop --demo --once   # fixed size, for sc
 While a TUI instance runs, rebuilding the binary restarts it into the fresh
 build automatically (hot reload); pass `--no-hot-reload` to disable.
 
+## Regenerating the README screenshot
+
+`docs/images/dashboard.png` is captured from a live demo frame under tmux
+and rendered by `scripts/screenshot.py`:
+
+```
+tmux new-session -d -x 120 -y 38 -s shot './toktop --demo'
+tmux capture-pane -e -p -t shot > capture.txt
+tmux kill-session -t shot
+python3 scripts/screenshot.py capture.txt docs/images/dashboard.png
+```
+
+Its dependencies (pyte, pillow) are declared in `scripts/requirements.txt`;
+install them into a scratch venv (`uv pip install -r scripts/requirements.txt`),
+not the system.
+
 ## Make targets
 
 `make help` lists everything. The ones expected in day-to-day work:
@@ -52,6 +68,7 @@ build automatically (hot reload); pass `--no-hot-reload` to disable.
 | `make fmt` | rewrite files with gofmt -s |
 | `make fix` | apply `go fix` modernization autofixes, then gofmt |
 | `make lint` | staticcheck over both halves of the sqlite tag gate |
+| `make vet-cross` | vet + staticcheck on every release platform (the pre-ship gate release.yml runs) |
 
 ## Before opening a PR
 
@@ -79,4 +96,8 @@ cleanly, on the author's OS.
 Push a tag `v*`: GitHub Actions tests, cross-compiles every platform,
 generates checksums and a CycloneDX SBOM, and attaches binaries to the
 release. Locally, `make release VERSION=x.y.z` reproduces the same artifacts
-in `dist/`.
+in `dist/`. The checksums tarball is built deterministically: members are
+sorted, timestamps come from `SOURCE_DATE_EPOCH` (defaulting to the commit
+time), ownership is normalized, and gzip's name/mtime header is stripped, so
+two builds of one source produce byte-identical archives. This needs GNU tar;
+where the system tar is bsdtar (macOS), install GNU tar as `gtar`.

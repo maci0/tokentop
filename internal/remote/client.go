@@ -353,11 +353,22 @@ func (c *Client) relay(l net.Listener, rport int) {
 	}
 }
 
+// closeListeners reclaims every local forward listener (and thereby its relay
+// goroutine). Idempotent; safe alongside Forward and Close.
+func (c *Client) closeListeners() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, l := range c.listeners {
+		l.Close()
+	}
+	c.listeners = nil
+}
+
 // Close tears down relays and the connection. Safe more than once, and
-// complete even after the connection died on its own: listeners must be
-// reclaimed either way. It waits for the keepalive goroutine so no client
-// goroutine outlives the call (and none can observe pacing changes made
-// after teardown).
+// complete even after the connection died on its own: listeners are reclaimed
+// either way, here or by watchClose. It waits for the keepalive goroutine so
+// no client goroutine outlives the call (and none can observe pacing changes
+// made after teardown).
 func (c *Client) Close() {
 	c.closeMu.Lock()
 	select {
@@ -367,12 +378,7 @@ func (c *Client) Close() {
 	}
 	c.closeMu.Unlock()
 
-	c.mu.Lock()
-	for _, l := range c.listeners {
-		l.Close()
-	}
-	c.listeners = nil
-	c.mu.Unlock()
+	c.closeListeners()
 
 	c.setErr(nil)
 	c.conn.Close()
@@ -385,14 +391,21 @@ func (c *Client) Close() {
 // time.
 func (c *Client) watchClose() {
 	c.conn.Conn.Wait() // returns when the connection is torn down
+	// Reclaim the forward listeners here rather than leaving it to a caller:
+	// after an unattended drop nothing else tears this client down, and
+	// listeners left bound would hold an fd and a relay goroutine apiece for
+	// the rest of the process while serving connections that can never
+	// succeed. Runs before Done fires so a woken observer sees them gone.
+	c.closeListeners()
 	c.closeMu.Lock()
+	defer c.closeMu.Unlock()
 	select {
 	case <-c.closed: // deliberate shutdown, not a loss
-		c.closeMu.Unlock()
 		return
 	default:
-		close(c.closed)
 	}
-	c.closeMu.Unlock()
+	// Record the loss before Done fires: everything woken by Done must see
+	// the reason in Err instead of racing this assignment.
 	c.setErr(fmt.Errorf("ssh connection lost"))
+	close(c.closed)
 }

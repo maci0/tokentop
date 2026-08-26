@@ -77,7 +77,7 @@ func origin(raw string) string {
 	return originOf(u)
 }
 
-// origin renders a URL's scheme://host:port identity. Both sides of the
+// originOf renders a URL's scheme://host:port identity. Both sides of the
 // comparison go through it, so spelling differences (default port, host
 // case, IPv6 brackets) collapse.
 func originOf(u *url.URL) string {

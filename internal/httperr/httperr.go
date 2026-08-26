@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/maci0/toktop/internal/core"
 )
 
 // SnippetCap bounds how much of an error response body is quoted into
@@ -27,12 +29,10 @@ func Status(url string, resp *http.Response) error {
 	return errors.New(msg)
 }
 
-// Snippet collapses raw bytes to at most SnippetCap runes on one line.
+// Snippet collapses raw bytes to at most SnippetCap characters (grapheme
+// clusters) on one line, cutting between characters so a trailing emoji or
+// accented letter from an engine's body is never sliced in half.
 func Snippet(b []byte) string {
 	s := strings.Join(strings.Fields(string(b)), " ")
-	r := []rune(s)
-	if len(r) > SnippetCap {
-		r = r[:SnippetCap]
-	}
-	return string(r)
+	return core.TruncateClusters(s, SnippetCap)
 }

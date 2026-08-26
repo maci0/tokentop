@@ -15,10 +15,22 @@ const HTML = `<!doctype html>
 <meta property="og:description" content="btop for AI: a terminal dashboard for LLM inference engines and the coding agents hammering them.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://toktop.ai">
+<!-- the real dashboard, not a generated stand-in: share cards should show
+     the product the page is about -->
+<meta property="og:image" content="https://raw.githubusercontent.com/maci0/toktop/main/docs/images/dashboard.png">
+<meta property="og:image:width" content="4632">
+<meta property="og:image:height" content="2562">
+<meta property="og:image:alt" content="toktop running in a terminal: engine rows with throughput and KV-cache pressure beside an agent feed">
+<meta name="twitter:card" content="summary_large_image">
 <!-- the icon is the h1 cursor block in --accent/--panel, not a placeholder emoji -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2311161d'/><rect x='37' y='25' width='26' height='50' rx='5' fill='%234cc38a'/></svg>">
 <style>
   :root {
+    /* Both schemes are styled here; declaring them lets the browser match
+       its own chrome to the active one. Without this the scrollable <pre>
+       blocks grow light-styled scrollbars on the dark theme, invisible
+       against --panel (WCAG 1.4.11). */
+    color-scheme: dark light;
     --bg: #0d1117; --panel: #11161d; --line: #222b36;
     --fg: #d7dde5; --dim: #7d8895; --accent: #4cc38a; --warm: #e3b341;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -68,6 +80,10 @@ const HTML = `<!doctype html>
   a:hover { border-bottom-color: currentColor; }
   footer { margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line);
            color: var(--dim); font-size: 13px; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  /* A 13px/1.6 line box is ~21px tall, under the 24px target-size floor
+     (WCAG 2.2 AA SC 2.5.8); vertical padding makes each footer item a real
+     target instead of leaning on the spacing exception. */
+  footer > * { padding: .3rem 0; }
 </style>
 </head>
 <body>
@@ -127,22 +143,30 @@ toktop ssh://you@box      <span class="dim"># watch another host over ssh</span>
 </html>
 `;
 
-// The page bytes change only at deploy time, so a strong ETag lets a browser
+// The page bytes change only at deploy time, so a derived ETag lets a browser
 // that already holds a copy prove freshness with If-None-Match and be
 // answered with a bodyless 304 instead of the whole page again on every
-// reload and every visit past max-age. Derived from the source itself, so it
-// moves whenever the page does; computed once when the isolate starts.
-const ETAG = (() => {
+// reload and every visit past max-age. Computed once when the isolate starts.
+//
+// The validator is weak because the resource ships two encodings (identity and
+// gzip) under one URL, and RFC 9110 forbids one strong ETag spanning multiple
+// representations. If-None-Match compares weakly for GET revalidation either
+// way, so nothing is lost: no ranges are offered on a page this small.
+const ETAG_HASH = (() => {
   let hash = 0x811c9dc5;
   for (let i = 0; i < HTML.length; i++) {
     hash ^= HTML.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193);
   }
-  return `"${(hash >>> 0).toString(16)}"`;
+  return (hash >>> 0).toString(16);
 })();
 
+const ETAG = `W/"${ETAG_HASH}"`;
+
 // RFC 9110 weak comparison for If-None-Match: any list member counts, an
-// optional W/ prefix is ignored, and * matches whatever is held.
+// optional W/ prefix is ignored, and * matches whatever is held. Comparing
+// the stripped forms means validators sent back by older deploys (which used
+// a strong tag over the same hash) still revalidate to a 304.
 function ifNoneMatchMatches(headerValue) {
   const value = headerValue?.trim();
   if (!value) return false;
@@ -150,8 +174,32 @@ function ifNoneMatchMatches(headerValue) {
   return value.split(",").some((raw) => {
     let candidate = raw.trim();
     if (candidate.startsWith("W/")) candidate = candidate.slice(2);
-    return candidate === ETAG;
+    return candidate === `"${ETAG_HASH}"`;
   });
+}
+
+// True only when the client's Accept-Encoding actually admits gzip: an
+// explicit `gzip;q=0` vetoes even though `*` would otherwise cover it.
+function acceptsGzip(headerValue) {
+  if (!headerValue) return false;
+  return headerValue.split(",").some((part) => {
+    const [token, ...params] = part.trim().toLowerCase().split(";");
+    const q = params.find((p) => p.trim().startsWith("q="));
+    if (q && Number.parseFloat(q.trim().slice(2)) === 0) return false;
+    return token === "gzip" || token === "*";
+  });
+}
+
+// Compressed once per isolate, not once per request: the bytes change only at
+// deploy time, so the effort belongs where they are produced. The promise is
+// memoized, so the first gzip-accepting request pays one compression and every
+// later one copies a ready buffer.
+let gzipBodyPromise;
+function gzipBody() {
+  gzipBodyPromise ??= new Response(
+    new Response(HTML).body.pipeThrough(new CompressionStream("gzip")),
+  ).arrayBuffer();
+  return gzipBodyPromise;
 }
 
 // Fresh for five minutes, then served from the browser's copy while a cheap
@@ -159,12 +207,27 @@ function ifNoneMatchMatches(headerValue) {
 // and are never more than the first max-age behind a deploy.
 const PAGE_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=86400";
 
+// Two encodings live under one URL, so every cached copy must be keyed on
+// what the accepting client asked for; without Vary a shared cache could hand
+// a compressed body to a client that cannot decode it.
+const VARY = "Accept-Encoding";
+
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
   "strict-transport-security": "max-age=31536000",
   "referrer-policy": "strict-origin-when-cross-origin",
   "content-security-policy":
     "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+};
+
+// Every page answer (200 either encoding, 304) carries these; the security
+// headers ride along because a fresh load is exactly where they must apply.
+const PAGE_HEADERS = {
+  "content-type": "text/html; charset=utf-8",
+  etag: ETAG,
+  "cache-control": PAGE_CACHE_CONTROL,
+  vary: VARY,
+  ...SECURITY_HEADERS,
 };
 
 export default {
@@ -186,16 +249,21 @@ export default {
       // Revalidation answers keep the validator and policy headers but no body.
       return new Response(null, {
         status: 304,
-        headers: { etag: ETAG, "cache-control": PAGE_CACHE_CONTROL, ...SECURITY_HEADERS },
+        headers: {
+          etag: ETAG,
+          "cache-control": PAGE_CACHE_CONTROL,
+          vary: VARY,
+          ...SECURITY_HEADERS,
+        },
+      });
+    }
+    if (request.method === "GET" && acceptsGzip(request.headers.get("accept-encoding"))) {
+      return new Response(await gzipBody(), {
+        headers: { ...PAGE_HEADERS, "content-encoding": "gzip" },
       });
     }
     return new Response(HTML, {
-      headers: {
-        "content-type": "text/html; charset=utf-8",
-        etag: ETAG,
-        "cache-control": PAGE_CACHE_CONTROL,
-        ...SECURITY_HEADERS,
-      },
+      headers: PAGE_HEADERS,
     });
   },
 };

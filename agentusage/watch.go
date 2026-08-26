@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Marcel W. Wysocki
 // SPDX-License-Identifier: MIT
 
-// Package usagewatch reads live token counts out of the transcripts agent CLIs
+// Package agentusage reads live token counts out of the transcripts agent CLIs
 // already write to disk.
 //
 // Agents differ in what they print to stdout: some report token usage as they
@@ -17,9 +17,10 @@
 //     and sessions outlive reviews (--continue-sessions reuses them), so the
 //     watcher records where each file ended when it attached and reads only
 //     what is appended after that.
-//   - Attribute the transcript to the right review. Both supported agents
-//     record their working directory in the transcript, and every review runs
-//     with a distinct directory in worktree mode, so the cwd is the key.
+//   - Attribute the transcript to the right review. Each adapter ties its
+//     files to a working directory: recorded per record, read from the
+//     session header, or implicit because the log lives inside the reviewed
+//     directory itself (clanker), so the cwd is the key.
 //   - Never invent a number. An agent whose transcript cannot be found, parsed,
 //     or attributed simply reports nothing, and the dashboard shows no rate.
 package agentusage
@@ -32,8 +33,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -81,7 +84,7 @@ type adapter struct {
 	// Most agents keep transcripts under $HOME and ignore it; agents that keep
 	// them inside the project (clanker) use it.
 	roots func(dir string) []string
-	// glob matches transcript files under a root.
+	// suffix filters transcript files under a root by literal suffix match.
 	suffix string
 	// kind says how to combine the parsed values.
 	kind valueKind
@@ -99,6 +102,21 @@ type values struct {
 	output   int
 	thinking int
 	total    int
+}
+
+// maxSaneTokens bounds one counter a transcript line may contribute. Real
+// usage never approaches it; anything larger is corruption or hostility, and
+// reporting nothing beats displaying a lie (or overflowing the totals).
+const maxSaneTokens = 1 << 40
+
+// counter coerces a decoded transcript counter to its contribution: negative
+// or absurd magnitudes read as absent, the same judgment asInt makes for the
+// generic walker.
+func counter(n int) int {
+	if n < 0 || n > maxSaneTokens {
+		return 0
+	}
+	return n
 }
 
 var adaptersMu sync.RWMutex
@@ -121,8 +139,8 @@ var adapters = map[string]adapter{
 	// dsh (DeepSeek Harness) writes one session log per run under
 	// ~/.dsh/sessions/--<normalized-cwd>--/<id>/session.jsonl, with the cwd in
 	// an opening header record. The default spelling is zstd-compressed and
-	// unreadable here, which is why the launcher asks for compression: none
-	// (see agent.BuildCmd).
+	// unreadable here, which is why the launcher must ask dsh for
+	// compression: none.
 	"dsh": {
 		roots:      func(string) []string { return []string{home(".dsh", "sessions")} },
 		suffix:     ".jsonl",
@@ -334,9 +352,6 @@ func (w *Watcher) Dir() string {
 	return w.dir
 }
 
-// Read takes one reading now, including whatever an agent wrote as it exited.
-func (w *Watcher) Read() Sample { return w.Poll() }
-
 // Watch starts reading usage for one agent working in one directory. It
 // returns nil when that agent keeps no readable transcript, which callers
 // should treat as "no rate available" rather than an error. Files that
@@ -387,6 +402,11 @@ func Watch(tool, dir string, since time.Time) *Watcher {
 			w.seedBaseline(path)
 		}
 	}
+	// The seeding walk serves attach bookkeeping, not reads: leave the listing
+	// unstamped so the first poll re-walks and sees sessions created between
+	// attach and then. From that poll on, empty and non-empty listings share
+	// the same rescanEvery freshness window.
+	w.scanned = time.Time{}
 	return w
 }
 
@@ -406,15 +426,25 @@ func resolveDir(dir string) string {
 // dirSpellings lists the paths a review's directory can be recorded under:
 // the resolved one, and the one the caller passed if it differs. On macOS
 // every temporary directory is reached through a symlink, and an agent records
-// whichever spelling it was started with.
+// whichever spelling it was started with; there the list also carries the
+// other Unicode normalization forms of each spelling, since the file system
+// treats them as one directory while agents record either.
 func dirSpellings(dir string) []string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		abs = dir
 	}
-	out := []string{abs}
+	spellings := []string{abs}
 	if resolved := resolveDir(dir); resolved != abs {
-		out = append(out, resolved)
+		spellings = append(spellings, resolved)
+	}
+	var out []string
+	for _, s := range spellings {
+		for _, v := range dirVariants(s) {
+			if !slices.Contains(out, v) {
+				out = append(out, v)
+			}
+		}
 	}
 	return out
 }
@@ -550,9 +580,12 @@ const pollEvery = 250 * time.Millisecond
 const rescanEvery = time.Second
 
 // candidates lists transcript files recent enough to belong to this review,
-// reusing the previous walk for a few seconds.
+// reusing the previous walk for a few seconds. An empty result is cached too:
+// until something matches, the store is walked once per rescanEvery rather
+// than on every poll, and a session created in between surfaces when the
+// window expires, the same bound a non-empty listing already works under.
 func (w *Watcher) candidates() []string {
-	if w.cached != nil && time.Since(w.scanned) < rescanEvery {
+	if !w.scanned.IsZero() && time.Since(w.scanned) < rescanEvery {
 		return w.cached
 	}
 	cutoff := w.since.Add(-2 * time.Minute)
@@ -586,10 +619,12 @@ func (w *Watcher) candidates() []string {
 // them are idle, so the mtime check happens on a plain stat: an untouched file
 // costs one syscall instead of open+stat+close.
 //
-// Only newline-terminated lines are counted and only their bytes are
-// committed to the offset. A record whose remainder lands after this poll is
-// then re-read whole next time instead of being silently lost, and a read
-// error mid-file retries the whole span without having credited anything.
+// Newline-terminated lines are always counted; a trailing fragment without
+// its final newline is counted too, but only once it parses in full, and
+// only then are its bytes committed to the offset. Half-written records are
+// therefore re-read whole next poll instead of being silently lost, and a
+// read error mid-file retries the whole span without having credited
+// anything.
 func (w *Watcher) readNew(path string) {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -600,7 +635,18 @@ func (w *Watcher) readNew(path string) {
 		return // untouched since the last read
 	}
 	w.mtimes[path] = mt
-	if !w.owns(path) {
+	mine, decided := w.owns(path)
+	if !decided {
+		// No verdict yet: commit no offset. A file created after this review
+		// started belongs to it in full once its header appears, and skipping
+		// now would discard exactly those bytes; a pre-existing file's prefix
+		// predates the review, so advancing past it stays safe.
+		if w.preexisting[path] {
+			w.offsets[path] = fi.Size()
+		}
+		return
+	}
+	if !mine {
 		w.offsets[path] = fi.Size() // keep skipping it cheaply
 		return
 	}
@@ -622,7 +668,7 @@ func (w *Watcher) readNew(path string) {
 
 	// Collect first, fold in afterwards: a record may only be counted
 	// together with the offset that skips it.
-	var recs []pendingRecord
+	var recs []values
 	var (
 		line    []byte
 		discard bool
@@ -677,8 +723,8 @@ func (w *Watcher) readNew(path string) {
 		}
 		return // read failed: nothing counted, offset unchanged, retried next poll
 	}
-	for _, r := range recs {
-		w.applyRecord(path, r.v)
+	for _, v := range recs {
+		w.applyRecord(path, v)
 	}
 	w.offsets[path] = complete
 }
@@ -687,12 +733,9 @@ func (w *Watcher) readNew(path string) {
 // this is junk no parser here accepts.
 const maxLineBytes = 8 << 20
 
-// pendingRecord is one parsed usage record not yet folded into the totals.
-type pendingRecord struct{ v values }
-
 // collect parses one complete line and appends its values when it carries
 // usage belonging to this review.
-func (w *Watcher) collect(recs []pendingRecord, line []byte) []pendingRecord {
+func (w *Watcher) collect(recs []values, line []byte) []values {
 	v, cwd, ok := w.ad.parse(line)
 	if !ok {
 		return recs
@@ -702,7 +745,7 @@ func (w *Watcher) collect(recs []pendingRecord, line []byte) []pendingRecord {
 	if cwd != "" && !w.sameDir(cwd) {
 		return recs
 	}
-	return append(recs, pendingRecord{v: v})
+	return append(recs, v)
 }
 
 // applyRecord folds one counted record into the per-file bookkeeping.
@@ -745,46 +788,65 @@ func (w *Watcher) applyRecord(path string, v values) {
 	}
 }
 
+// ownerScanLines bounds the header search. These formats carry the working
+// directory in the opening record, so a file this deep without one has none.
+const ownerScanLines = 20
+
 // owns reports whether a transcript belongs to this review. For agents whose
 // usage lines repeat the cwd there is nothing to decide here; for the others
 // the session header at the top of the file is read once and cached.
-func (w *Watcher) owns(path string) bool {
+//
+// The second return value says whether the verdict is final. A file caught
+// between creation and its header flush yields no verdict yet: caching a
+// refusal there would blackhole a session that in fact belongs to this
+// review, so the decision is retried on a later poll instead.
+func (w *Watcher) owns(path string) (mine, decided bool) {
 	if w.ad.sessionCwd == nil {
-		return true // decided per line instead
+		return true, true // decided per line instead
 	}
 	if mine, known := w.owner[path]; known {
-		return mine
+		return mine, true
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return false, false // transient: retry next poll
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
-	for i := 0; i < 20 && sc.Scan(); i++ {
+	lines := 0
+	for lines < ownerScanLines && sc.Scan() {
 		if cwd, ok := w.ad.sessionCwd(sc.Bytes()); ok {
 			mine := w.sameDir(cwd)
 			w.owner[path] = mine
-			return mine
+			return mine, true
 		}
+		lines++
 	}
-	// No header found: refuse rather than credit another project's tokens to
-	// this review.
+	if lines < ownerScanLines {
+		// The file ended before the cap: the header may simply not be
+		// written yet. Stay undecided and uncached.
+		return false, false
+	}
+	// The scan cap was reached with no header anywhere in it, so there is
+	// nothing to wait for: refuse durably rather than credit another
+	// project's tokens to this review.
 	w.owner[path] = false
-	return false
+	return false, true
 }
 
 func (w *Watcher) sameDir(cwd string) bool {
-	if cwd == w.dir {
+	if sameSpelling(cwd, w.dir) {
 		return true
 	}
 	resolved, err := filepath.EvalSymlinks(cwd)
-	return err == nil && resolved == w.dir
+	return err == nil && sameSpelling(resolved, w.dir)
 }
 
 // parseClaude reads one line of a Claude Code transcript. Assistant messages
-// carry per-message usage, so the values are added up.
+// carry per-message usage, so the values are added up. A negative counter is
+// not a measurement: it is clamped to absent, the same rule the generic
+// walker applies, so a corrupted or hostile line cannot subtract from a total.
 func parseClaude(line []byte) (values, string, bool) {
 	var rec struct {
 		Type    string `json:"type"`
@@ -805,11 +867,14 @@ func parseClaude(line []byte) (values, string, bool) {
 		return values{}, "", false
 	}
 	u := rec.Message.Usage
-	if u.OutputTokens == 0 && u.InputTokens == 0 {
+	out := counter(u.OutputTokens)
+	in := counter(u.InputTokens)
+	if out == 0 && in == 0 {
 		return values{}, "", false
 	}
-	sum := u.InputTokens + u.OutputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
-	return values{output: u.OutputTokens, thinking: u.Details.ThinkingTokens, total: sum}, rec.Cwd, true
+	sum := satAdd(satAdd(in, out),
+		satAdd(counter(u.CacheReadInputTokens), counter(u.CacheCreationInputTokens)))
+	return values{output: out, thinking: counter(u.Details.ThinkingTokens), total: sum}, rec.Cwd, true
 }
 
 // parseQwen reads one line of a qwen-code chat transcript. Usage is recorded
@@ -828,13 +893,16 @@ func parseQwen(line []byte) (values, string, bool) {
 		return values{}, "", false
 	}
 	u := rec.Usage
-	if u.TotalTokenCount == 0 && u.CandidatesTokenCount == 0 {
+	total := counter(u.TotalTokenCount)
+	cand := counter(u.CandidatesTokenCount)
+	if total == 0 && cand == 0 {
 		return values{}, "", false
 	}
+	thoughts := counter(u.ThoughtsTokenCount)
 	return values{
-		output:   u.CandidatesTokenCount + u.ThoughtsTokenCount,
-		thinking: u.ThoughtsTokenCount,
-		total:    u.TotalTokenCount,
+		output:   satAdd(cand, thoughts),
+		thinking: thoughts,
+		total:    total,
 	}, rec.Cwd, true
 }
 
@@ -878,14 +946,26 @@ func parseCodex(line []byte) (values, string, bool) {
 	// session_meta names the directory; token_count carries the numbers.
 	if rec.Payload.Type == "token_count" {
 		u := rec.Payload.Info.TotalTokenUsage
-		if u.TotalTokens == 0 && u.OutputTokens == 0 {
+		total := counter(u.TotalTokens)
+		out := counter(u.OutputTokens)
+		if total == 0 && out == 0 {
 			return values{}, "", false
 		}
 		return values{
-			output:   u.OutputTokens,
-			thinking: u.ReasoningOutputTokens,
-			total:    u.TotalTokens,
+			output:   out,
+			thinking: counter(u.ReasoningOutputTokens),
+			total:    total,
 		}, "", true
 	}
 	return values{}, "", false
+}
+
+// satAdd sums two non-negative counters, saturating instead of wrapping: a
+// transcript with absurd counts must read as enormous, never as negative.
+func satAdd(a, b int) int {
+	s := a + b
+	if s < 0 {
+		return math.MaxInt
+	}
+	return s
 }

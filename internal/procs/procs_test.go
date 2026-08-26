@@ -14,7 +14,11 @@ func TestExtractPort(t *testing.T) {
 		{[]string{"llama-server", "--port", "8081"}, 8081},
 		{[]string{"vllm", "--port=9000"}, 9000},
 		{[]string{"x", "--http-port", "5002"}, 5002},
-		{[]string{"x", "-p", "1234"}, 0}, // -p is ambiguous, must not match
+		{[]string{"x", "-p", "1234"}, 0},      // -p is ambiguous, must not match
+		{[]string{"x", "--port", "65536"}, 0}, // outside the TCP port range
+		{[]string{"x", "--port", "99999999999"}, 0},
+		{[]string{"x", "--port", "-1"}, 0},
+		{[]string{"x", "--port=65535"}, 65535}, // boundary stays valid
 	}
 	for _, c := range cases {
 		if got := ExtractPort(c.args); got != c.want {

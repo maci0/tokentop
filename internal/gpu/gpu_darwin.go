@@ -17,7 +17,8 @@ import (
 // Apple GPU support has two halves:
 //
 //   - Identity (chip name, VRAM size) comes from system_profiler once per
-//     process. There is no pure-Go IOKit binding without cgo, and
+//     process on success; a failed probe is retried on later samples. There
+//     is no pure-Go IOKit binding without cgo, and
 //     system_profiler is its documented CLI, so shelling out is deliberate.
 //   - Live statistics come from ioreg's IOAccelerator PerformanceStatistics,
 //     readable without root: "In use GPU memory" in bytes plus utilization.
@@ -25,11 +26,25 @@ import (
 
 func init() {
 	var (
-		once   sync.Once
+		mu     sync.Mutex
 		idents []core.GPUDevice
+		next   time.Time // earliest retry after an unresolved probe
 	)
 	platformExtras = func(context.Context) []core.GPUDevice {
-		once.Do(func() { idents = appleGPUs() })
+		mu.Lock()
+		defer mu.Unlock()
+		// A failed or timed-out probe must not read as "no Apple GPU"
+		// forever: system_profiler can exceed its budget on a cold or
+		// loaded boot, and caching that miss would blank the Mac's GPU row
+		// for the whole session. Unresolved probes retry on later samples,
+		// gated by identityRetry so a persistently failing host pays at
+		// most one spawn per window.
+		if idents == nil && !next.After(time.Now()) {
+			idents = appleGPUs()
+			if len(idents) == 0 {
+				next = time.Now().Add(identityRetry)
+			}
+		}
 		if len(idents) == 0 {
 			return nil
 		}
@@ -42,9 +57,13 @@ func init() {
 	}
 }
 
-// identityTimeout bounds the one-shot system_profiler call. Generous on
-// purpose: the result is cached forever, so a too-tight cap would leave the
-// Mac with no GPU row for the whole process lifetime.
+// identityRetry spaces out retries of an unresolved identity probe. Success
+// is still cached for the process lifetime; only failures come back here.
+const identityRetry = 30 * time.Second
+
+// identityTimeout bounds one system_profiler call. Generous on purpose: the
+// call is the whole identity probe, and a too-tight cap would leave the Mac
+// with no GPU row until the next retry window opens.
 const identityTimeout = 10 * time.Second
 
 func appleGPUs() []core.GPUDevice {
@@ -154,7 +173,8 @@ func parseIoregNum(s string) uint64 {
 
 // parseSizeString reads vendor sizes like "128 GB", "8192 MB". The scaled
 // magnitude goes through satUint: junk input ("1e300 GB") must saturate
-// rather than convert out of range, since the result sits in the one-shot
+// rather than convert out of range, since the result sits in the
+// process-lifetime identity cache
 // identity cache for the whole process.
 func parseSizeString(s string) uint64 {
 	f := strings.Fields(s)

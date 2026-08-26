@@ -103,9 +103,13 @@ Event fields are all optional; anything omitted gets the default:
 
 One POST answers `202` with `{"accepted":N}` once every event in the stream
 is recorded, `400` for malformed JSON or a bad `ts`, `408` when a stream
-stalls mid-body, and `413` past the 1 MiB body cap. Error bodies are short
+stalls mid-body, and `413` past the 1 MiB body cap. A POST carrying an
+`Origin` header (browser-driven; scripts and agents never send one) is
+refused with `403`, so a web page cannot forge rows into a running
+dashboard. Error bodies are short
 plain-text reasons; unknown fields are ignored, so harnesses can include
-their own.
+their own. The request `Content-Type` header is not checked: the body is
+always read as JSON/NDJSON, so plain `curl -d` works unmodified.
 
 Streams are recorded line by line: if a later line fails, events before it
 stay recorded and the error states how many, so a retry should resume after
@@ -183,10 +187,14 @@ technology:
 - **Status never rides on color alone** - down engines show `✗` plus their
   error text, probes show `✓`/`✗`, gauges print their percentage, and the
   engine count is spelled out numerically in the header.
-- **Non-visual output** - `--once` prints one plain frame and exits instead
-  of running the full-screen UI; a live-repainting dashboard defeats most
-  screen readers, so the static frame is the intended path. Pair it with
-  `TOKTOP_COLUMNS` / `TOKTOP_LINES` for a fixed size.
+- **Non-visual output** - `--once` prints one static frame instead of running
+  the full-screen UI; a live-repainting dashboard defeats most screen readers,
+  so the static frame is the intended path. Pair it with
+  `TOKTOP_COLUMNS` / `TOKTOP_LINES` for a fixed size. `--once --plain` goes
+  further and prints the same numbers as a linear text report: no braille
+  chart glyphs (which screen readers announce as endless dot-pattern noise or
+  skip entirely), no box-drawing borders, no multi-column panels - just the
+  data in reading order.
 - **Tested contrast** - unit tests hold the palette to WCAG 2.2 AA: text
   colors at >= 4.5:1 on the background, and chart marks at >= 3:1 even at
   the deepest point of the age fade (`internal/ui/theme_test.go`).
@@ -202,11 +210,16 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 --ssh-key PATH    private key for ssh targets (overrides ~/.ssh/config)
 --bearer TOKEN    bearer token sent to --add endpoints only; OmniRoute API
                   keys etc. (env: OMNIROUTE_API_KEY, then TOKTOP_BEARER)
+--agents          watch AI coding agents on this machine (session logs)
+--opencode-db     with --agents: also read opencode's SQLite session
+                  database (needs a build with the sqlite tag)
 --probe N         auto-probe every N seconds
 --interval D      poll interval (default 1s)
 --ingest ADDR     agent event listen address (default 127.0.0.1:8420)
 --no-ingest       disable the event endpoint
 --once            render one frame and exit
+--plain           with --once: linear text report instead of the dashboard
+                  frame (screen-reader friendly)
 --frames N        with --once: snapshots to accumulate before rendering
 --seed N          demo RNG seed
 --no-hot-reload   disable restart-on-rebuild while running

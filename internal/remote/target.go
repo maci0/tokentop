@@ -155,7 +155,7 @@ func lookupSSHConfig(name string) *sshConfigEntry {
 }
 
 // cutConfigField splits an ssh_config line into keyword and argument,
-// handling both "key=value" and whitespace separation plus '#' comments.
+// handling both "key=value" and space separation plus '#' comments.
 func cutConfigField(line string) (key, val string, ok bool) {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
@@ -171,8 +171,9 @@ func cutConfigField(line string) (key, val string, ok bool) {
 	return k, strings.TrimSpace(rest), true
 }
 
-// patternMatch implements ssh_config glob matching ('*' and '?' only),
-// which is exactly path.Match's syntax for separator-free host names.
+// patternMatch implements ssh_config glob matching ('*' and '?') through
+// path.Match, whose character-class and escape extensions real host patterns
+// do not use.
 func patternMatch(pat, s string) bool {
 	matched, err := path.Match(pat, s)
 	return err == nil && matched

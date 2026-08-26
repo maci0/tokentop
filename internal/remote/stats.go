@@ -33,8 +33,9 @@ const sectionMark = "%toktop%"
 
 // vitalsScript dumps load, memory, uptime, CPU model, OS name, kernel and GPU
 // telemetry (NVIDIA via nvidia-smi, AMD via rocm-smi; whichever is present) in
-// one round trip, sections separated by sectionMark lines. Everything
-// degrades to empty on non-Linux remotes.
+// one round trip, sections separated by sectionMark lines. Load and memory
+// come from /proc and degrade to empty on non-Linux remotes; CPU model, OS
+// name and kernel have Darwin fallbacks.
 func vitalsScript() string {
 	return `
 cat /proc/loadavg 2>/dev/null
@@ -64,14 +65,22 @@ fi
 true`
 }
 
-// Run polls until ctx is done.
+// Run polls until ctx is done or the connection it samples dies: past a drop
+// every poll fails, so continuing would only burn a round trip apiece on a
+// corpse for the rest of the process.
 func (s *Stats) Run(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	s.poll(ctx)
+	var lost <-chan struct{}
+	if s.Client != nil {
+		lost = s.Client.Done()
+	}
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-lost:
 			return
 		case <-t.C:
 			s.poll(ctx)
@@ -136,8 +145,9 @@ func (s *Stats) Merge(into *core.SysSample) {
 // CPU model, OS name, kernel release and GPU telemetry (nvidia-smi CSV or
 // rocm-smi JSON), separated by sectionMark lines. Missing sections leave the
 // corresponding fields alone.
-// It reports whether usable load readings were present, so Merge can tell
-// "remote reports no load" from "remote is idle at 0".
+// It reports whether usable load readings were present; a remote whose
+// loadavg is missing or all-zero leaves the local readings in place instead
+// of zeroing them.
 func parseVitals(out string, s *core.SysSample) (loadsOK bool) {
 	sections := splitSections(out)
 	section := func(i int) string {
