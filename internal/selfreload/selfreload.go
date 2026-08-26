@@ -47,13 +47,11 @@ func statIdentity(path string) (identity, error) {
 	if err != nil {
 		return identity{}, err
 	}
-	id := identity{
+	dev, ino := fileID(path, fi)
+	return identity{
+		dev:        dev,
+		ino:        ino,
 		size:       fi.Size(),
 		mtimeNanos: fi.ModTime().UnixNano(),
-	}
-	if sys, ok := fi.Sys().(*syscallStat); ok {
-		id.dev = statDev(sys)
-		id.ino = statIno(sys)
-	}
-	return id, nil
+	}, nil
 }
