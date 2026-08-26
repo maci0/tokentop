@@ -20,13 +20,17 @@ import sys
 import pyte
 from PIL import Image, ImageDraw, ImageFont
 
-ANSI_RE = re.compile(rb"\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][A-Z0-9])")
+RGB = tuple[int, int, int]
 
-BG = (30, 30, 46)  # #1e1e2e, matches internal/ui/theme.go cBase
-FG_DEFAULT = (205, 214, 244)  # #cdd6f4
+ANSI_RE = re.compile(
+    rb"\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][A-Z0-9])"
+)
+
+BG: RGB = (30, 30, 46)  # #1e1e2e, matches internal/ui/theme.go cBase
+FG_DEFAULT: RGB = (205, 214, 244)  # #cdd6f4
 
 # Font roots cover the common layouts; exact subdirectories vary by distro.
-FONT_ROOTS = (
+FONT_ROOTS: tuple[str, ...] = (
     "/usr/share/fonts",
     "/usr/local/share/fonts",
     os.path.expanduser("~/.local/share/fonts"),
@@ -35,8 +39,8 @@ FONT_ROOTS = (
 )
 
 # The 16 ANSI colors as SGR 30-37/90-97, tuned to the dashboard's palette.
-ANSI16 = {
-    0: (73, 77, 100),    # black-ish (surface)
+ANSI16: dict[int, RGB] = {
+    0: (73, 77, 100),  # black-ish (surface)
     1: (243, 139, 168),  # red
     2: (166, 227, 161),  # green
     3: (249, 226, 175),  # yellow
@@ -47,45 +51,51 @@ ANSI16 = {
 }
 
 
-def clamp8(v):
+def clamp8(v: int) -> int:
     return max(0, min(255, v))
 
 
-def sgr_rgb(color):
+def sgr_rgb(color: RGB | None) -> RGB | None:
     if color is None:
         return None
     r, g, b = color
     return (clamp8(r), clamp8(g), clamp8(b))
 
 
-def _search(pattern):
-    hits = []
+def _search(pattern: str) -> list[str]:
+    hits: list[str] = []
     for root in FONT_ROOTS:
-        hits.extend(sorted(glob.glob(os.path.join(root, "**", pattern), recursive=True)))
+        hits.extend(
+            sorted(glob.glob(os.path.join(root, "**", pattern), recursive=True))
+        )
     return hits
 
 
-def resolve_fonts():
+def resolve_fonts() -> tuple[str, str]:
     """Return (regular, bold) ttf paths for the dashboard's font family.
 
     TOKTOP_SCREENSHOT_FONT pins an explicit regular-weight face; its Bold
     sibling is used when present. Otherwise the standard font roots are
-    searched, preferring a Nerd Font build of Meslo.
+    searched, preferring a Nerd Font build of Meslo. Exits when neither
+    turns up a usable face.
     """
     if override := os.environ.get("TOKTOP_SCREENSHOT_FONT"):
         if not os.path.isfile(override):
             sys.exit(f"TOKTOP_SCREENSHOT_FONT: no such file: {override}")
         sibling = override.replace("Regular", "Bold")
-        bold = sibling if os.path.isfile(sibling) else override
-        return override, bold
+        bold_path = sibling if os.path.isfile(sibling) else override
+        return override, bold_path
     regular = _search("Meslo*Nerd*[Rr]egular*.ttf") or _search("Meslo*.ttf")
     if not regular:
-        return None, None
-    bold = (_search("Meslo*Nerd*[Bb]old*.ttf") or regular)[:1]
+        sys.exit(
+            "no Meslo Nerd Font found; install one or set "
+            "TOKTOP_SCREENSHOT_FONT to a regular-weight .ttf"
+        )
+    bold = _search("Meslo*Nerd*[Bb]old*.ttf") or regular
     return regular[0], bold[0]
 
 
-def main():
+def main() -> None:
     if len(sys.argv) < 3:
         sys.exit(__doc__)
     src, out = sys.argv[1], sys.argv[2]
@@ -101,7 +111,7 @@ def main():
     lines = data.split(b"\n")
     if cols <= 0:
         # count runes after stripping escapes: braille dots are 3 UTF-8 bytes
-        cols = max(len(ANSI_RE.sub(b"", l).decode("utf-8", "replace")) for l in lines)
+        cols = max(len(ANSI_RE.sub(b"", ln).decode("utf-8", "replace")) for ln in lines)
     if rows <= 0:
         rows = len(lines)
     # Rejoin with CRLF: capture-pane trims trailing spaces, so bare \n would
@@ -111,22 +121,14 @@ def main():
     stream = pyte.Stream(screen)
     stream.feed(text)
     # feed() leaves the cursor on a final empty line when the capture ends in
-    # a newline; rstrip above prevents that, so screen rows map 1:1.
-    for y in range(rows):
-        for x in range(cols):
-            if screen.buffer[y][x].data == "" and x > 0:
-                # inherit unwritten trailing cells from the line's last glyph
-                screen.buffer[y][x].data = " "
+    # a newline; rstrip above prevents that, so screen rows map 1:1. Cells
+    # holding "" are the trailing half of a double-width glyph, drawn from
+    # its leading cell, so they render as nothing.
 
     cell_w = 9 * scale
     cell_h = 19 * scale
     font_size = 16 * scale
     font_path, font_bold_path = resolve_fonts()
-    if font_path is None:
-        sys.exit(
-            "no Meslo Nerd Font found; install one or set "
-            "TOKTOP_SCREENSHOT_FONT to a regular-weight .ttf"
-        )
     font = ImageFont.truetype(font_path, font_size)
     font_bold = ImageFont.truetype(font_bold_path, font_size)
 
@@ -141,19 +143,24 @@ def main():
             if ch == " " and line[x].bg is None and line[x].fg is None:
                 x += 1
                 continue
-            fg = sgr_rgb(ansi_or_truecolor(line[x].fg, True)) or FG_DEFAULT
-            bg = sgr_rgb(ansi_or_truecolor(line[x].bg, False))
+            fg = sgr_rgb(ansi_or_truecolor(line[x].fg)) or FG_DEFAULT
+            bg = sgr_rgb(ansi_or_truecolor(line[x].bg))
             bold = line[x].bold
             if bg is not None:
                 draw.rectangle(
-                    [x * cell_w, y * cell_h, (x + 1) * cell_w - 1, (y + 1) * cell_h - 1],
+                    [
+                        x * cell_w,
+                        y * cell_h,
+                        (x + 1) * cell_w - 1,
+                        (y + 1) * cell_h - 1,
+                    ],
                     fill=bg,
                 )
-            f = font_bold if bold else font
+            face = font_bold if bold else font
             draw.text(
                 (x * cell_w + cell_w // 2, y * cell_h + cell_h // 2),
                 ch,
-                font=f,
+                font=face,
                 fill=fg,
                 anchor="mm",
             )
@@ -163,19 +170,31 @@ def main():
     print(f"{out}: {img.width}x{img.height} from {cols}x{rows} cells")
 
 
-def ansi_or_truecolor(color, is_fg):
+def ansi_or_truecolor(color: str | None) -> RGB | None:
     """Map pyte color names to RGB tuples."""
     if color is None:
         return None
     v = color.lstrip("#")
     if len(v) == 6 and all(c in "0123456789abcdefABCDEF" for c in v):
-        return tuple(int(v[i : i + 2], 16) for i in (0, 2, 4))
-    named = {
-        "black": 0, "red": 1, "green": 2, "brown": 3, "blue": 4,
-        "magenta": 5, "cyan": 6, "white": 7,
-        "brightblack": 8, "brightred": 9, "brightgreen": 10,
-        "brightbrown": 11, "brightyellow": 11, "brightblue": 12,
-        "brightmagenta": 13, "brightcyan": 14, "brightwhite": 15,
+        return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
+    named: dict[str, int | None] = {
+        "black": 0,
+        "red": 1,
+        "green": 2,
+        "brown": 3,
+        "blue": 4,
+        "magenta": 5,
+        "cyan": 6,
+        "white": 7,
+        "brightblack": 8,
+        "brightred": 9,
+        "brightgreen": 10,
+        "brightbrown": 11,
+        "brightyellow": 11,
+        "brightblue": 12,
+        "brightmagenta": 13,
+        "brightcyan": 14,
+        "brightwhite": 15,
         "default": None,
     }
     key = color.lower().replace("light", "bright")
