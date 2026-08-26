@@ -128,3 +128,21 @@ func TestWatchUsesTheCrushSource(t *testing.T) {
 		t.Fatal("Supported must agree that crush is readable here")
 	}
 }
+
+// A review's directory is watched under every spelling it can be recorded
+// under, and on macOS that always includes a symlinked one. All of them
+// address a single database, whose sessions must be summed once.
+func TestCrushSourceSumsOneDatabaseOnce(t *testing.T) {
+	dir := t.TempDir()
+	since := time.Now()
+	crushDB(t, dir, map[string][2]int64{"s": {7, since.Add(time.Second).UnixMilli()}})
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	v, ok := (crushDBSource{}).read([]string{dir, link}, since)
+	if !ok || v.output != 7 {
+		t.Fatalf("read %+v (ok=%v) through two spellings of one database", v, ok)
+	}
+}

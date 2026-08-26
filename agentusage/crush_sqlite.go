@@ -69,7 +69,9 @@ func (crushDBSource) read(dirs []string, since time.Time) (values, bool) {
 
 // crushDBPath finds the database crush would use for a directory, walking up
 // to the project root as crush does. It returns "" when there is none, which
-// is the common case: most machines have never run crush.
+// is the common case: most machines have never run crush. The path is
+// returned with symlinks resolved, so the spellings one directory is watched
+// under (on macOS always more than one) name it identically.
 func crushDBPath(dir string) string {
 	cur, err := filepath.Abs(dir)
 	if err != nil {
@@ -78,6 +80,9 @@ func crushDBPath(dir string) string {
 	for range crushMaxWalkUp {
 		candidate := filepath.Join(cur, ".crush", "crush.db")
 		if fi, err := os.Stat(candidate); err == nil && fi.Mode().IsRegular() {
+			if resolved, err := filepath.EvalSymlinks(candidate); err == nil {
+				return resolved
+			}
 			return candidate
 		}
 		parent := filepath.Dir(cur)
