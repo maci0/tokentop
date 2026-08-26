@@ -220,8 +220,8 @@ func classify(fam map[string]float64, m *Metrics) {
 		lower[strings.ToLower(k)] = v
 	}
 	// Iterate in sorted order: several names can contest one scalar field,
-	// and random map order would make the winner — and the rendered queue
-	// depth or KV percentage — flip between polls on identical input.
+	// and random map order would flip the winner (and the rendered queue
+	// depth or KV percentage) between polls on identical input.
 	for _, n := range slices.Sorted(maps.Keys(lower)) {
 		v := lower[n]
 		hasTok := strings.Contains(n, "token")

@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// FuzzParsePromClassify drives the /metrics scrape pipeline — parseProm's
-// exposition split plus classify's fuzzy name matching — with arbitrary
+// FuzzParsePromClassify drives the /metrics scrape pipeline (parseProm's
+// exposition split plus classify's fuzzy name matching) with arbitrary
 // bytes. Any local process or remote host a user points toktop at can serve
 // this body, so whatever comes back must obey the boundary guarantees every
 // consumer relies on: family values and classified metrics are usable
