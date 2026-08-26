@@ -2,9 +2,18 @@
 
 package selfreload
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
-type syscallStat = syscall.Stat_t
-
-func statDev(s *syscallStat) uint64 { return uint64(s.Dev) }
-func statIno(s *syscallStat) uint64 { return uint64(s.Ino) }
+// fileID reads the device and inode already sitting in the stat data, so no
+// second syscall is needed. A file system that reports neither (some FUSE
+// mounts) leaves both zero, and size and mtime carry the identity alone.
+func fileID(_ string, fi os.FileInfo) (dev, ino uint64) {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0
+	}
+	return uint64(st.Dev), uint64(st.Ino)
+}
