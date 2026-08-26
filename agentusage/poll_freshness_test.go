@@ -17,6 +17,7 @@ import (
 func TestPollSeesATranscriptCreatedAfterTheWatchBegan(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on windows
 	work := t.TempDir()
 	other := t.TempDir()
 
