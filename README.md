@@ -8,9 +8,25 @@ hammering them.
 </p>
 
 ```
-./toktop --demo          # simulated fleet, works instantly
-./toktop                 # auto-discovers local engines (ports + processes)
+toktop --demo            # simulated fleet, works instantly
+toktop                   # auto-discovers local engines (ports + processes)
+toktop --agents          # also watch the coding agents on this machine
 toktop ssh://maci@box    # watch engines on another host
+```
+
+## Install
+
+```
+go install github.com/maci0/toktop/cmd/toktop@latest
+```
+
+Or download a binary for linux/macos/windows (amd64 + arm64) from the
+[releases](https://github.com/maci0/toktop/releases). An installed binary
+updates itself in place:
+
+```
+toktop update --check    # report the latest release, change nothing
+toktop update            # download it and replace the running binary
 ```
 
 
@@ -203,6 +219,28 @@ technology:
   chart glyphs (which screen readers announce as endless dot-pattern noise or
   skip entirely), no box-drawing borders, no multi-column panels - just the
   data in reading order.
+
+  ```
+  $ toktop --once --plain
+  5/5 engines up · out 979 tok/s · in 4.1k tok/s · session 24s
+
+  ENGINES
+  up   vllm-a100 (vllm)
+         Qwen/Qwen2.5-32B-Instruct-AWQ
+         out 155 tok/s · in 662 tok/s · kv cache 68% · running 2 · waiting 0 · ttft 115ms
+
+  SYSTEM
+  memory 64% (247G/384G) · swap 17% · load 5.06
+  gpu nv0 A100-SXM4-80GB 82° 69% util vram 57G/80G 397W
+
+  PROBES
+  ok llama3.1:8b-instruct-q4_K_M ttft 83ms 26.8 tok/s
+
+  AGENT FEED
+  ops-agent 487 tok/s · swarm-07 392 tok/s
+  10:16:15 error swarm-07 model deepseek-ai/DeepSeek-R1 prompt 1.5k output 242 note retry after 429
+  ```
+
 - **Tested contrast** - unit tests hold the palette to WCAG 2.2 AA: text
   colors at >= 4.5:1 on the background, and chart marks at >= 3:1 even at
   the deepest point of the age fade (`internal/ui/theme_test.go`).
@@ -212,6 +250,8 @@ technology:
 ## Flags
 
 ```
+toktop update     subcommand: install the latest release (--check to only
+                  report it, --repo owner/name for a fork)
 --demo            simulated fleet, zero setup
 --add URL         attach an openai-compatible endpoint (repeatable)
 ssh://user@host   positional; monitor remote hosts (repeatable)
@@ -280,7 +320,8 @@ GOOS=windows GOARCH=amd64 go build -o toktop.exe ./cmd/toktop
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, the edit-test loop,
-and what CI runs.
+and what CI runs, and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for the
+attack surface, what toktop trusts, and the mitigations already in place.
 
 Releases: push a tag `v*` and GitHub Actions attaches binaries for
 linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, plus a

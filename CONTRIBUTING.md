@@ -43,15 +43,23 @@ build automatically (hot reload); pass `--no-hot-reload` to disable.
 and rendered by `scripts/screenshot.py`:
 
 ```
-tmux new-session -d -x 120 -y 38 -s shot './toktop --demo'
-tmux capture-pane -e -p -t shot > capture.txt
+make build VERSION=0.4.5
+tmux new-session -d -x 180 -y 50 -s shot './toktop --demo --seed 7 --no-hot-reload'
+sleep 60 && tmux send-keys -t shot p          # let the charts fill, then probe
+tmux capture-pane -e -p -t shot > .scratch/capture.txt
 tmux kill-session -t shot
-python3 scripts/screenshot.py capture.txt docs/images/dashboard.png
+uv run --with-requirements scripts/requirements.txt \
+  scripts/screenshot.py .scratch/capture.txt docs/images/dashboard.png 2 180 50
 ```
 
-Its dependencies (pyte, pillow) are declared in `scripts/requirements.txt`;
-install them into a scratch venv (`uv pip install -r scripts/requirements.txt`),
-not the system.
+The trailing arguments are scale, columns and rows; passing the pane geometry
+keeps the renderer from re-deriving it and wrapping. `VERSION` is stamped into
+the header, so pass the version being released rather than `dev`. Rendering
+needs a Meslo Nerd Font installed, or `TOKTOP_SCREENSHOT_FONT` pointing at a
+regular-weight `.ttf`.
+
+The image's pixel size is repeated in `site/worker.js` as the `og:image`
+dimensions; update both together.
 
 ## Make targets
 
@@ -80,11 +88,21 @@ darwin/arm64 and windows/amd64. Each cross-compile job also runs
 `go vet ./...` and staticcheck under its GOOS/GOARCH, so platform-specific
 files get the same static analysis as the host build. Both halves of the
 sqlite tag gate (`agentusage` with and without `-tags sqlite`) are vetted
-and staticchecked everywhere. Everything except the three-OS matrix is one
+and staticchecked everywhere. Everything Go except the three-OS matrix is one
 command locally:
 
 ```
 make ci
+```
+
+Two jobs cover what is not Go: `bun test site/` for the Cloudflare Worker in
+`site/`, and `black --check`, `ruff check` and `mypy` over `scripts/`. Run them
+the same way locally:
+
+```
+bun test site/
+uvx black --check scripts/ && uvx ruff check scripts/
+uvx --with-requirements scripts/requirements.txt mypy scripts/
 ```
 
 Keep platform-specific code behind build tags or runtime checks; the
