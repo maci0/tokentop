@@ -900,13 +900,13 @@ func (m Model) renderFeed() string {
 			reason := clip(shorten(core.SanitizeText("ingest stopped: "+m.feedDown), w), w)
 			lines = append(lines, styleBad.Render(reason))
 		case m.cfg.Agents:
-			lines = append(lines, dim("no agent activity yet — agents running locally are picked up automatically"))
+			lines = append(lines, dim("no agent activity yet: agents running locally are picked up automatically"))
 		case m.cfg.IngestAddr != "":
-			lines = append(lines, dim("no agent activity yet — point your harness at the endpoint above"))
+			lines = append(lines, dim("no agent activity yet: point your harness at the endpoint above"))
 		default:
 			// Ingest off and agent watching off: without naming a knob this
 			// panel reads as a feature that silently never works.
-			lines = append(lines, dim("no agent activity yet — run with --agents to watch coding agents on this machine"))
+			lines = append(lines, dim("no agent activity yet: run with --agents to watch coding agents on this machine"))
 		}
 	}
 	content := strings.Join(lines, "\n")

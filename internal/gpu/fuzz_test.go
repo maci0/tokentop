@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// FuzzParseVendorTelemetry drives both exported vendor-output parsers —
-// nvidia-smi CSV and rocm-smi JSON — with arbitrary bytes. The same parsers
+// FuzzParseVendorTelemetry drives both exported vendor-output parsers
+// (nvidia-smi CSV and rocm-smi JSON) with arbitrary bytes. The same parsers
 // run against local CLI output and against whatever a remote SSH host sends
 // back in its vitals dump, so a hostile or broken tool must not be able to
 // plant negative sensor readings in a sample, mislabel a device's vendor,
