@@ -5,6 +5,7 @@ package agentwatch
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"os/exec"
@@ -179,9 +180,15 @@ func TestShortDirKeepsTheIdentifyingPart(t *testing.T) {
 	}
 }
 
+// The path is quoted the way a real transcript quotes it: on Windows the
+// separator is JSON's escape character, so a spliced-in path is not JSON.
 func usageLine(cwd string, out int) string {
-	return `{"type":"assistant","cwd":"` + cwd +
-		`","message":{"usage":{"output_tokens":` + strconv.Itoa(out) + `}}}`
+	quoted, err := json.Marshal(cwd)
+	if err != nil {
+		panic(err)
+	}
+	return `{"type":"assistant","cwd":` + string(quoted) +
+		`,"message":{"usage":{"output_tokens":` + strconv.Itoa(out) + `}}}`
 }
 
 func appendLine(t *testing.T, path, line string) {
