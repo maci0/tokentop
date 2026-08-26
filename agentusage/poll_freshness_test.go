@@ -27,7 +27,7 @@ func TestPollSeesATranscriptCreatedAfterTheWatchBegan(t *testing.T) {
 	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	line := `{"type":"assistant","cwd":"` + other + `","message":{"usage":{"output_tokens":99999}}}` + "\n"
+	line := `{"type":"assistant","cwd":` + jsonPath(other) + `,"message":{"usage":{"output_tokens":99999}}}` + "\n"
 	if err := os.WriteFile(filepath.Join(elsewhere, "s.jsonl"), []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestPollSeesATranscriptCreatedAfterTheWatchBegan(t *testing.T) {
 	if err := os.MkdirAll(mine, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	line = `{"type":"assistant","cwd":"` + work + `","message":{"usage":{"output_tokens":42}}}` + "\n"
+	line = `{"type":"assistant","cwd":` + jsonPath(work) + `,"message":{"usage":{"output_tokens":42}}}` + "\n"
 	if err := os.WriteFile(filepath.Join(mine, "s.jsonl"), []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
