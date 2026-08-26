@@ -53,6 +53,28 @@ jobs:
       - name: test (sqlite build)
         run: go test -tags sqlite -race -shuffle=on ./agentusage/...
 
+  # The site worker and the screenshot script ship in this repo, so they gate
+  # here too: their tests and checks ran nowhere before.
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun test site/
+
+  scripts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: format, lint and type check the screenshot script
+        run: |
+          uvx black --check scripts/
+          uvx ruff check scripts/
+          uvx --with-requirements scripts/requirements.txt mypy scripts/
+
   build:
     strategy:
       matrix:
