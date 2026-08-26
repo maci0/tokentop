@@ -3,7 +3,7 @@
 One Worker, one page, no build step.
 
 ```sh
-npx wrangler deploy          # from this directory
+bunx wrangler deploy          # from this directory
 ```
 
 `worker.js` holds the whole site: the HTML is a template literal, so there is
