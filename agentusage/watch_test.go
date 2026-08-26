@@ -562,3 +562,32 @@ func TestOversizedLineDoesNotStallFollowingRecords(t *testing.T) {
 		t.Fatalf("output tokens %d, want 42: an oversized line stalled the file", got)
 	}
 }
+
+// A transcript that grows without its mtime moving must still be read. NTFS
+// timestamps are coarse and Windows updates last-write lazily for an open
+// handle, so two appends can share one stamp; skipping the second would drop
+// every record it carried.
+func TestGrowthIsReadWhenTheMtimeStandsStill(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	path := filepath.Join(store, "s.jsonl")
+	append_(t, path, claudeLine(work, 5))
+
+	w := Watch("claude", work, time.Now())
+	w.poll(nil)
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	append_(t, path, claudeLine(work, 42))
+	// Put the timestamp back where the first read saw it, which is what a
+	// coarse clock does on its own.
+	if err := os.Chtimes(path, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 42 {
+		t.Fatalf("output tokens %d, want 42: growth under an unchanged mtime was skipped", got)
+	}
+}
