@@ -18,12 +18,12 @@ const HTML = `<!doctype html>
 <!-- the real dashboard, not a generated stand-in: share cards should show
      the product the page is about -->
 <meta property="og:image" content="https://raw.githubusercontent.com/maci0/toktop/main/docs/images/dashboard.png">
-<meta property="og:image:width" content="4632">
-<meta property="og:image:height" content="2562">
+<meta property="og:image:width" content="3240">
+<meta property="og:image:height" content="1900">
 <meta property="og:image:alt" content="toktop running in a terminal: engine rows with throughput and KV-cache pressure beside an agent feed">
 <meta name="twitter:card" content="summary_large_image">
-<!-- the icon is the h1 cursor block in --accent/--panel, not a placeholder emoji -->
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2311161d'/><rect x='37' y='25' width='26' height='50' rx='5' fill='%234cc38a'/></svg>">
+<!-- the icon is the h1 cursor block in the accent and panel colors, not a placeholder emoji -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20rx='20'%20fill='%2311161d'/%3E%3Crect%20x='37'%20y='25'%20width='26'%20height='50'%20rx='5'%20fill='%234cc38a'/%3E%3C/svg%3E">
 <style>
   :root {
     /* Both schemes are styled here; declaring them lets the browser match

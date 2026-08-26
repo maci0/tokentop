@@ -1,7 +1,6 @@
-// Deploy with `npx wrangler deploy` (or `cf deploy`) from this directory.
+// Deploy with `bunx wrangler deploy` (or `cf deploy`) from this directory.
 // The site is a single Worker, so there is nothing else to configure.
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "toktop-site",
   "main": "worker.js",
   "compatibility_date": "2026-08-25",
