@@ -328,10 +328,10 @@ type Watcher struct {
 	// mtime because a coarse clock (NTFS, and Windows' lazy last-write update
 	// for an open handle) can leave two writes sharing one stamp: a file that
 	// only grew would then look untouched and its records would be lost.
-	stamps      map[string]fileStamp
-	owner       map[string]bool  // file -> belongs to this review (cached)
-	cached      []string         // candidate files, refreshed on an interval
-	scanned     time.Time
+	stamps  map[string]fileStamp
+	owner   map[string]bool // file -> belongs to this review (cached)
+	cached  []string        // candidate files, refreshed on an interval
+	scanned time.Time
 	// Cumulative adapters need a baseline per file: usage recorded before the
 	// watcher attached belongs to an earlier review.
 	base      map[string]int
