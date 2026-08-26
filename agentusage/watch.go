@@ -97,6 +97,12 @@ type adapter struct {
 	sessionCwd func(line []byte) (string, bool)
 }
 
+// fileStamp is what a transcript looked like when it was last read.
+type fileStamp struct {
+	mtimeNanos int64
+	size       int64
+}
+
 // values is one record's usage numbers.
 type values struct {
 	output   int
@@ -317,7 +323,12 @@ type Watcher struct {
 	// attached. Their earlier content belongs to another review; a file that
 	// appears afterwards belongs entirely to this one.
 	preexisting map[string]bool
-	mtimes      map[string]int64 // file -> mtime when last read, to skip idle files
+	// stamps records what a transcript looked like when it was last read, so
+	// idle files are skipped without opening them. Size rides along with the
+	// mtime because a coarse clock (NTFS, and Windows' lazy last-write update
+	// for an open handle) can leave two writes sharing one stamp: a file that
+	// only grew would then look untouched and its records would be lost.
+	stamps      map[string]fileStamp
 	owner       map[string]bool  // file -> belongs to this review (cached)
 	cached      []string         // candidate files, refreshed on an interval
 	scanned     time.Time
@@ -382,7 +393,7 @@ func Watch(tool, dir string, since time.Time) *Watcher {
 	}
 	w := &Watcher{
 		ad: ad, tool: tool, dir: resolveDir(dir), since: since,
-		offsets: map[string]int64{}, preexisting: map[string]bool{}, mtimes: map[string]int64{},
+		offsets: map[string]int64{}, preexisting: map[string]bool{}, stamps: map[string]fileStamp{},
 		owner: map[string]bool{}, base: map[string]int{}, baseThink: map[string]int{},
 		seen: map[string]values{}, total: map[string]int{},
 	}
@@ -633,11 +644,11 @@ func (w *Watcher) readNew(path string) {
 	if err != nil {
 		return
 	}
-	mt := fi.ModTime().UnixNano()
-	if w.mtimes[path] == mt {
+	stamp := fileStamp{mtimeNanos: fi.ModTime().UnixNano(), size: fi.Size()}
+	if w.stamps[path] == stamp {
 		return // untouched since the last read
 	}
-	w.mtimes[path] = mt
+	w.stamps[path] = stamp
 	mine, decided := w.owns(path)
 	if !decided {
 		// No verdict yet: commit no offset. A file created after this review
