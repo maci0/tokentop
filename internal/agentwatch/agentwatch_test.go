@@ -298,7 +298,7 @@ func port(t *testing.T, ln net.Listener) string {
 func TestEngineNoteEmittedOncePerEngine(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on windows
 	work := t.TempDir()
 	transcript := filepath.Join(home, ".claude", "projects", "p")
 	if err := os.MkdirAll(transcript, 0o755); err != nil {
