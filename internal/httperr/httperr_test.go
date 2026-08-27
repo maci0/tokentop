@@ -80,12 +80,12 @@ func TestSnippetStripsTerminalInjection(t *testing.T) {
 	}
 }
 
-func TestSnippetReplacesInvalidUTF8(t *testing.T) {
+func TestSnippetDropsInvalidUTF8(t *testing.T) {
 	got := Snippet([]byte("caf\xff\xfe"))
 	if !utf8.ValidString(got) {
 		t.Errorf("snippet is not valid UTF-8: %q", got)
 	}
-	if got != "caf\uFFFD\uFFFD" {
-		t.Errorf("snippet = %q, want caf plus two replacement characters", got)
+	if got != "caf" {
+		t.Errorf("snippet = %q, want caf with the ill-formed bytes dropped", got)
 	}
 }

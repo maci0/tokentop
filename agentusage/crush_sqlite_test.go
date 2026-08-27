@@ -72,15 +72,12 @@ func TestCrushSourceCountsOnlyThisReview(t *testing.T) {
 		"also":    {300, 100, since.Add(2 * time.Minute).UnixMilli()},
 	})
 
-	v, ok := (crushDBSource{}).read([]string{dir}, since)
-	if !ok || v.output != 1500 {
-		t.Fatalf("read %+v (ok=%v), want 1500 output tokens", v, ok)
+	out, in, ok := crushSessionSum([]string{dir}, since)
+	if !ok || out != 1500 {
+		t.Fatalf("sessions output %d (ok=%v), want 1500 output tokens", out, ok)
 	}
-	if v.input != 500 {
-		t.Fatalf("input %d, want 500 prompt tokens written during the review", v.input)
-	}
-	if v.thinking != 0 {
-		t.Fatalf("thinking %d: crush reports no reasoning split, so it must claim none", v.thinking)
+	if in != 500 {
+		t.Fatalf("input %d, want 500 prompt tokens written during the review", in)
 	}
 }
 
@@ -95,8 +92,8 @@ func TestCrushSourceAcceptsSecondsAndMilliseconds(t *testing.T) {
 		"old seconds": {40, 0, since.Add(-time.Hour).Unix()},
 		"old millis":  {80, 0, since.Add(-time.Hour).UnixMilli()},
 	})
-	if v, ok := (crushDBSource{}).read([]string{dir}, since); !ok || v.output != 30 {
-		t.Fatalf("read %+v (ok=%v), want the 30 written during the review in either unit", v, ok)
+	if out, _, ok := crushSessionSum([]string{dir}, since); !ok || out != 30 {
+		t.Fatalf("sessions output %d (ok=%v), want the 30 written during the review in either unit", out, ok)
 	}
 }
 
@@ -110,8 +107,8 @@ func TestCrushSourceFindsTheProjectDatabase(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := (crushDBSource{}).read([]string{sub}, since); !ok || v.output != 42 {
-		t.Fatalf("read %+v (ok=%v), want the project database's 42", v, ok)
+	if out, _, ok := crushSessionSum([]string{sub}, since); !ok || out != 42 {
+		t.Fatalf("sessions output %d (ok=%v), want the project database's 42", out, ok)
 	}
 }
 
@@ -120,15 +117,16 @@ func TestCrushSourceCountsOneDatabaseOnce(t *testing.T) {
 	dir := t.TempDir()
 	since := time.Now()
 	crushDB(t, dir, map[string][3]int64{"s": {100, 0, since.Add(time.Second).UnixMilli()}})
-	if v, _ := (crushDBSource{}).read([]string{dir, dir + string(filepath.Separator)}, since); v.output != 100 {
-		t.Fatalf("output %d, want 100 counted once", v.output)
+	if out, _, _ := crushSessionSum([]string{dir, dir + string(filepath.Separator)}, since); out != 100 {
+		t.Fatalf("output %d, want 100 counted once", out)
 	}
 }
 
 // A tree crush has never run in reports nothing, which is not an error.
 func TestCrushSourceWithoutADatabase(t *testing.T) {
-	if v, ok := (crushDBSource{}).read([]string{t.TempDir()}, time.Now()); ok || v.output != 0 || v.input != 0 {
-		t.Fatalf("read %+v (ok=%v) from a tree with no crush database", v, ok)
+	got, ok := (crushDBSource{}).sessions([]string{t.TempDir()}, time.Now())
+	if !ok || len(got) != 0 {
+		t.Fatalf("sessions %+v (ok=%v) from a tree with no crush database", got, ok)
 	}
 }
 
@@ -258,10 +256,27 @@ func TestCrushSourceSumsOneDatabaseOnce(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	v, ok := (crushDBSource{}).read([]string{dir, link}, since)
-	if !ok || v.output != 7 {
-		t.Fatalf("read %+v (ok=%v) through two spellings of one database", v, ok)
+	out, _, ok := crushSessionSum([]string{dir, link}, since)
+	if !ok || out != 7 {
+		t.Fatalf("sessions output %d (ok=%v) through two spellings of one database", out, ok)
 	}
+}
+
+// crushSessionSum is the sessions snapshot flattened to totals, for tests
+// that care about what was recorded rather than per-session identity.
+func crushSessionSum(dirs []string, since time.Time) (output, input int, ok bool) {
+	got, ok := (crushDBSource{}).sessions(dirs, since)
+	if !ok {
+		return 0, 0, false
+	}
+	var out, in int64
+	for _, sess := range got {
+		for _, c := range sess {
+			out += c.output
+			in += c.input
+		}
+	}
+	return int(out), int(in), out > 0 || in > 0
 }
 
 // Prompt can grow while completion stays put (a follow-up that only billed

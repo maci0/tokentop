@@ -17,8 +17,9 @@ import (
 // and tabs survive so layout text is unaffected. Bidi overrides, isolates,
 // and zero-width format characters that spoof identity-bearing fields
 // (agent names, host labels) are removed too. ZWJ (U+200D) stays so emoji
-// sequences remain whole. Ill-formed UTF-8 is replaced with U+FFFD so the
-// result is always valid UTF-8. Other multi-byte runes are preserved.
+// sequences remain whole. Ill-formed UTF-8 is dropped so the result is
+// always valid UTF-8 and never longer than the input. Other multi-byte
+// runes are preserved.
 func SanitizeText(s string) string {
 	if !needsSanitize(s) {
 		return s
@@ -41,7 +42,6 @@ func SanitizeText(s string) string {
 		default:
 			r, size := utf8.DecodeRuneInString(s[i:])
 			if r == utf8.RuneError && size == 1 {
-				b.WriteRune(utf8.RuneError)
 				i++
 				continue
 			}

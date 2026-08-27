@@ -123,16 +123,17 @@ func TestSanitizeTextStripsBidiAndZeroWidth(t *testing.T) {
 	}
 }
 
-func TestSanitizeTextReplacesInvalidUTF8(t *testing.T) {
+func TestSanitizeTextDropsInvalidUTF8(t *testing.T) {
 	// A truncated 2-byte sequence and a lone 0xFF are not UTF-8; leaving
 	// them in an identity field or a terminal line is the same class of
-	// defect as slicing a character in half.
+	// defect as slicing a character in half. Dropping them keeps the
+	// result valid UTF-8 without growing the string.
 	got := SanitizeText("caf\xff\xfe")
 	if !utf8.ValidString(got) {
 		t.Errorf("SanitizeText returned invalid UTF-8: %q", got)
 	}
-	if got != "caf\uFFFD\uFFFD" {
-		t.Errorf("SanitizeText(%q) = %q, want caf plus two replacement characters", "caf\xff\xfe", got)
+	if got != "caf" {
+		t.Errorf("SanitizeText(%q) = %q, want caf with the ill-formed bytes dropped", "caf\xff\xfe", got)
 	}
 	// A real U+FFFD (3-byte UTF-8) is already valid and stays.
 	if got := SanitizeText("ok\uFFFD"); got != "ok\uFFFD" {

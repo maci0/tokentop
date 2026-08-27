@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"sync"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -140,9 +139,7 @@ func heatColor(f float64) lipgloss.Color {
 }
 
 // wordmark is TOKTOP in the site accent. Static: built once, reused every frame.
-var wordmark = sync.OnceValue(func() string {
-	return lipgloss.NewStyle().Bold(true).Foreground(cGreen).Render("TOKTOP")
-})
+var wordmark = lipgloss.NewStyle().Bold(true).Foreground(cGreen).Render("TOKTOP")
 
 // relLuminance computes the WCAG 2.x relative luminance of a #rrggbb hex
 // color. ok is false for any other encoding (256-color names): callers must

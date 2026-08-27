@@ -62,20 +62,6 @@ func crushDBPaths(dirs []string) []string {
 	return paths
 }
 
-// read sums what crush recorded for this directory since the review began.
-func (crushDBSource) read(dirs []string, since time.Time) (values, bool) {
-	var v values
-	for _, path := range crushDBPaths(dirs) {
-		got, ok := readCrushDB(path, since)
-		if !ok {
-			continue
-		}
-		v.output = satAdd(v.output, got.output)
-		v.input = satAdd(v.input, got.input)
-	}
-	return v, v.output > 0 || v.input > 0
-}
-
 // crushDBPath finds the database crush would use for a directory, walking up
 // to the project root as crush does. It returns "" when there is none, which
 // is the common case: most machines have never run crush. The path is
@@ -101,36 +87,6 @@ func crushDBPath(dir string) string {
 		cur = parent
 	}
 	return ""
-}
-
-// crushUsageQuery sums generated and prompt tokens of every session written
-// since a point in time.
-const crushUsageQuery = `
-	SELECT COALESCE(SUM(completion_tokens), 0), COALESCE(SUM(prompt_tokens), 0)
-	FROM sessions
-	WHERE (CASE WHEN updated_at > 100000000000 THEN updated_at ELSE updated_at * 1000 END) >= ?`
-
-func readCrushDB(path string, since time.Time) (values, bool) {
-	// mode=ro leaves the database alone; a missing or unreadable one is an
-	// answer ("nothing to report"), not an error worth surfacing.
-	db, err := openReadOnly(path)
-	if err != nil {
-		return values{}, false
-	}
-	defer db.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), dbQueryTimeout)
-	defer cancel()
-
-	var out, in sql.NullInt64
-	if err := db.QueryRowContext(ctx, crushUsageQuery, since.UnixMilli()).Scan(&out, &in); err != nil {
-		return values{}, false
-	}
-	v := values{output: counter64(out.Int64), input: counter64(in.Int64)}
-	if v.output <= 0 && v.input <= 0 {
-		return values{}, false
-	}
-	return v, true
 }
 
 const crushSessionsQuery = `

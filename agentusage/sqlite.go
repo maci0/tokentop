@@ -16,7 +16,7 @@ import (
 
 // registerSource makes an agent readable through a source instead of files.
 // Passing nil removes it, which is how the runtime switch turns one off.
-func registerSource(tool string, s usageSource) {
+func registerSource(tool string, s any) {
 	sourcesMu.Lock()
 	defer sourcesMu.Unlock()
 	if s == nil {

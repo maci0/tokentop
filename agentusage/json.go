@@ -155,24 +155,17 @@ func assign(ev *jsonEvent, lower string, val any) {
 }
 
 func asInt(v any) (int, bool) {
-	switch n := v.(type) {
-	case float64:
-		// The conversion below is only defined within the range of int, and
-		// out-of-range results differ by platform (amd64 gives the minimum,
-		// arm64 saturates to the maximum). A counter outside int, or past
-		// maxSaneTokens, is not a measurement: report nothing rather than
-		// a platform-dependent lie or a total that later wraps.
-		if !(n >= 1) || n > float64(maxSaneTokens) {
-			return 0, false
-		}
-		return int(n), true
-	case json.Number:
-		i, err := n.Int64()
-		if err != nil {
-			return 0, false
-		}
-		c := counter64(i)
-		return c, c > 0
+	n, ok := v.(float64)
+	if !ok {
+		return 0, false
 	}
-	return 0, false
+	// The conversion below is only defined within the range of int, and
+	// out-of-range results differ by platform (amd64 gives the minimum,
+	// arm64 saturates to the maximum). A counter outside int, or past
+	// maxSaneTokens, is not a measurement: report nothing rather than
+	// a platform-dependent lie or a total that later wraps.
+	if !(n >= 1) || n > float64(maxSaneTokens) {
+		return 0, false
+	}
+	return int(n), true
 }

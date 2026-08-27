@@ -9,8 +9,8 @@ import (
 )
 
 // usageSource reads usage for one review from somewhere other than an
-// appendable transcript file. opencode and crush keep sessions in SQLite
-// rather than JSONL, so they register as sources instead of file adapters.
+// appendable transcript file. opencode keeps sessions in SQLite rather than
+// JSONL, so it registers as a source instead of a file adapter.
 //
 // The contract is the same as everywhere else here: report what the agent
 // recorded for this directory since this moment, or report nothing.
@@ -44,10 +44,11 @@ type sessionSource interface {
 
 var (
 	sourcesMu sync.RWMutex
-	sources   = map[string]usageSource{}
+	// usageSource (opencode) or sessionSource (crush).
+	sources = map[string]any{}
 )
 
-func sourceFor(tool string) (usageSource, bool) {
+func sourceFor(tool string) (any, bool) {
 	sourcesMu.RLock()
 	defer sourcesMu.RUnlock()
 	s, ok := sources[tool]

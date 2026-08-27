@@ -63,7 +63,7 @@ func TestChartFadeHoldsNonTextContrast(t *testing.T) {
 // is phosphor green on cool dark, and the dashboard has to match it.
 func TestWordmarkUsesSiteAccent(t *testing.T) {
 	want := lipgloss.NewStyle().Bold(true).Foreground(cGreen).Render("TOKTOP")
-	if got := wordmark(); got != want {
+	if got := wordmark; got != want {
 		t.Errorf("wordmark = %q, want single-accent TOKTOP", got)
 	}
 }

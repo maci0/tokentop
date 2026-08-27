@@ -141,9 +141,9 @@ func counter(n int) int {
 	return n
 }
 
-// counter64 is counter for values that arrive as int64, from a database
-// column or json.Number, so a magnitude that does not fit in int is rejected
-// before the conversion rather than wrapping.
+// counter64 is counter for values that arrive as int64 from a database
+// column, so a magnitude that does not fit in int is rejected before the
+// conversion rather than wrapping.
 func counter64(n int64) int {
 	if n < 0 || n > maxSaneTokens {
 		return 0
@@ -359,7 +359,7 @@ func home(parts ...string) string {
 type Watcher struct {
 	// source is set for agents whose usage is not in files (opencode, crush).
 	// When it is, every field below that describes file state is unused.
-	source usageSource
+	source any
 	// dirs are the spellings a source matches against, for agents that record
 	// the directory they were started in rather than its resolved form.
 	dirs    []string
@@ -595,13 +595,16 @@ func (w *Watcher) Run(ctx context.Context, every time.Duration, onChange func(Sa
 
 // readSource is one reading from a non-file source. A sessionSource is
 // snapshotted at attach (or on the first successful poll if that read
-// failed), so only growth since then is counted. Other sources (opencode)
-// report this review's usage in full each time via a timestamp filter.
+// failed), so only growth since then is counted. A usageSource (opencode)
+// reports this review's usage in full each time via a timestamp filter.
 func (w *Watcher) readSource() (values, bool) {
 	if ss, ok := w.source.(sessionSource); ok {
 		return w.readSessionSource(ss)
 	}
-	return w.source.read(w.dirs, w.since)
+	if us, ok := w.source.(usageSource); ok {
+		return us.read(w.dirs, w.since)
+	}
+	return values{}, false
 }
 
 // readSessionSource counts growth against the attach snapshot. If that

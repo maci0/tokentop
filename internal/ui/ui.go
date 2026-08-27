@@ -236,7 +236,7 @@ func (m Model) View() string {
 }
 
 func (m Model) renderHeader() string {
-	logo := wordmark()
+	logo := wordmark
 	segs := []headerSeg{{text: logo}, {text: dim("v" + m.cfg.Version), shed: 40}}
 
 	up, tot := m.upCount()
@@ -1069,7 +1069,7 @@ func (m Model) renderFooter() string {
 }
 
 func (m Model) renderEmpty() string {
-	logo := wordmark()
+	logo := wordmark
 	lines := []string{
 		logo,
 		"",
