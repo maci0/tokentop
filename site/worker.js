@@ -4,7 +4,13 @@
 // toktop.ai: one page, served from the edge. The whole site is this file, so
 // there is no build step, no bucket, and nothing to keep in sync.
 
-const HTML = `<!doctype html>
+// Source comments stay in this file as the rationale for the CSS and markup.
+// They are stripped once at isolate start so they never go over the wire.
+function htmlForWire(source) {
+  return source.replace(/<!--[\s\S]*?-->/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+const HTML = htmlForWire(`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -141,15 +147,16 @@ toktop ssh://you@box      <span class="dim"># watch another host over ssh</span>
 </main>
 </body>
 </html>
-`;
+`);
 
 // The page bytes change only at deploy time, so a derived ETag lets a browser
 // that already holds a copy prove freshness with If-None-Match and be
 // answered with a bodyless 304 instead of the whole page again on every
 // reload and every visit past max-age. Computed once when the isolate starts.
 //
-// The validator is weak because the resource ships two encodings (identity and
-// gzip) under one URL, and RFC 9110 forbids one strong ETag spanning multiple
+// The validator is weak because the resource ships several encodings
+// (identity plus whichever of brotli, zstd, gzip the isolate can produce)
+// under one URL, and RFC 9110 forbids one strong ETag spanning multiple
 // representations. If-None-Match compares weakly for GET revalidation either
 // way, so nothing is lost: no ranges are offered on a page this small.
 const ETAG_HASH = (() => {
@@ -178,28 +185,89 @@ function ifNoneMatchMatches(headerValue) {
   });
 }
 
-// True only when the client's Accept-Encoding actually admits gzip: an
-// explicit `gzip;q=0` vetoes even though `*` would otherwise cover it.
-function acceptsGzip(headerValue) {
-  if (!headerValue) return false;
-  return headerValue.split(",").some((part) => {
-    const [token, ...params] = part.trim().toLowerCase().split(";");
-    const q = params.find((p) => p.trim().startsWith("q="));
-    if (q && Number.parseFloat(q.trim().slice(2)) === 0) return false;
-    return token === "gzip" || token === "*";
-  });
+// Parse Accept-Encoding into coding -> q. A missing or blank header is an
+// empty map, which quality() treats as identity-only: sending gzip to a
+// client that never advertised it is how old HTTP/1.0 agents used to break.
+function parseAcceptEncoding(headerValue) {
+  const qByCoding = new Map();
+  if (headerValue == null || !headerValue.trim()) return qByCoding;
+  for (const part of headerValue.split(",")) {
+    const [rawToken, ...params] = part.trim().toLowerCase().split(";");
+    const token = rawToken.trim();
+    if (!token) continue;
+    let q = 1;
+    for (const param of params) {
+      const trimmed = param.trim();
+      if (!trimmed.startsWith("q=")) continue;
+      const parsed = Number.parseFloat(trimmed.slice(2));
+      if (Number.isFinite(parsed)) q = parsed;
+    }
+    qByCoding.set(token, q);
+  }
+  return qByCoding;
 }
 
-// Compressed once per isolate, not once per request: the bytes change only at
-// deploy time, so the effort belongs where they are produced. The promise is
-// memoized, so the first gzip-accepting request pays one compression and every
-// later one copies a ready buffer.
-let gzipBodyPromise;
-function gzipBody() {
-  gzipBodyPromise ??= new Response(
-    new Response(HTML).body.pipeThrough(new CompressionStream("gzip")),
-  ).arrayBuffer();
-  return gzipBodyPromise;
+function quality(qByCoding, coding) {
+  if (qByCoding.has(coding)) return qByCoding.get(coding);
+  if (qByCoding.has("*")) return qByCoding.get("*");
+  return coding === "identity" ? 1 : 0;
+}
+
+// Content-Encoding token -> CompressionStream format. deflate is omitted on
+// purpose: the zlib wrapper versus raw-deflate split is still a footgun, and
+// every browser that speaks deflate also speaks gzip.
+const COMPRESSIBLE = [
+  ["br", "brotli"],
+  ["zstd", "zstd"],
+  ["gzip", "gzip"],
+];
+
+async function compressFormat(format) {
+  return new Uint8Array(
+    await new Response(
+      new Response(HTML).body.pipeThrough(new CompressionStream(format)),
+    ).arrayBuffer(),
+  );
+}
+
+const IDENTITY = new TextEncoder().encode(HTML);
+
+// Each coding is compressed once when the isolate starts, not once per
+// request: the bytes change only at deploy time, so the effort belongs
+// where they are produced. Formats the runtime cannot construct are skipped,
+// so a gzip-only isolate still answers gzip clients and everyone else gets
+// identity.
+const representations = (async () => {
+  const out = [{ coding: null, bytes: IDENTITY }];
+  for (const [coding, format] of COMPRESSIBLE) {
+    try {
+      out.push({ coding, bytes: await compressFormat(format) });
+    } catch {
+      // Runtime lacks this format.
+    }
+  }
+  return out;
+})();
+
+// Highest q the client offered, then the smallest body at that q. A Chrome
+// `gzip, deflate, br, zstd` request therefore gets brotli rather than gzip,
+// and a `br;q=0.1, gzip` request still gets gzip.
+async function representationFor(acceptEncoding) {
+  const reps = await representations;
+  const qByCoding = parseAcceptEncoding(acceptEncoding);
+  let best = null;
+  for (const rep of reps) {
+    const q = quality(qByCoding, rep.coding ?? "identity");
+    if (q <= 0) continue;
+    if (
+      best == null ||
+      q > best.q ||
+      (q === best.q && rep.bytes.byteLength < best.bytes.byteLength)
+    ) {
+      best = { ...rep, q };
+    }
+  }
+  return best ?? reps[0];
 }
 
 // Fresh for five minutes, then served from the browser's copy while a cheap
@@ -207,7 +275,7 @@ function gzipBody() {
 // and are never more than the first max-age behind a deploy.
 const PAGE_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=86400";
 
-// Two encodings live under one URL, so every cached copy must be keyed on
+// Several encodings live under one URL, so every cached copy must be keyed on
 // what the accepting client asked for; without Vary a shared cache could hand
 // a compressed body to a client that cannot decode it.
 const VARY = "Accept-Encoding";
@@ -220,7 +288,7 @@ const SECURITY_HEADERS = {
     "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
 
-// Every page answer (200 either encoding, 304) carries these; the security
+// Every page answer (200 any encoding, 304) carries these; the security
 // headers ride along because a fresh load is exactly where they must apply.
 const PAGE_HEADERS = {
   "content-type": "text/html; charset=utf-8",
@@ -257,13 +325,15 @@ export default {
         },
       });
     }
-    if (request.method === "GET" && acceptsGzip(request.headers.get("accept-encoding"))) {
-      return new Response(await gzipBody(), {
-        headers: { ...PAGE_HEADERS, "content-encoding": "gzip" },
-      });
+    const chosen = await representationFor(request.headers.get("accept-encoding"));
+    const headers = {
+      ...PAGE_HEADERS,
+      "content-length": String(chosen.bytes.byteLength),
+    };
+    if (chosen.coding) headers["content-encoding"] = chosen.coding;
+    if (request.method === "HEAD") {
+      return new Response(null, { headers });
     }
-    return new Response(HTML, {
-      headers: PAGE_HEADERS,
-    });
+    return new Response(chosen.bytes, { headers });
   },
 };

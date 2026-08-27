@@ -166,14 +166,15 @@ Deployment surface:
   (.github/workflows/release.yml, Makefile `release`/`sbom`). Release
   artifacts ship SHA-256 checksums only; no signature step exists.
 - The marketing site is a single Cloudflare Worker serving one static page
-  from an embedded string (site/worker.js). GET/HEAD only (:236-238), a
-  `/health` route (:239-245), ETag revalidation with a weak validator
-  (:155-178,248-258), gzip content negotiation compressed once per isolate
-  (:193-203,260-263) keyed by `Vary: Accept-Encoding` on every page response
-  (:213,230), and hardening headers (nosniff, HSTS, referrer-policy, CSP
+  from an embedded string (site/worker.js:13-150): GET/HEAD only (:304), a
+  `/health` route (:307-312), ETag revalidation with a weak validator
+  (:162-186,316-326), content negotiation (brotli, zstd, gzip, identity)
+  compressed once per isolate (:191-270,328-337) keyed by
+  `Vary: Accept-Encoding` on every page response (:278-281,293-299), and
+  hardening headers (nosniff, HSTS, referrer-policy, CSP
   `default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri
   'none'; form-action 'none'; frame-ancestors 'none'`) on every page response
-  (:215-231). wrangler.jsonc also publishes the worker on workers.dev and
+  (:283-289). wrangler.jsonc also publishes the worker on workers.dev and
   binds toktop.ai / www.toktop.ai. The only request bytes inspected are the
   method, path, If-None-Match, and Accept-Encoding headers, compared as
   strings; nothing is stored, echoed into the page, or forwarded anywhere.

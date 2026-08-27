@@ -18,6 +18,13 @@ const call = (headers = {}, init = {}) =>
 
 const identityBody = await call().then((r) => r.text());
 
+async function decompress(bytes, format) {
+  const out = await new Response(
+    new Response(bytes).body.pipeThrough(new DecompressionStream(format)),
+  ).arrayBuffer();
+  return new TextDecoder().decode(out);
+}
+
 test("no accept-encoding: identity body, no content-encoding", async () => {
   const res = await call();
   expect(res.status).toBe(200);
@@ -25,31 +32,45 @@ test("no accept-encoding: identity body, no content-encoding", async () => {
   expect(await res.text()).toBe(identityBody);
 });
 
-test("gzip client gets a body that decompresses to the page", async () => {
-  const res = await call({ "accept-encoding": "gzip, deflate, br" });
-  expect(res.status).toBe(200);
-  expect(res.headers.get("content-encoding")).toBe("gzip");
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  expect(new TextDecoder().decode(Bun.gunzipSync(bytes))).toBe(identityBody);
+test("single-coding clients get a body that decompresses to the page", async () => {
+  for (const [ae, format] of [
+    ["gzip", "gzip"],
+    ["zstd", "zstd"],
+    ["br", "brotli"],
+  ]) {
+    const res = await call({ "accept-encoding": ae });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-encoding")).toBe(ae);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect(await decompress(bytes, format)).toBe(identityBody);
+  }
+});
+
+test("brotli-capable clients are served br, not gzip", async () => {
+  for (const ae of ["br", "gzip, deflate, br", "gzip, deflate, br, zstd"]) {
+    const res = await call({ "accept-encoding": ae });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-encoding")).toBe("br");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect(await decompress(bytes, "brotli")).toBe(identityBody);
+  }
 });
 
 test("accept-encoding variants negotiate correctly", async () => {
-  for (const [ae, wantEncoding] of [
-    ["gzip", true],
-    ["*", true],
-    ["gzip;q=0.5, br", true],
-    ["br", false],
-    ["gzip;q=0", false],
-    ["deflate", false],
-    ["GZIP", true],
+  for (const [ae, want] of [
+    ["gzip", "gzip"],
+    ["GZIP", "gzip"],
+    ["*", "br"],
+    ["gzip;q=0.5, br", "br"],
+    ["br;q=0.1, gzip", "gzip"],
+    ["br", "br"],
+    ["zstd", "zstd"],
+    ["gzip;q=0", null],
+    ["deflate", null],
   ]) {
     const res = await call({ "accept-encoding": ae });
-    const encoding = res.headers.get("content-encoding");
-    if (wantEncoding) expect(encoding).toBe("gzip");
-    else {
-      expect(encoding).toBeNull();
-      expect(await res.text()).toBe(identityBody);
-    }
+    expect(res.headers.get("content-encoding")).toBe(want);
+    if (want == null) expect(await res.text()).toBe(identityBody);
   }
 });
 
@@ -85,6 +106,17 @@ test("HEAD answers with page headers and no body", async () => {
   const res = await call({}, { method: "HEAD" });
   expect(res.status).toBe(200);
   expect(res.headers.get("content-type")).toContain("text/html");
+  expect(res.headers.get("content-encoding")).toBeNull();
+  expect((await res.arrayBuffer()).byteLength).toBe(0);
+});
+
+test("HEAD with Accept-Encoding matches GET's coding and length, with no body", async () => {
+  const get = await call({ "accept-encoding": "gzip, deflate, br" });
+  const head = await call({ "accept-encoding": "gzip, deflate, br" }, { method: "HEAD" });
+  expect(head.status).toBe(200);
+  expect(head.headers.get("content-encoding")).toBe(get.headers.get("content-encoding"));
+  expect(head.headers.get("content-length")).toBe(get.headers.get("content-length"));
+  expect((await head.arrayBuffer()).byteLength).toBe(0);
 });
 
 test("non-GET methods and /health keep their contract", async () => {
@@ -103,26 +135,40 @@ const SECURITY_HEADER_NAMES = [
 
 test("every page answer carries the security headers, not only revalidations", async () => {
   const fresh = await call();
-  const compressed = await call({ "accept-encoding": "gzip" });
+  const gzipped = await call({ "accept-encoding": "gzip" });
+  const brotli = await call({ "accept-encoding": "br" });
   const revalidated = await call({ "if-none-match": fresh.headers.get("etag") });
   expect(revalidated.status).toBe(304);
-  for (const res of [fresh, compressed, revalidated]) {
+  for (const res of [fresh, gzipped, brotli, revalidated]) {
     for (const name of SECURITY_HEADER_NAMES) {
       expect(res.headers.get(name)).not.toBeNull();
     }
   }
 });
 
+test("served HTML does not carry source comments", () => {
+  expect(identityBody.includes("<!--")).toBe(false);
+  expect(identityBody.includes("/*")).toBe(false);
+});
+
 // RFC 6928 initcwnd: ten ~1460-byte segments (~14 KB). Identity bytes plus
 // inline CSS are everything there is, so staying under this keeps first paint
-// at one round trip; measured against exactly what each encoding puts on the
-// wire, so compression drift counts too.
-test("both encodings stay inside the initial congestion window", async () => {
+// at one round trip. Exact sizes are the record: a copy or compression
+// change that grows the payload fails here instead of hiding under the
+// window ceiling.
+test("recorded transfer sizes stay inside the initial congestion window", async () => {
   const budget = 10 * 1460;
   const identity = new Uint8Array(await (await call()).arrayBuffer()).byteLength;
   const gzipped = new Uint8Array(
     await (await call({ "accept-encoding": "gzip" })).arrayBuffer(),
   ).byteLength;
+  const brotli = new Uint8Array(
+    await (await call({ "accept-encoding": "br" })).arrayBuffer(),
+  ).byteLength;
+  expect(identity).toBe(6159);
+  expect(gzipped).toBe(2622);
+  expect(brotli).toBe(2116);
   expect(identity).toBeLessThan(budget);
   expect(gzipped).toBeLessThan(budget);
+  expect(brotli).toBeLessThan(budget);
 });
