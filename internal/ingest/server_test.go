@@ -506,6 +506,35 @@ func TestIngestTreatsEmptyTimestampAsAbsent(t *testing.T) {
 	}
 }
 
+// Event stamps that ingest fills in (missing ts, far-future clamp) follow
+// an injected clock so a demo recorder's simulated instant is what lands
+// in the feed, not a second wall-clock read.
+func TestIngestStampsWithInjectedClock(t *testing.T) {
+	rec := &memRecorder{}
+	s, err := newServer("127.0.0.1:0", rec, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen := time.Unix(1_700_000_000, 0).UTC()
+	s.SetNow(func() time.Time { return frozen })
+	go s.Serve()
+	t.Cleanup(func() { s.Close() })
+
+	farFuture := frozen.Add(time.Hour).Format(time.RFC3339)
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"a"}`+"\n"+
+			`{"agent":"b","ts":"`+farFuture+`"}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 2)
+	for i, ev := range rec.evs {
+		if !ev.At.Equal(frozen) {
+			t.Errorf("event %d At = %v, want injected %v", i, ev.At, frozen)
+		}
+	}
+}
+
 // The 202 acknowledgment carries a JSON body, so it must advertise
 // application/json like every other JSON response from this server,
 // leaving clients nothing to sniff.

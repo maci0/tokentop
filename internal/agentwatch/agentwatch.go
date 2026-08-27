@@ -17,12 +17,14 @@
 package agentwatch
 
 import (
+	"cmp"
 	"context"
 	"net"
 	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -138,6 +140,10 @@ func (w *Watcher) discover(ctx context.Context) {
 		}
 	}
 	w.mu.Unlock()
+	sortTracked(gone)
+	slices.SortFunc(newProcs, func(a, b agentusage.Process) int {
+		return cmp.Compare(a.PID, b.PID)
+	})
 
 	// Watch walks transcript stores; doing that under w.mu would stall
 	// report() for agents already being followed. cancel is set before
@@ -185,6 +191,7 @@ func (w *Watcher) discover(ctx context.Context) {
 		pids = append(pids, pid)
 	}
 	w.mu.Unlock()
+	slices.Sort(pids)
 
 	// Re-checked every pass rather than once at discovery: an agent connects
 	// to its engine after it starts, and may switch engines mid-session.
@@ -215,6 +222,7 @@ func (w *Watcher) stopAll() {
 		gone = append(gone, t)
 	}
 	w.mu.Unlock()
+	sortTracked(gone)
 	for _, t := range gone {
 		w.stopOne(t)
 	}
@@ -283,15 +291,30 @@ func parseEngineAddr(addr string) (netip.AddrPort, string, bool) {
 // already polls on readEvery without forcing a store walk each tick.
 func (w *Watcher) read() {
 	w.mu.Lock()
-	snapshot := make([]*tracked, 0, len(w.tracked))
-	for _, t := range w.tracked {
-		snapshot = append(snapshot, t)
-	}
+	snapshot := w.trackedList()
 	w.mu.Unlock()
 
 	for _, t := range snapshot {
 		w.report(t, t.watch.Poll())
 	}
+}
+
+// trackedList is the followed agents in PID order. Report and shutdown
+// sequences must not depend on map iteration, or equal-timestamp events
+// land in a different order across replays. Caller holds w.mu.
+func (w *Watcher) trackedList() []*tracked {
+	out := make([]*tracked, 0, len(w.tracked))
+	for _, t := range w.tracked {
+		out = append(out, t)
+	}
+	sortTracked(out)
+	return out
+}
+
+func sortTracked(ts []*tracked) {
+	slices.SortFunc(ts, func(a, b *tracked) int {
+		return cmp.Compare(a.proc.PID, b.proc.PID)
+	})
 }
 
 // report records growth since the last sample. Live Run callbacks and the

@@ -1128,6 +1128,20 @@ func TestStaticFrameUsesSnapshotTime(t *testing.T) {
 	}
 }
 
+func TestFrameNowDoesNotReadWallClock(t *testing.T) {
+	if got := frameNow(core.Snapshot{}, time.Time{}); !got.IsZero() {
+		t.Fatalf("zero snapshot and fallback produced %v, want zero", got)
+	}
+	stamp := time.Unix(1_700_000_000, 0).UTC()
+	if got := frameNow(core.Snapshot{At: stamp}, time.Time{}); !got.Equal(stamp) {
+		t.Fatalf("snapshot At = %v, got %v", stamp, got)
+	}
+	fb := stamp.Add(time.Second)
+	if got := frameNow(core.Snapshot{}, fb); !got.Equal(fb) {
+		t.Fatalf("fallback = %v, got %v", fb, got)
+	}
+}
+
 // The probing marker expires on the UI clock, not wall time, so a paused
 // frame does not clear it while frozen and a tick 16s later does.
 func TestProbeTimeoutFollowsClock(t *testing.T) {

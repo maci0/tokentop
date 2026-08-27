@@ -439,6 +439,27 @@ func TestReportsPromptAndThinking(t *testing.T) {
 	}
 }
 
+// Equal-timestamp reports must follow PID order, not map iteration, so a
+// replay of the same process set emits events in the same sequence.
+func TestTrackedListOrdersByPID(t *testing.T) {
+	w := New(nil, nil)
+	w.tracked[20] = &tracked{proc: agentusage.Process{PID: 20, Tool: "z"}}
+	w.tracked[7] = &tracked{proc: agentusage.Process{PID: 7, Tool: "a"}}
+	w.tracked[13] = &tracked{proc: agentusage.Process{PID: 13, Tool: "m"}}
+	w.mu.Lock()
+	got := w.trackedList()
+	w.mu.Unlock()
+	want := []int{7, 13, 20}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i, tr := range got {
+		if tr.proc.PID != want[i] {
+			t.Fatalf("index %d PID = %d, want %d", i, tr.proc.PID, want[i])
+		}
+	}
+}
+
 // URLs that omit the port still name a TCP endpoint (scheme default). Without
 // that, an agent generating through http://127.0.0.1 would not be labelled
 // via and its tokens would be added on top of the engine's.

@@ -80,13 +80,14 @@ var notes = []string{
 }
 
 // Run blocks until ctx is done. The ticker only paces real time; each
-// frame's simulated instant starts at the first wall-clock read and then
-// advances by interval, so ticker jitter and coalesced ticks cannot pull
-// timestamps off the seeded trajectory.
+// frame's simulated instant starts at the first clock read (shared with
+// ProbeAll/RecordAgent/Now) and then advances by interval, so ticker jitter,
+// coalesced ticks, and a probe that wins the race with the first frame
+// cannot pull timestamps off the seeded trajectory.
 func (s *Source) Run(ctx context.Context, ch chan<- core.Snapshot) {
 	tick := time.NewTicker(s.interval)
 	defer tick.Stop()
-	now := time.Now()
+	now := s.Now()
 	for {
 		snap := s.stepAt(now)
 		select { // a stalled consumer must not pin the goroutine past cancel
@@ -119,13 +120,24 @@ func (s *Source) stepAt(now time.Time) core.Snapshot {
 	return s.snapshot(now)
 }
 
-// stamp is the current simulated instant, or wall time before Run/stepAt.
-// Caller holds s.mu.
+// Now is the current simulated instant. The first caller pins the origin
+// (one wall-clock read); later calls and Run share that origin so probes,
+// ingest stamps, and frames stay on one timeline. Tests drive time through
+// stepAt instead.
+func (s *Source) Now() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stamp()
+}
+
+// stamp is the current simulated instant. The first call pins the origin
+// from the wall clock; after that it never reads the clock again. Caller
+// holds s.mu.
 func (s *Source) stamp() time.Time {
-	if !s.now.IsZero() {
-		return s.now
+	if s.now.IsZero() {
+		s.now = time.Now()
 	}
-	return time.Now()
+	return s.now
 }
 
 // frame mutates every simulated channel (rng, histories, vitals). It takes

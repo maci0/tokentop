@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/maci0/toktop/internal/core"
+	"github.com/maci0/toktop/internal/procs"
 	"github.com/maci0/toktop/internal/provider"
 )
 
@@ -245,6 +247,54 @@ func TestEmitUsesCachedSysSample(t *testing.T) {
 	}
 	if got := calls.Load(); got != before {
 		t.Fatalf("emit invoked the sampler inline (%d -> %d calls)", before, got)
+	}
+}
+
+func frozenCollector(t *testing.T, frozen time.Time, providers []provider.Provider) *Collector {
+	t.Helper()
+	c := New(providers, time.Second)
+	c.SetNow(func() time.Time { return frozen })
+	c.SetSysFn(func() core.SysSample { return core.SysSample{MemTotal: 8, MemUsed: 3} })
+	c.procFn = func() []procs.Info { return nil }
+	return c
+}
+
+// Snapshot timestamps and uptime come from the injected clock, not a
+// wall-clock read inside emit, so a replay from the same instant matches.
+func TestEmitFollowsInjectedClock(t *testing.T) {
+	frozen := time.Unix(1_700_000_000, 0).UTC()
+	c := frozenCollector(t, frozen, []provider.Provider{
+		&fakeProvider{label: "x", m: &provider.Metrics{OutTotal: 10}},
+	})
+	ch := make(chan core.Snapshot, 1)
+	c.emit(context.Background(), ch)
+	snap := <-ch
+	if !snap.At.Equal(frozen) {
+		t.Fatalf("At = %v, want %v", snap.At, frozen)
+	}
+	if snap.Uptime != 0 {
+		t.Fatalf("Uptime = %v, want 0 with a frozen clock", snap.Uptime)
+	}
+}
+
+func TestEmitDeterministicUnderSameClock(t *testing.T) {
+	frozen := time.Unix(1_700_000_000, 0).UTC()
+	fp := &fakeProvider{label: "ollama", m: &provider.Metrics{OutTotal: 100, InTotal: 20, Running: 1}}
+	chA, chB := make(chan core.Snapshot, 1), make(chan core.Snapshot, 1)
+	frozenCollector(t, frozen, []provider.Provider{fp}).emit(context.Background(), chA)
+	frozenCollector(t, frozen, []provider.Provider{fp}).emit(context.Background(), chB)
+	sa, sb := <-chA, <-chB
+	if !reflect.DeepEqual(sa, sb) {
+		t.Fatalf("same clock, same providers diverged:\n%+v\n%+v", sa, sb)
+	}
+}
+
+func TestRecordAgentZeroAtUsesClock(t *testing.T) {
+	frozen := time.Unix(1_700_000_000, 0).UTC()
+	c := frozenCollector(t, frozen, nil)
+	c.RecordAgent(core.AgentEvent{Agent: "x", OutputTokens: 1})
+	if len(c.agents) != 1 || !c.agents[0].At.Equal(frozen) {
+		t.Fatalf("At = %v, want injected %v", c.agents, frozen)
 	}
 }
 

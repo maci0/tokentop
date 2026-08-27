@@ -205,13 +205,14 @@ func main() {
 	// counting the agent as well would double the total.
 	var engineAddrs agentwatch.Engines
 	feedAddr := "" // advertised by the UI only while the endpoint is live
+	var demoSrc *demo.Source
 
 	switch {
 	case *demoMode:
-		src := demo.NewSource(*interval, *seed)
-		go src.Run(ctx, ch)
-		prober = src
-		recorder = src
+		demoSrc = demo.NewSource(*interval, *seed)
+		go demoSrc.Run(ctx, ch)
+		prober = demoSrc
+		recorder = demoSrc
 
 	default:
 		providers := provider.Discover(ctx)
@@ -328,6 +329,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "toktop: ingest disabled (%v)\n", err)
 		} else {
 			feedAddr = srv.Addr()
+			if demoSrc != nil {
+				srv.SetNow(demoSrc.Now)
+			}
 			if routableBind(feedAddr) {
 				fmt.Fprintf(os.Stderr, "toktop: warning: ingest endpoint %s accepts unauthenticated events from any reachable peer\n", feedAddr)
 			}

@@ -56,6 +56,8 @@ type Collector struct {
 	probeMu       sync.Mutex      // guards the probe fan-out state below
 	lastProbeWave time.Time       // wave gate: see probeWaveGap
 	probeInflight map[string]bool // "base|model" -> generation running
+
+	now func() time.Time // snapshot/probe/event stamps; nil means time.Now
 }
 
 // New polls providers every interval. Host vitals come from sysmon; call
@@ -72,8 +74,26 @@ func New(providers []provider.Provider, interval time.Duration) *Collector {
 		lastModel:     map[string]string{},
 		kvPct:         map[string]float64{},
 		probeInflight: map[string]bool{},
+		now:           time.Now,
 		started:       time.Now(),
 	}
+}
+
+// SetNow overrides the clock used to stamp snapshots, probe-wave gating,
+// and agent events that arrive without a timestamp. Call before Run.
+func (c *Collector) SetNow(fn func() time.Time) {
+	if fn == nil {
+		fn = time.Now
+	}
+	c.now = fn
+	c.started = fn()
+}
+
+func (c *Collector) instant() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // procSampler is the shared engine-process sampler; nil-safe when the
@@ -220,7 +240,7 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	}
 	wg.Wait()
 
-	now := time.Now()
+	now := c.instant()
 	snap := core.Snapshot{At: now, Uptime: now.Sub(c.started)}
 	// Vitals and the process table are independent of c.mu. Sampling them
 	// inside the critical section would stall RecordAgent/ProbeAll for the
@@ -399,6 +419,9 @@ func (c *Collector) ring(m map[string]*timedRing, key string) *timedRing {
 // the way the probe ring is. A non-empty ID that is already in the retained
 // window is ignored, so a retried POST of the same event does not double-count.
 func (c *Collector) RecordAgent(ev core.AgentEvent) {
+	if ev.At.IsZero() {
+		ev.At = c.instant()
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if core.HasAgentID(c.agents, ev.ID) {
@@ -474,7 +497,7 @@ func (c *Collector) ProbeAll() {
 		ctx = context.Background()
 	}
 
-	now := time.Now()
+	now := c.instant()
 	c.probeMu.Lock()
 	if now.Sub(c.lastProbeWave) < probeWaveGap {
 		c.probeMu.Unlock()

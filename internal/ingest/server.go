@@ -28,6 +28,7 @@ import (
 // and GET /v1/events for debugging.
 type Server struct {
 	rec  Recorder
+	now  func() time.Time // event stamps; nil means time.Now. I/O deadlines stay wall-clock.
 	srv  http.Server
 	ln   net.Listener
 	addr string
@@ -178,6 +179,24 @@ func (s *Server) logPost(r *http.Request, reqID string, status, accepted int, d 
 	s.log.Log(r.Context(), level, "toktop: ingest", attrs...)
 }
 
+// SetNow overrides the clock used to stamp events that arrive without a
+// timestamp and to clamp far-future stamps. Request timeouts still use
+// wall time. Call before Serve. Demo mode passes the simulated clock so
+// harness POSTs stay on the seeded timeline.
+func (s *Server) SetNow(fn func() time.Time) {
+	if fn == nil {
+		fn = time.Now
+	}
+	s.now = fn
+}
+
+func (s *Server) instant() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
 // Addr returns the actual bound address (useful when starting on :0).
 func (s *Server) Addr() string { return s.addr }
 
@@ -315,7 +334,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			fail(http.StatusBadRequest, msg)
 			return
 		}
-		now := time.Now()
+		now := s.instant()
 		if ev.At.IsZero() {
 			ev.At = now
 		} else if ev.At.Sub(now) > maxEventSkew {

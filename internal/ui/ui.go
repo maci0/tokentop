@@ -1256,17 +1256,14 @@ func kvHeat(v float64) lipgloss.Color {
 }
 
 // frameNow is the instant a snapshot treats as "now": its own stamp when
-// the collector filled one in, otherwise fallback (the UI clock, or wall
-// time if that is zero). Renderers use this so --once output and paused
-// frames do not slide the agent window against real time.
+// the collector filled one in, otherwise fallback (the UI clock). A zero
+// fallback stays zero: wall time would slide --once/--plain agent windows
+// against a clock the snapshot does not share.
 func frameNow(s core.Snapshot, fallback time.Time) time.Time {
 	if !s.At.IsZero() {
 		return s.At
 	}
-	if !fallback.IsZero() {
-		return fallback
-	}
-	return time.Now()
+	return fallback
 }
 
 func aggOutAt(s core.Snapshot, now time.Time) float64 {

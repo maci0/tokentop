@@ -81,6 +81,32 @@ func TestDeterministicFrames(t *testing.T) {
 	}
 }
 
+// ProbeAll that wins the race with the first frame must pin the origin Run
+// then uses, so probes and the first snapshot share one instant.
+func TestProbeAllPinsOriginForRun(t *testing.T) {
+	s := NewSource(time.Second, 3)
+	s.ProbeAll()
+	pinned := s.Now()
+	if pinned.IsZero() {
+		t.Fatal("ProbeAll left the origin unpinned")
+	}
+	if second := s.Now(); !second.Equal(pinned) {
+		t.Fatalf("Now moved after pin: %v then %v", pinned, second)
+	}
+	snap := s.stepAt(pinned)
+	if !snap.At.Equal(pinned) {
+		t.Fatalf("first frame At = %v, want pinned %v", snap.At, pinned)
+	}
+	if len(s.probes) == 0 {
+		t.Fatal("ProbeAll produced no samples")
+	}
+	for _, p := range s.probes {
+		if !p.At.Equal(pinned) {
+			t.Fatalf("probe At = %v, want pinned %v", p.At, pinned)
+		}
+	}
+}
+
 // ProbeAll and RecordAgent stamp the simulated instant, not wall time, so
 // injected activity stays on the seeded timeline.
 func TestExternalStampsUseSimulatedTime(t *testing.T) {
@@ -90,6 +116,9 @@ func TestExternalStampsUseSimulatedTime(t *testing.T) {
 	s.RecordAgent(core.AgentEvent{Agent: "x"})
 	if len(s.agents) != 1 || !s.agents[0].At.Equal(t0) {
 		t.Fatalf("agent At = %v, want %v", s.agents, t0)
+	}
+	if !s.Now().Equal(t0) {
+		t.Fatalf("Now = %v, want simulated %v", s.Now(), t0)
 	}
 	s.ProbeAll()
 	if len(s.probes) != len(s.backends) {
