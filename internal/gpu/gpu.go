@@ -16,7 +16,6 @@ import (
 	"math"
 	"os/exec"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,11 +124,11 @@ func Sample(ctx context.Context) []core.GPUDevice {
 	}()
 	wg.Wait()
 
-	sort.SliceStable(devs, func(i, j int) bool {
-		if vendorOrder[devs[i].Vendor] != vendorOrder[devs[j].Vendor] {
-			return vendorOrder[devs[i].Vendor] < vendorOrder[devs[j].Vendor]
+	slices.SortStableFunc(devs, func(a, b core.GPUDevice) int {
+		if c := cmp.Compare(vendorOrder[a.Vendor], vendorOrder[b.Vendor]); c != 0 {
+			return c
 		}
-		return devs[i].Index < devs[j].Index
+		return cmp.Compare(a.Index, b.Index)
 	})
 	return devs
 }
@@ -190,7 +189,7 @@ func ParseNvidiaSMI(b []byte) []core.GPUDevice {
 		if len(f) < fixedTail+1 {
 			continue
 		}
-		idx, err := strconv.Atoi(strings.TrimSpace(f[0]))
+		index, err := strconv.Atoi(strings.TrimSpace(f[0]))
 		if err != nil {
 			continue
 		}
@@ -202,7 +201,7 @@ func ParseNvidiaSMI(b []byte) []core.GPUDevice {
 		}
 		devs = append(devs, core.GPUDevice{
 			Vendor:   "nvidia",
-			Index:    idx,
+			Index:    index,
 			Name:     strings.TrimSpace(name),
 			MilliC:   satInt(flexF(tail[0]) * 1000),
 			MemUsed:  mibBytes(flexF(tail[1])),
@@ -251,11 +250,15 @@ func ParseRocmSMI(b []byte) []core.GPUDevice {
 	// polls on identical input.
 	var devs []core.GPUDevice
 	for _, card := range slices.Sorted(maps.Keys(raw)) {
-		idx := 0
-		if _, rest, ok := strings.Cut(card, "card"); ok && len(strings.Fields(rest)) > 0 {
-			idx, _ = strconv.Atoi(strings.Fields(rest)[0])
+		index := 0
+		if _, rest, ok := strings.Cut(card, "card"); ok {
+			if fields := strings.Fields(rest); len(fields) > 0 {
+				if n, err := strconv.Atoi(fields[0]); err == nil {
+					index = n
+				}
+			}
 		}
-		d := core.GPUDevice{Vendor: "amd", Index: idx}
+		d := core.GPUDevice{Vendor: "amd", Index: index}
 		fields := raw[card]
 		for _, k := range slices.Sorted(maps.Keys(fields)) {
 			lk, val := strings.ToLower(k), flatten(fields[k])
@@ -314,14 +317,14 @@ func parseXpuDiscovery(b []byte) []xpuDevice {
 
 // parseXpuMetrics reads `xpu-smi metrics -d N -j`; values arrive as
 // {"values":[x]} wrappers whose key set drifts between releases.
-func parseXpuMetrics(b []byte, idx int) (core.GPUDevice, bool) {
+func parseXpuMetrics(b []byte, index int) (core.GPUDevice, bool) {
 	var raw struct {
 		Metrics map[string]any `json:"metrics"`
 	}
 	if json.Unmarshal(b, &raw) != nil || raw.Metrics == nil {
 		return core.GPUDevice{}, false
 	}
-	d := core.GPUDevice{Vendor: "intel", Index: idx}
+	d := core.GPUDevice{Vendor: "intel", Index: index}
 	for k, v := range raw.Metrics {
 		lk := strings.ToLower(k)
 		val := flatten(v)
@@ -341,16 +344,27 @@ func parseXpuMetrics(b []byte, idx int) (core.GPUDevice, bool) {
 	return d, true
 }
 
+// flattenMaxDepth bounds unwrap of {"values":[x]} / [x] wrappers. Past the
+// bound the value stays wrapped and flexAny treats it as junk.
+const flattenMaxDepth = 8
+
 // flatten unwraps {"values":[x]} / [x] shapes to a scalar any.
 func flatten(v any) any {
-	switch t := v.(type) {
-	case []any:
-		if len(t) > 0 {
-			return flatten(t[0])
-		}
-	case map[string]any:
-		if vals, ok := t["values"]; ok {
-			return flatten(vals)
+	for range flattenMaxDepth {
+		switch t := v.(type) {
+		case []any:
+			if len(t) == 0 {
+				return v
+			}
+			v = t[0]
+		case map[string]any:
+			vals, ok := t["values"]
+			if !ok {
+				return v
+			}
+			v = vals
+		default:
+			return v
 		}
 	}
 	return v

@@ -14,6 +14,18 @@ import (
 	_ "modernc.org/sqlite" // pure Go driver: no cgo, so cross-compilation still works
 )
 
+// registerSource makes an agent readable through a source instead of files.
+// Passing nil removes it, which is how the runtime switch turns one off.
+func registerSource(tool string, s usageSource) {
+	sourcesMu.Lock()
+	defer sourcesMu.Unlock()
+	if s == nil {
+		delete(sources, tool)
+		return
+	}
+	sources[tool] = s
+}
+
 const (
 	// dbQueryTimeout bounds a single read against an agent database. The
 	// dashboard polls several times a second; a hung or recovering store

@@ -364,8 +364,8 @@ func TestCompressSeriesWideTerminalKeepsSamples(t *testing.T) {
 	const w = 500 // wide enough that naive doubling overflows
 	end := time.Unix(1_000_000_000, 0)
 	tv := []timedVal{
-		{t: end.Add(-300 * time.Second), v: 7},
-		{t: end.Add(-time.Second), v: 1},
+		{at: end.Add(-300 * time.Second), rate: 7},
+		{at: end.Add(-time.Second), rate: 1},
 	}
 	grid, bounds := compressSeries(tv, w, compressBlock)
 	if len(grid) != w || len(bounds) == 0 {
@@ -389,8 +389,8 @@ func TestCompressSeriesWideTerminalKeepsSamples(t *testing.T) {
 func TestCompressSeriesSumsAcrossEngines(t *testing.T) {
 	end := time.Unix(1_000_000_000, 0)
 	tv := []timedVal{
-		{t: end.Add(-time.Second), v: 100, s: 0},
-		{t: end.Add(-time.Second), v: 200, s: 1},
+		{at: end.Add(-time.Second), rate: 100, engine: 0},
+		{at: end.Add(-time.Second), rate: 200, engine: 1},
 	}
 	grid, _ := compressSeries(tv, 24, compressBlock)
 	if got := grid[len(grid)-1]; got != 300 {
@@ -403,9 +403,9 @@ func TestCompressSeriesSumsAcrossEngines(t *testing.T) {
 func TestCompressSeriesAveragesWithinEngine(t *testing.T) {
 	end := time.Unix(1_000_000_000, 0)
 	tv := []timedVal{
-		{t: end.Add(-30 * time.Second), v: 100, s: 0},
-		{t: end.Add(-29 * time.Second), v: 300, s: 0},
-		{t: end.Add(-time.Second), v: 50, s: 1},
+		{at: end.Add(-30 * time.Second), rate: 100, engine: 0},
+		{at: end.Add(-29 * time.Second), rate: 300, engine: 0},
+		{at: end.Add(-time.Second), rate: 50, engine: 1},
 	}
 	grid, _ := compressSeries(tv, 24, compressBlock)
 	var nonzero []float64
@@ -687,8 +687,8 @@ func TestTimedSeriesHonorsCadence(t *testing.T) {
 	if len(tv) != 2 {
 		t.Fatalf("len = %d, want 2", len(tv))
 	}
-	if !tv[0].t.Equal(t0) || !tv[1].t.Equal(t0.Add(2*time.Second)) {
-		t.Fatalf("timestamps %v..%v, want %v..%v", tv[0].t, tv[1].t, t0, t0.Add(2*time.Second))
+	if !tv[0].at.Equal(t0) || !tv[1].at.Equal(t0.Add(2*time.Second)) {
+		t.Fatalf("timestamps %v..%v, want %v..%v", tv[0].at, tv[1].at, t0, t0.Add(2*time.Second))
 	}
 }
 

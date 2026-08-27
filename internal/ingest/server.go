@@ -304,54 +304,14 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			fail(http.StatusBadRequest, clientJSONError(err))
 			return
 		}
-		at, err := parseEventTime(wire.At)
+		ev, err := eventFromWire(wire)
 		if err != nil {
-			fail(http.StatusBadRequest, "bad ts: "+err.Error())
+			msg := err.Error()
+			if errors.Is(err, errBadTS) {
+				msg = "bad ts: " + msg
+			}
+			fail(http.StatusBadRequest, msg)
 			return
-		}
-		prompt, output, thinking, err := parseTokenFields(wire)
-		if err != nil {
-			fail(http.StatusBadRequest, err.Error())
-			return
-		}
-		ev := core.AgentEvent{
-			At:             at,
-			ID:             wire.ID,
-			Agent:          wire.Agent,
-			Model:          wire.Model,
-			Kind:           wire.Kind,
-			PromptTokens:   prompt,
-			OutputTokens:   output,
-			ThinkingTokens: thinking,
-			ViaEngine:      wire.ViaEngine,
-			Note:           wire.Note,
-		}
-		// Event fields are attacker-shaped text (any local process or peer
-		// able to reach this endpoint): strip terminal escape sequences and
-		// control characters before the values are stored and later rendered.
-		// Defaults come after sanitization: a value the sanitizer empties
-		// (pure escape sequences) must not slip past the fallback.
-		ev.ID = clampField(core.SanitizeText(ev.ID), 128)
-		ev.Agent = clampField(core.SanitizeText(ev.Agent), 64)
-		if ev.Agent == "" {
-			ev.Agent = "anonymous"
-		}
-		ev.Model = clampField(core.SanitizeText(ev.Model), 128)
-		ev.ViaEngine = clampField(core.SanitizeText(ev.ViaEngine), 128)
-		ev.Note = clampField(core.SanitizeText(ev.Note), 512) // free-form fields are capped so one giant event cannot dominate the retained feed
-		// Token counts are unsigned quantities; negative or absurd values
-		// are junk from a misbehaving sender and must not enter the
-		// retained feed (summing MaxInt64 across events wraps the totals).
-		ev.PromptTokens = clampTokens(ev.PromptTokens)
-		ev.OutputTokens = clampTokens(ev.OutputTokens)
-		ev.ThinkingTokens = clampTokens(ev.ThinkingTokens)
-		switch ev.Kind {
-		case "turn", "tool", "error", "note":
-		default:
-			ev.Kind = clampField(core.SanitizeText(strings.ToLower(ev.Kind)), 24)
-		}
-		if ev.Kind == "" {
-			ev.Kind = "turn"
 		}
 		now := time.Now()
 		if ev.At.IsZero() {
@@ -366,6 +326,60 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	fmt.Fprintf(w, `{"accepted":%d}`+"\n", n)
 	done(http.StatusAccepted, n, "")
+}
+
+// eventFromWire sanitizes one decoded event. Timestamp clamping against
+// arrival time stays in handlePost: that bound is a property of the request,
+// not of the wire object.
+func eventFromWire(wire agentEventWire) (core.AgentEvent, error) {
+	at, err := parseEventTime(wire.At)
+	if err != nil {
+		return core.AgentEvent{}, err
+	}
+	prompt, output, thinking, err := parseTokenFields(wire)
+	if err != nil {
+		return core.AgentEvent{}, err
+	}
+	ev := core.AgentEvent{
+		At:             at,
+		ID:             wire.ID,
+		Agent:          wire.Agent,
+		Model:          wire.Model,
+		Kind:           wire.Kind,
+		PromptTokens:   prompt,
+		OutputTokens:   output,
+		ThinkingTokens: thinking,
+		ViaEngine:      wire.ViaEngine,
+		Note:           wire.Note,
+	}
+	// Event fields are attacker-shaped text (any local process or peer
+	// able to reach this endpoint): strip terminal escape sequences and
+	// control characters before the values are stored and later rendered.
+	// Defaults come after sanitization: a value the sanitizer empties
+	// (pure escape sequences) must not slip past the fallback.
+	ev.ID = clampField(core.SanitizeText(ev.ID), 128)
+	ev.Agent = clampField(core.SanitizeText(ev.Agent), 64)
+	if ev.Agent == "" {
+		ev.Agent = "anonymous"
+	}
+	ev.Model = clampField(core.SanitizeText(ev.Model), 128)
+	ev.ViaEngine = clampField(core.SanitizeText(ev.ViaEngine), 128)
+	ev.Note = clampField(core.SanitizeText(ev.Note), 512) // free-form fields are capped so one giant event cannot dominate the retained feed
+	// Token counts are unsigned quantities; negative or absurd values
+	// are junk from a misbehaving sender and must not enter the
+	// retained feed (summing MaxInt64 across events wraps the totals).
+	ev.PromptTokens = clampTokens(ev.PromptTokens)
+	ev.OutputTokens = clampTokens(ev.OutputTokens)
+	ev.ThinkingTokens = clampTokens(ev.ThinkingTokens)
+	switch ev.Kind {
+	case "turn", "tool", "error", "note":
+	default:
+		ev.Kind = clampField(core.SanitizeText(strings.ToLower(ev.Kind)), 24)
+	}
+	if ev.Kind == "" {
+		ev.Kind = "turn"
+	}
+	return ev, nil
 }
 
 // agentEventWire mirrors core.AgentEvent for decoding, with ts and token

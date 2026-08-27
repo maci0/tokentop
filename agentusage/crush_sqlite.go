@@ -45,16 +45,27 @@ const (
 	crushMaxWalkUp = 16
 )
 
-// read sums what crush recorded for this directory since the review began.
-func (crushDBSource) read(dirs []string, since time.Time) (values, bool) {
-	seen := map[string]bool{}
-	var v values
+// crushDBPaths is the unique set of crush databases for dirs. Two spellings
+// of one directory share one file; the walk that finds it is the same for
+// a usage read and a session snapshot.
+func crushDBPaths(dirs []string) []string {
+	seen := make(map[string]bool, len(dirs))
+	var paths []string
 	for _, dir := range dirs {
 		path := crushDBPath(dir)
 		if path == "" || seen[path] {
-			continue // two spellings of one directory share one database
+			continue
 		}
 		seen[path] = true
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+// read sums what crush recorded for this directory since the review began.
+func (crushDBSource) read(dirs []string, since time.Time) (values, bool) {
+	var v values
+	for _, path := range crushDBPaths(dirs) {
 		if out, ok := readCrushDB(path, since); ok {
 			v.output = satAdd(v.output, out)
 		}
@@ -135,14 +146,8 @@ const crushSessionsSinceQuery = crushSessionsQuery + `
 // rows touched since the review started: idle history is not re-scanned
 // on every poll.
 func (crushDBSource) sessions(dirs []string, since time.Time) (map[string]map[string]int64, bool) {
-	seen := map[string]bool{}
 	out := map[string]map[string]int64{}
-	for _, dir := range dirs {
-		path := crushDBPath(dir)
-		if path == "" || seen[path] {
-			continue
-		}
-		seen[path] = true
+	for _, path := range crushDBPaths(dirs) {
 		sess, ok := readCrushSessions(path, since)
 		if !ok {
 			return nil, false

@@ -10,7 +10,7 @@ import (
 
 // usageSource reads usage for one review from somewhere other than an
 // appendable transcript file. opencode and crush keep sessions in SQLite
-// rather than JSONL.
+// rather than JSONL, so they register as sources instead of file adapters.
 //
 // The contract is the same as everywhere else here: report what the agent
 // recorded for this directory since this moment, or report nothing.

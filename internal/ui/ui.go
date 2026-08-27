@@ -3,8 +3,9 @@ package ui
 
 import (
 	"fmt"
+	"maps"
 	"math/bits"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -231,13 +232,7 @@ func (m Model) View() string {
 		m.renderMidRow(),
 		m.renderFeed(),
 	)
-	footer := m.renderFooter()
-	// Reserve an explicit row for the footer: concatenating onto unpadded
-	// body made it ride the last content line and wrap past the pane edge.
-	if gap := m.h - lipgloss.Height(body) - lipgloss.Height(footer) - 1; gap > 0 {
-		body += strings.Repeat("\n", gap)
-	}
-	return body + "\n" + footer
+	return composeFrame(body, m.renderFooter(), m.w, m.h)
 }
 
 func (m Model) renderHeader() string {
@@ -452,12 +447,12 @@ func (m Model) throughputTitle() string {
 	return title + mode + styleInfo.Render("[t]")
 }
 
-// timedVal is one sample with its absolute timestamp, its value, and the
+// timedVal is one sample with its absolute timestamp, its rate, and the
 // engine it came from.
 type timedVal struct {
-	t time.Time
-	v float64
-	s int
+	at     time.Time
+	rate   float64
+	engine int
 }
 
 // timedSeries flattens every provider's history onto absolute timestamps
@@ -473,7 +468,7 @@ func timedSeries(s core.Snapshot, cadence time.Duration) []timedVal {
 		}
 		for j, v := range p.OutHist {
 			t := p.OutT0.Add(time.Duration(j) * cadence)
-			tv = append(tv, timedVal{t: t, v: v, s: i})
+			tv = append(tv, timedVal{at: t, rate: v, engine: i})
 			if t.After(end) {
 				end = t
 			}
@@ -485,22 +480,22 @@ func timedSeries(s core.Snapshot, cadence time.Duration) []timedVal {
 	if !end.IsZero() {
 		n := core.HistoryLen
 		hist := agentDenseHist(s.Agents, true, end, n, cadence)
-		src := len(s.Providers)
-		any := false
+		engine := len(s.Providers)
+		nonzero := false
 		for _, v := range hist {
 			if v > 0 {
-				any = true
+				nonzero = true
 				break
 			}
 		}
-		if any {
+		if nonzero {
 			start := end.Add(-time.Duration(n-1) * cadence)
 			for j, v := range hist {
-				tv = append(tv, timedVal{t: start.Add(time.Duration(j) * cadence), v: v, s: src})
+				tv = append(tv, timedVal{at: start.Add(time.Duration(j) * cadence), rate: v, engine: engine})
 			}
 		}
 	}
-	sort.Slice(tv, func(i, j int) bool { return tv[i].t.Before(tv[j].t) })
+	slices.SortFunc(tv, func(a, b timedVal) int { return a.at.Compare(b.at) })
 	return tv
 }
 
@@ -518,7 +513,7 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 	if len(tv) == 0 || w <= 0 {
 		return nil, nil
 	}
-	end := tv[len(tv)-1].t
+	end := tv[len(tv)-1].at
 	spans := make([]time.Duration, w)
 	total := time.Duration(0)
 	maxLevel := spanCap(w)
@@ -538,15 +533,15 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 	}
 
 	nEngines := 0
-	for _, s := range tv {
-		nEngines = max(nEngines, s.s+1)
+	for _, sample := range tv {
+		nEngines = max(nEngines, sample.engine+1)
 	}
 	// Per-engine bucket sums and counts; rows materialize only for buckets
 	// samples actually land in.
 	sums := make([][]float64, w)
 	cnts := make([][]int, w)
-	for _, s := range tv {
-		offset := end.Sub(s.t)
+	for _, sample := range tv {
+		offset := end.Sub(sample.at)
 		if offset < 0 || offset >= total {
 			continue
 		}
@@ -564,8 +559,8 @@ func compressSeries(tv []timedVal, w, block int) ([]float64, map[int]bool) {
 			sums[j] = make([]float64, nEngines)
 			cnts[j] = make([]int, nEngines)
 		}
-		sums[j][s.s] += s.v
-		cnts[j][s.s]++
+		sums[j][sample.engine] += sample.rate
+		cnts[j][sample.engine]++
 	}
 	grid := make([]float64, w)
 	for j := range grid {
@@ -691,13 +686,8 @@ func hostSegments(sy *core.SysSample) []string {
 		segs = append(segs, dim(shorten(osPart, 34)))
 	}
 	if len(sy.Drivers) > 0 {
-		keys := make([]string, 0, len(sy.Drivers))
-		for k := range sy.Drivers {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
 		var parts []string
-		for _, k := range keys {
+		for _, k := range slices.Sorted(maps.Keys(sy.Drivers)) {
 			parts = append(parts, core.SanitizeText(k)+" "+core.SanitizeText(sy.Drivers[k]))
 		}
 		segs = append(segs, styleInfo.Render(shorten(strings.Join(parts, " · "), 40)))
@@ -1095,13 +1085,8 @@ func (m Model) renderHelp() string {
 	box := helpStyle.Render(strings.TrimSuffix(b.String(), "\n"))
 	placed := lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, box)
 	// The minimal view advertises ? on panes far narrower than this box: an
-	// over-wide help line wraps and drags every row below it out of alignment,
-	// so clip like renderAgentsOnly does.
-	out := strings.Split(placed, "\n")
-	for i, ln := range out {
-		out[i] = clip(ln, m.w)
-	}
-	return strings.Join(out, "\n")
+	// over-wide help line wraps and drags every row below it out of alignment.
+	return clipFrame(placed, m.w)
 }
 
 // renderMinimal is the degraded view for panes too small for the dashboard:
@@ -1154,6 +1139,25 @@ func (m Model) renderMinimal() string {
 }
 
 // --- helpers ---------------------------------------------------------------
+
+// composeFrame pads body so the footer sits on the last row, then clips every
+// line to the pane: bubbletea wraps an over-wide line and drags every row
+// below it out of alignment. Concatenating the footer onto unpadded body
+// made it ride the last content line.
+func composeFrame(body, footer string, w, h int) string {
+	if gap := h - lipgloss.Height(body) - lipgloss.Height(footer) - 1; gap > 0 {
+		body += strings.Repeat("\n", gap)
+	}
+	return clipFrame(body+"\n"+footer, w)
+}
+
+func clipFrame(s string, w int) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = clip(ln, w)
+	}
+	return strings.Join(lines, "\n")
+}
 
 func (m Model) upCount() (up, total int) {
 	for _, p := range m.snap.Providers {
@@ -1265,7 +1269,7 @@ func aggHist(s core.Snapshot, out bool, w int, cadence time.Duration) []float64 
 		var sum float64
 		for _, sr := range srcs {
 			d := ts.Sub(sr.t0)
-			idx := int((d + cadence/2) / cadence) // nearest sample
+			idx := int((d + half) / cadence) // nearest sample
 			if idx < 0 || idx >= len(sr.vals) {
 				continue
 			}

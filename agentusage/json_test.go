@@ -5,6 +5,7 @@ package agentusage
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 )
@@ -101,6 +102,15 @@ func TestWalkDoesNotInspectPayloads(t *testing.T) {
 	}
 	if ev.Usage.Output != 7 {
 		t.Fatalf("payload usage leaked or outer usage lost: %+v", ev.Usage)
+	}
+}
+
+func TestSatAddSaturates(t *testing.T) {
+	if got := satAdd(3, 4); got != 7 {
+		t.Fatalf("satAdd(3, 4) = %d", got)
+	}
+	if got := satAdd(math.MaxInt-1, 2); got != math.MaxInt {
+		t.Fatalf("satAdd overflow = %d, want MaxInt", got)
 	}
 }
 

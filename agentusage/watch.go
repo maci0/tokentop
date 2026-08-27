@@ -330,9 +330,9 @@ func home(parts ...string) string {
 
 // Watcher tails one agent's transcripts for one review.
 type Watcher struct {
-	// src is set for agents whose usage is not in files (opencode, crush).
+	// source is set for agents whose usage is not in files (opencode, crush).
 	// When it is, every field below that describes file state is unused.
-	src usageSource
+	source usageSource
 	// dirs are the spellings a source matches against, for agents that record
 	// the directory they were started in rather than its resolved form.
 	dirs    []string
@@ -361,12 +361,12 @@ type Watcher struct {
 	baseInput map[string]int
 	seen      map[string]values // file -> this review's contribution
 	total     map[string]int
-	// srcBase is per-session completion tokens at attach for a sessionSource
+	// sourceBase is per-session completion tokens at attach for a sessionSource
 	// (crush). completion_tokens is cumulative for the session's life, so
 	// without this a continued session would dump its history into this
 	// review the first time it was updated. nil means the source is not
 	// cumulative (opencode counts per message by timestamp).
-	srcBase map[string]map[string]int64
+	sourceBase map[string]map[string]int64
 
 	// pollMu serializes reads: the ticker goroutine and a caller's final
 	// synchronous Poll both walk the same offsets and counters.
@@ -398,14 +398,14 @@ func (w *Watcher) Dir() string {
 // already exist are read from their current end, so a session resumed from
 // an earlier review contributes only what it adds from now on.
 func Watch(tool, dir string, since time.Time) *Watcher {
-	if src, ok := sourceFor(tool); ok {
-		w := &Watcher{src: src, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
-		if ss, ok := src.(sessionSource); ok {
+	if source, ok := sourceFor(tool); ok {
+		w := &Watcher{source: source, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
+		if ss, ok := source.(sessionSource); ok {
 			base, ok := ss.sessions(w.dirs, time.Time{})
 			if !ok {
 				base = map[string]map[string]int64{}
 			}
-			w.srcBase = base
+			w.sourceBase = base
 		}
 		return w
 	}
@@ -556,13 +556,13 @@ func (w *Watcher) Run(ctx context.Context, every time.Duration, onChange func(Sa
 	}
 }
 
-// readSrc is one reading from a non-file source. A sessionSource was
+// readSource is one reading from a non-file source. A sessionSource was
 // snapshotted at attach, so only growth since then is counted. Other
 // sources (opencode) report this review's usage in full each time via
 // a timestamp filter.
-func (w *Watcher) readSrc() (values, bool) {
-	if w.srcBase != nil {
-		ss, ok := w.src.(sessionSource)
+func (w *Watcher) readSource() (values, bool) {
+	if w.sourceBase != nil {
+		ss, ok := w.source.(sessionSource)
 		if !ok {
 			return values{}, false
 		}
@@ -572,7 +572,7 @@ func (w *Watcher) readSrc() (values, bool) {
 		}
 		var n int64
 		for path, sess := range cur {
-			base := w.srcBase[path]
+			base := w.sourceBase[path]
 			for id, tokens := range sess {
 				d := tokens - base[id]
 				if d <= 0 {
@@ -587,7 +587,7 @@ func (w *Watcher) readSrc() (values, bool) {
 		out := counter64(n)
 		return values{output: out}, out > 0
 	}
-	return w.src.read(w.dirs, w.since)
+	return w.source.read(w.dirs, w.since)
 }
 
 // Poll reads whatever the transcripts have gained since the last read and
@@ -624,8 +624,8 @@ func (w *Watcher) poll(onChange func(Sample)) {
 	w.pollMu.Lock()
 	defer w.pollMu.Unlock()
 	var out, thinking, total, input int
-	if w.src != nil {
-		v, ok := w.readSrc()
+	if w.source != nil {
+		v, ok := w.readSource()
 		if !ok {
 			return
 		}
@@ -635,12 +635,12 @@ func (w *Watcher) poll(onChange func(Sample)) {
 			w.readNew(path)
 		}
 		for _, v := range w.seen {
-			out += v.output
-			thinking += v.thinking
-			input += v.input
+			out = satAdd(out, v.output)
+			thinking = satAdd(thinking, v.thinking)
+			input = satAdd(input, v.input)
 		}
 		for _, v := range w.total {
-			total += v
+			total = satAdd(total, v)
 		}
 	}
 	w.mu.Lock()
@@ -862,18 +862,27 @@ func (w *Watcher) readNew(path string) {
 	if _, err := f.Seek(off, 0); err != nil {
 		return
 	}
+	recs, complete, ok := w.consumeAppend(f, off)
+	if !ok {
+		return // read failed: nothing counted, offset and stamp unchanged, retried next poll
+	}
+	for _, v := range recs {
+		w.applyRecord(path, v)
+	}
+	w.offsets[path] = complete
+	w.stamps[path] = stamp
+}
 
-	// Collect first, fold in afterwards: a record may only be counted
-	// together with the offset that skips it.
-	var recs []values
+// consumeAppend reads from off to EOF, returning parsed records and the
+// offset just past the last committed record. ok is false on a mid-file
+// read error so the caller leaves offset and stamp alone.
+func (w *Watcher) consumeAppend(f *os.File, off int64) (recs []values, complete int64, ok bool) {
 	var (
 		line    []byte
 		discard bool
 		pos     = off
-		// complete is the offset just past the last newline seen; it is the
-		// only value safe to commit.
-		complete = off
 	)
+	complete = off
 	br := bufio.NewReaderSize(f, 64<<10)
 	for {
 		chunk, rerr := br.ReadSlice('\n')
@@ -911,20 +920,15 @@ func (w *Watcher) readNew(path string) {
 			// and is re-read whole next poll instead of being lost.
 			if !discard && len(chunk) > 0 {
 				line = append(line, chunk...)
-				if _, _, ok := w.ad.parse(line); ok {
+				if _, _, parsed := w.ad.parse(line); parsed {
 					recs = w.collect(recs, line)
 					complete = pos
 				}
 			}
-			break
+			return recs, complete, true
 		}
-		return // read failed: nothing counted, offset and stamp unchanged, retried next poll
+		return nil, 0, false
 	}
-	for _, v := range recs {
-		w.applyRecord(path, v)
-	}
-	w.offsets[path] = complete
-	w.stamps[path] = stamp
 }
 
 // maxLineBytes bounds one transcript record: a single JSONL line larger than

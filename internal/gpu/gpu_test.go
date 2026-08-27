@@ -142,6 +142,23 @@ func TestParseNvidiaSMIInfUtilIsZero(t *testing.T) {
 // finite magnitude, and the float->int conversion behind MilliC/MemUsed is
 // implementation-defined past the type's range (on amd64 a huge temp
 // renders as a huge negative number). Absurd magnitudes must saturate.
+// A values wrapper nested past flattenMaxDepth is junk, not a hang or a
+// stack blow-up: the parser must stop and report no reading.
+func TestFlattenBoundsDeepValuesWrappers(t *testing.T) {
+	inner := `"87"`
+	wrapped := inner
+	for range 32 {
+		wrapped = `{"values":[` + wrapped + `]}`
+	}
+	devs := ParseRocmSMI([]byte(`{"card0":{"GPU use (%)":` + wrapped + `}}`))
+	if len(devs) != 1 {
+		t.Fatalf("devices = %d", len(devs))
+	}
+	if devs[0].UtilPct != 0 {
+		t.Fatalf("deeply nested values wrapper parsed as %v; want 0", devs[0].UtilPct)
+	}
+}
+
 func TestSaturatesAbsurdVendorNumbers(t *testing.T) {
 	devs := ParseNvidiaSMI([]byte("0, GPU, 1e300, 24564, 81920, 50, 300, 550.54.14\n" +
 		"1, GPU2, 55, 1e300, 81920, 50, 300, 550.54.14\n"))

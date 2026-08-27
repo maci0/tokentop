@@ -238,17 +238,7 @@ func (m Model) renderAgentsOnly() string {
 		panel(title, strings.Join(rows, "\n"), w, midIn),
 		panel("AGENT FEED", strings.Join(feed, "\n"), w, feedIn),
 	)
-	footer := m.renderFooter()
-	if gap := m.h - lipgloss.Height(body) - lipgloss.Height(footer) - 1; gap > 0 {
-		body += strings.Repeat("\n", gap)
-	}
-	// Nothing may exceed the pane: bubbletea wraps an over-wide line and drags
-	// every row below it out of alignment.
-	out := strings.Split(body+"\n"+footer, "\n")
-	for i, ln := range out {
-		out[i] = clip(ln, m.w)
-	}
-	return strings.Join(out, "\n")
+	return composeFrame(body, m.renderFooter(), m.w, m.h)
 }
 
 // agentDenseHist buckets unattributed agent tokens onto a uniform cadence
