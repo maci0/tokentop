@@ -40,6 +40,34 @@ func (r *recorder) all() []core.AgentEvent {
 	return append([]core.AgentEvent(nil), r.events...)
 }
 
+func claudeHome(t *testing.T) (work, transcript string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	work = t.TempDir()
+	transcript = filepath.Join(home, ".claude", "projects", "p")
+	if err := os.MkdirAll(transcript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return work, transcript
+}
+
+func followClaude(t *testing.T, work string) (*Watcher, *recorder, *tracked) {
+	t.Helper()
+	rec := &recorder{}
+	w := New(rec, nil)
+	tr := &tracked{
+		proc:  agentusage.Process{PID: 1, Tool: "claude", Dir: work},
+		watch: agentusage.Watch("claude", work, time.Now()),
+	}
+	if tr.watch == nil {
+		t.Fatal("no claude adapter")
+	}
+	w.tracked[tr.proc.PID] = tr
+	return w, rec, tr
+}
+
 // TestWatchesARunningAgent is the whole feature in one test: a process that
 // looks like claude is running somewhere, it writes tokens into its own
 // transcript, and toktop reports them without anyone pushing anything.
@@ -47,14 +75,7 @@ func TestWatchesARunningAgent(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("discovery reads /proc")
 	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	work := t.TempDir()
-	transcript := filepath.Join(home, ".claude", "projects", "p")
-	if err := os.MkdirAll(transcript, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	work, transcript := claudeHome(t)
 
 	// A process named like the agent, working in the directory the transcript
 	// claims. Nothing about it cooperates with toktop.
@@ -271,8 +292,7 @@ func TestEngineTakesPrecedence(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("connection attribution reads /proc")
 	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	work, transcript := claudeHome(t)
 
 	// Something that looks like a local inference engine.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -290,12 +310,6 @@ func TestEngineTakesPrecedence(t *testing.T) {
 		}
 	}()
 	engine := "http://" + ln.Addr().String()
-
-	work := t.TempDir()
-	transcript := filepath.Join(home, ".claude", "projects", "p")
-	if err := os.MkdirAll(transcript, 0o755); err != nil {
-		t.Fatal(err)
-	}
 
 	// An agent that holds a connection to that engine while it works.
 	bin := filepath.Join(t.TempDir(), "claude")
@@ -359,25 +373,8 @@ func port(t *testing.T, ln net.Listener) string {
 // dashboard needs the deltas) and each event names the engine so totals can
 // skip them. Switching engines updates the label on the next growth.
 func TestAttributedAgentKeepsReporting(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home) // os.UserHomeDir on windows
-	work := t.TempDir()
-	transcript := filepath.Join(home, ".claude", "projects", "p")
-	if err := os.MkdirAll(transcript, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	rec := &recorder{}
-	w := New(rec, nil)
-	tr := &tracked{
-		proc:  agentusage.Process{PID: 1, Tool: "claude", Dir: work},
-		watch: agentusage.Watch("claude", work, time.Now()),
-	}
-	if tr.watch == nil {
-		t.Fatal("no claude adapter")
-	}
-	w.tracked[tr.proc.PID] = tr
+	work, transcript := claudeHome(t)
+	w, rec, tr := followClaude(t, work)
 
 	path := filepath.Join(transcript, "s.jsonl")
 	appendLine(t, path, usageLine(work, 100))
@@ -415,25 +412,8 @@ func TestAttributedAgentKeepsReporting(t *testing.T) {
 // that names prompt and reasoning tokens must not drop them, or the dashboard
 // can only show completions.
 func TestReportsPromptAndThinking(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	work := t.TempDir()
-	transcript := filepath.Join(home, ".claude", "projects", "p")
-	if err := os.MkdirAll(transcript, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	rec := &recorder{}
-	w := New(rec, nil)
-	tr := &tracked{
-		proc:  agentusage.Process{PID: 1, Tool: "claude", Dir: work},
-		watch: agentusage.Watch("claude", work, time.Now()),
-	}
-	if tr.watch == nil {
-		t.Fatal("no claude adapter")
-	}
-	w.tracked[tr.proc.PID] = tr
+	work, transcript := claudeHome(t)
+	w, rec, _ := followClaude(t, work)
 
 	quoted, err := json.Marshal(work)
 	if err != nil {

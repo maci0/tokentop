@@ -51,15 +51,26 @@ var publicVars = []string{
 
 func TestPublicAPI(t *testing.T) {
 	fset := token.NewFileSet()
-	filter := func(info os.FileInfo) bool {
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}
-	pkgs, err := parser.ParseDir(fset, ".", filter, 0)
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pkg := pkgs["agentusage"]
-	if pkg == nil {
+	var files []*ast.File
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.Name.Name != "agentusage" {
+			continue
+		}
+		files = append(files, f)
+	}
+	if len(files) == 0 {
 		t.Fatal("package agentusage not parsed")
 	}
 
@@ -67,7 +78,7 @@ func TestPublicAPI(t *testing.T) {
 	gotFuncs := map[string]bool{}
 	gotMethods := map[string][]string{}
 	gotVars := map[string]bool{}
-	for _, f := range pkg.Files {
+	for _, f := range files {
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:

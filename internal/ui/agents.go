@@ -251,9 +251,6 @@ func agentDenseHist(events []core.AgentEvent, out bool, end time.Time, n int, ca
 	grid := make([]float64, n)
 	start := end.Add(-time.Duration(n-1) * cadence)
 	sec := cadence.Seconds()
-	if sec <= 0 {
-		return grid
-	}
 	half := cadence / 2
 	for _, ev := range events {
 		if ev.ViaEngine != "" {

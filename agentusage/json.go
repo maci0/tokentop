@@ -9,17 +9,10 @@ import (
 	"strings"
 )
 
-// Generic parsing of one transcript JSON line: usage counters are picked up
-// by key rather than modeled per agent.
-//
-// The envelopes differ per agent and change between releases, so this does not
-// model any one of them. It walks the decoded JSON and picks up values by key,
-// which means an agent that renames its wrapper keeps working and an agent
-// that renames its usage fields degrades to "no numbers" instead of to wrong
-// numbers. Nothing here guesses: a key that is not recognized contributes
-// nothing.
+// Transcript JSON is walked by key rather than modeled per agent: envelopes
+// change between releases, so a renamed wrapper still works and a renamed
+// usage field degrades to no numbers instead of wrong ones.
 
-// jsonEvent is what one JSON line contributed.
 type jsonEvent struct {
 	// Usage is any token counters found on the line. Absent counters stay at
 	// zero, and Has reports whether anything was found at all.
@@ -39,7 +32,6 @@ type jsonUsage struct {
 	Input    int
 }
 
-// Has reports whether any counter was found.
 func (u jsonUsage) Has() bool { return u.Output > 0 || u.Total > 0 || u.Input > 0 || u.Thinking > 0 }
 
 // Keys recognized as token counters, mapped onto the fields above. These are

@@ -8,17 +8,20 @@ import (
 	"testing"
 )
 
+func writeSysfs(t *testing.T, root, rel, content string) {
+	t.Helper()
+	p := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestScanAmdSysfs(t *testing.T) {
 	root := t.TempDir()
-	write := func(rel, content string) {
-		p := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	write := func(rel, content string) { writeSysfs(t, root, rel, content) }
 	write("card0/device/mem_info_vram_used", "4294967296")
 	write("card0/device/mem_info_vram_total", "17179869184")
 	write("card0/device/gpu_busy_percent", "73")
@@ -44,15 +47,7 @@ func TestScanAmdSysfs(t *testing.T) {
 
 func TestScanAmdSysfsRejectsNonFiniteUtil(t *testing.T) {
 	root := t.TempDir()
-	write := func(rel, content string) {
-		p := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	write := func(rel, content string) { writeSysfs(t, root, rel, content) }
 	write("card0/device/mem_info_vram_used", "1024")
 	write("card0/device/mem_info_vram_total", "2048")
 	write("card0/device/gpu_busy_percent", "inf")

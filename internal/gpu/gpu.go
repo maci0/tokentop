@@ -348,7 +348,6 @@ func parseXpuMetrics(b []byte, index int) (core.GPUDevice, bool) {
 // bound the value stays wrapped and flexAny treats it as junk.
 const flattenMaxDepth = 8
 
-// flatten unwraps {"values":[x]} / [x] shapes to a scalar any.
 func flatten(v any) any {
 	for range flattenMaxDepth {
 		switch t := v.(type) {

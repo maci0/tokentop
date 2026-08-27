@@ -364,8 +364,8 @@ type Watcher struct {
 	// the directory they were started in rather than its resolved form.
 	dirs    []string
 	ad      adapter
-	tool    string // the agent being followed
-	dir     string // the working directory usage is attributed to
+	tool    string
+	dir     string
 	since   time.Time
 	offsets map[string]int64 // file -> bytes already accounted for
 	// preexisting marks transcripts that were already on disk when the watcher

@@ -289,6 +289,13 @@ func withKnownHosts(t *testing.T) {
 	t.Cleanup(func() { knownHostsPath = old })
 }
 
+func withFastKeepalive(t *testing.T) {
+	t.Helper()
+	oldEvery, oldWait := keepaliveEvery, keepaliveReplies
+	keepaliveEvery, keepaliveReplies = 10*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { keepaliveEvery, keepaliveReplies = oldEvery, oldWait })
+}
+
 func TestClientConnectRunForward(t *testing.T) {
 	withKnownHosts(t)
 	srv := newTestSSHServer(t, "", 0)
@@ -447,9 +454,7 @@ func newSilentSSHServer(t *testing.T) *testSSHServer {
 // keepalive after three unanswered probes; Done must fire.
 func TestKeepaliveDetectsSilentPeer(t *testing.T) {
 	withKnownHosts(t)
-	oldEvery, oldWait := keepaliveEvery, keepaliveReplies
-	keepaliveEvery, keepaliveReplies = 10*time.Millisecond, 10*time.Millisecond
-	t.Cleanup(func() { keepaliveEvery, keepaliveReplies = oldEvery, oldWait })
+	withFastKeepalive(t)
 
 	srv := newSilentSSHServer(t)
 	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
@@ -654,9 +659,7 @@ func TestClientHostKeyChangeRefused(t *testing.T) {
 // rest of the dashboard while serving connections that can never succeed.
 func TestDropReclaimsForwardListeners(t *testing.T) {
 	withKnownHosts(t)
-	oldEvery, oldWait := keepaliveEvery, keepaliveReplies
-	keepaliveEvery, keepaliveReplies = 10*time.Millisecond, 10*time.Millisecond
-	t.Cleanup(func() { keepaliveEvery, keepaliveReplies = oldEvery, oldWait })
+	withFastKeepalive(t)
 
 	srv := newSilentSSHServer(t)
 	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))

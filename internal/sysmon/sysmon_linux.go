@@ -262,9 +262,9 @@ var gpuChips = []string{"amdgpu", "radeon", "nouveau", "nvidia", "i915", "xe"}
 // scanTemps gathers readings, preferring hwmon chips and falling back to
 // thermal zones only when hwmon yields nothing (they often duplicate).
 func scanTemps(hwmonRoot, thermalRoot string) []core.TempReading {
-	temps := scanHwmon(hwmonRoot)
+	temps := readSensors(sensorLayout("hwmon\x00"+hwmonRoot, hwmonRoot, listHwmon))
 	if len(temps) == 0 {
-		temps = scanThermalZones(thermalRoot)
+		temps = readSensors(sensorLayout("thermal\x00"+thermalRoot, thermalRoot, listThermalZones))
 	}
 	sort.SliceStable(temps, func(i, j int) bool {
 		if temps[i].IsGPU != temps[j].IsGPU {
@@ -316,8 +316,7 @@ func sensorLayout(key, root string, build func(string) []sensorInput) []sensorIn
 	return inputs
 }
 
-func scanHwmon(root string) []core.TempReading {
-	inputs := sensorLayout("hwmon\x00"+root, root, listHwmon)
+func readSensors(inputs []sensorInput) []core.TempReading {
 	var out []core.TempReading
 	for _, in := range inputs {
 		mc, ok := readMilliC(in.path)
@@ -352,19 +351,6 @@ func listHwmon(root string) []sensorInput {
 			gpu := isGPUChip || containsAny(label, "gpu", "junction", "hotspot", "edge")
 			out = append(out, sensorInput{path: in, label: label, gpu: gpu})
 		}
-	}
-	return out
-}
-
-func scanThermalZones(root string) []core.TempReading {
-	inputs := sensorLayout("thermal\x00"+root, root, listThermalZones)
-	var out []core.TempReading
-	for _, in := range inputs {
-		mc, ok := readMilliC(in.path)
-		if !ok {
-			continue
-		}
-		out = append(out, core.TempReading{Label: in.label, MilliC: mc, IsGPU: in.gpu})
 	}
 	return out
 }
