@@ -3,10 +3,13 @@
 package ingest
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -25,6 +28,7 @@ type Server struct {
 	srv  http.Server
 	ln   net.Listener
 	addr string
+	log  *slog.Logger
 }
 
 // Recorder is the sink for incoming events.
@@ -39,11 +43,18 @@ type Recorder interface {
 var idleTimeout = 2 * time.Minute
 
 func New(addr string, rec Recorder) (*Server, error) {
+	return newServer(addr, rec, newIngestLogger())
+}
+
+func newServer(addr string, rec Recorder, lg *slog.Logger) (*Server, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{rec: rec, ln: ln, addr: ln.Addr().String()}
+	if lg == nil {
+		lg = slog.New(slog.DiscardHandler)
+	}
+	s := &Server{rec: rec, ln: ln, addr: ln.Addr().String(), log: lg}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/events", s.handlePost)
 	mux.HandleFunc("GET /v1/events", s.handleGet)
@@ -53,9 +64,10 @@ func New(addr string, rec Recorder) (*Server, error) {
 		fmt.Fprint(w, "ok")
 	})
 	s.srv = http.Server{
-		Handler:           withSecurityHeaders(mux),
+		Handler:           withSecurityHeaders(withRequestID(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       idleTimeout,
+		ErrorLog:          slog.NewLogLogger(lg.Handler(), slog.LevelError),
 	}
 	return s, nil
 }
@@ -75,6 +87,74 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
+}
+
+type ctxReqID struct{}
+
+// withRequestID stamps every ingest response with X-Request-Id so a harness
+// can join its send with the stderr audit line. A caller-supplied header is
+// honored after sanitizing; otherwise a random id is minted.
+func withRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := incomingRequestID(r)
+		w.Header().Set("X-Request-Id", id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxReqID{}, id)))
+	})
+}
+
+func incomingRequestID(r *http.Request) string {
+	if v := logField(r.Header.Get("X-Request-Id"), 64); v != "" {
+		return v
+	}
+	return rand.Text()
+}
+
+func requestID(r *http.Request) string {
+	if v, ok := r.Context().Value(ctxReqID{}).(string); ok && v != "" {
+		return v
+	}
+	return incomingRequestID(r)
+}
+
+func newIngestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		ReplaceAttr: utcLogTime,
+	}))
+}
+
+func utcLogTime(_ []string, a slog.Attr) slog.Attr {
+	if a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
+		return slog.String(slog.TimeKey, a.Value.Time().UTC().Format(time.RFC3339Nano))
+	}
+	return a
+}
+
+// logField prepares attacker-shaped text for a single-line log attribute:
+// terminal escapes stripped, whitespace collapsed so a payload cannot split
+// the line, then capped.
+func logField(s string, n int) string {
+	return clampField(strings.Join(strings.Fields(core.SanitizeText(s)), " "), n)
+}
+
+func (s *Server) logPost(r *http.Request, reqID string, status, accepted int, d time.Duration, errMsg string) {
+	if s.log == nil {
+		return
+	}
+	attrs := []any{
+		"req", reqID,
+		"remote", r.RemoteAddr,
+		"status", status,
+		"accepted", accepted,
+		"duration", d.Round(time.Microsecond),
+	}
+	if errMsg != "" {
+		attrs = append(attrs, "error", logField(errMsg, 256))
+	}
+	level := slog.LevelInfo
+	if status >= 400 {
+		level = slog.LevelWarn
+	}
+	s.log.Log(r.Context(), level, "toktop: ingest", attrs...)
 }
 
 // Addr returns the actual bound address (useful when starting on :0).
@@ -137,6 +217,15 @@ func (b *progressBody) Read(p []byte) (int, error) {
 }
 
 func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	reqID := requestID(r)
+	if w.Header().Get("X-Request-Id") == "" {
+		w.Header().Set("X-Request-Id", reqID)
+	}
+	done := func(status, accepted int, errMsg string) {
+		s.logPost(r, reqID, status, accepted, time.Since(start), errMsg)
+	}
+
 	// A POST carrying an Origin header is browser-driven: every browser
 	// attaches Origin to a cross-site write, while curl, scripts and agent
 	// harnesses never send one. Without this check any web page the operator
@@ -144,7 +233,9 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	// Content-Type, so text/plain sails past CORS preflight) and forge rows
 	// into the live feed.
 	if r.Header.Get("Origin") != "" {
-		http.Error(w, "browser-originated requests are not accepted; post from a script or agent without an Origin header", http.StatusForbidden)
+		msg := "browser-originated requests are not accepted; post from a script or agent without an Origin header"
+		http.Error(w, msg, http.StatusForbidden)
+		done(http.StatusForbidden, 0, msg)
 		return
 	}
 	rc := http.NewResponseController(w)
@@ -167,6 +258,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		http.Error(w, msg, status)
+		done(status, n, msg)
 	}
 	for {
 		var wire agentEventWire
@@ -247,6 +339,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	fmt.Fprintf(w, `{"accepted":%d}`+"\n", n)
+	done(http.StatusAccepted, n, "")
 }
 
 // agentEventWire mirrors core.AgentEvent for decoding, with the timestamp

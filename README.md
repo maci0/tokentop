@@ -149,6 +149,10 @@ dashboard. Error bodies are short
 plain-text reasons; unknown fields are ignored, so harnesses can include
 their own. The request `Content-Type` header is not checked: the body is
 always read as JSON/NDJSON, so plain `curl -d` works unmodified.
+Every POST is logged to stderr as one structured line (`req`, `status`,
+`accepted`, `duration`, `remote`; failures add `error`). Event bodies are
+not logged. Responses carry `X-Request-Id`, echoed from the request when
+the sender set one.
 
 Streams are recorded line by line: if a later line fails, events before it
 stay recorded and the error states how many. Retrying a stream (or a

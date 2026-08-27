@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -49,13 +50,7 @@ func postBody(t *testing.T, url, body string) (int, string) {
 // cleanup.
 func startIngest(t *testing.T, rec *memRecorder) *Server {
 	t.Helper()
-	s, err := New("127.0.0.1:0", rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	go s.Serve()
-	t.Cleanup(func() { s.Close() })
-	return s
+	return startIngestLog(t, rec, slog.New(slog.DiscardHandler))
 }
 
 // awaitEvents waits up to a second for rec to hold n events, failing if they
@@ -237,7 +232,7 @@ func TestIngestPartialStreamReportsRecordedCount(t *testing.T) {
 // including the size cap.
 func TestIngestOversizedAfterEventsReportsRecordedCount(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
+	s := &Server{rec: rec}
 
 	body := `{"agent":"kept"}` + "\n" + `{"agent":"` + strings.Repeat("a", maxEventBody) + `"}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/events", strings.NewReader(body))
@@ -260,7 +255,7 @@ func TestIngestOversizedAfterEventsReportsRecordedCount(t *testing.T) {
 // encoding", instead of reading `bad json` on a perfectly encoded stream.
 func TestIngestRejectsOversizedBody(t *testing.T) {
 	rec := &memRecorder{}
-	s := startIngest(t, rec)
+	s := &Server{rec: rec}
 
 	// The body must stay well formed up to the cap, or decoding fails with a
 	// syntax error before the limit is ever reached: one event whose string
@@ -287,9 +282,7 @@ func TestIngestRejectsOversizedBody(t *testing.T) {
 // refused outright; documented senders never set Origin.
 func TestIngestRejectsBrowserOriginatedPost(t *testing.T) {
 	rec := &memRecorder{}
-	s, _ := New("127.0.0.1:0", rec)
-	go s.Serve()
-	defer s.Close()
+	s := startIngest(t, rec)
 
 	req, err := http.NewRequest(http.MethodPost, "http://"+s.Addr()+"/v1/events",
 		strings.NewReader(`{"agent":"forger","kind":"turn","output_tokens":9999}`))
@@ -714,5 +707,193 @@ func TestIngestCutsBodyPastAbsoluteLifetime(t *testing.T) {
 		case <-keepalive.C:
 			sendChunk(t, conn, "\n")
 		}
+	}
+}
+
+func captureLogger() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	lg := slog.New(slog.NewTextHandler(&buf, nil))
+	return lg, &buf
+}
+
+func startIngestLog(t *testing.T, rec *memRecorder, lg *slog.Logger) *Server {
+	t.Helper()
+	s, err := newServer("127.0.0.1:0", rec, lg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func countLogLines(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	return len(strings.Split(s, "\n"))
+}
+
+// POST /v1/events is the only request path an operator cannot see on the
+// dashboard when it fails: a structured stderr line has to answer whether it
+// succeeded, how long it took, and why it was refused. Event bodies stay off
+// the log; they are attacker-shaped and the retained feed already holds them.
+func TestIngestLogsPostOutcome(t *testing.T) {
+	lg, buf := captureLogger()
+	rec := &memRecorder{}
+	s := startIngestLog(t, rec, lg)
+
+	resp, err := http.Post("http://"+s.Addr()+"/v1/events", "application/json",
+		strings.NewReader(`{"agent":"coder","note":"secret-note-value","output_tokens":7}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	reqID := resp.Header.Get("X-Request-Id")
+	if reqID == "" {
+		t.Fatal("missing X-Request-Id on 202")
+	}
+
+	got := buf.String()
+	if countLogLines(got) != 1 {
+		t.Fatalf("success log lines = %d (%q), want 1", countLogLines(got), got)
+	}
+	for _, want := range []string{
+		`msg="toktop: ingest"`,
+		"level=INFO",
+		"req=" + reqID,
+		"status=202",
+		"accepted=1",
+		"duration=",
+		"remote=",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("success log missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "secret-note-value") || strings.Contains(got, "coder") {
+		t.Errorf("log leaked event body: %s", got)
+	}
+
+	buf.Reset()
+	code, _ := postBody(t, "http://"+s.Addr()+"/v1/events", `{not json`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("bad json status = %d", code)
+	}
+	got = buf.String()
+	if countLogLines(got) != 1 {
+		t.Fatalf("failure log lines = %d (%q), want 1", countLogLines(got), got)
+	}
+	for _, want := range []string{
+		"level=WARN",
+		"status=400",
+		"accepted=0",
+		`error="`,
+		"bad json",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("failure log missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestIngestEchoesRequestID(t *testing.T) {
+	lg, buf := captureLogger()
+	s := startIngestLog(t, &memRecorder{}, lg)
+
+	req, err := http.NewRequest(http.MethodPost, "http://"+s.Addr()+"/v1/events",
+		strings.NewReader(`{"agent":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Request-Id", "harness-turn-9")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if got := resp.Header.Get("X-Request-Id"); got != "harness-turn-9" {
+		t.Errorf("X-Request-Id = %q, want harness-turn-9", got)
+	}
+	if !strings.Contains(buf.String(), "req=harness-turn-9") {
+		t.Errorf("log missing echoed req id: %s", buf.String())
+	}
+}
+
+// A request-id header is attacker-shaped: newlines would split the audit line
+// and let a sender forge a second slog record. net/http rejects CR/LF on the
+// wire, so this drives the handler directly the way fuzz does.
+func TestIngestRequestIDStaysOneLogLine(t *testing.T) {
+	lg, buf := captureLogger()
+	s := &Server{rec: &memRecorder{}, log: lg}
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/events",
+		strings.NewReader(`{"agent":"x"}`))
+	r.Header["X-Request-Id"] = []string{"id-1\nlevel=INFO forged"}
+	w := httptest.NewRecorder()
+	s.handlePost(w, r)
+
+	got := buf.String()
+	if countLogLines(got) != 1 {
+		t.Fatalf("injected request-id split the log: %q", got)
+	}
+	if strings.Contains(got, "\nlevel=INFO forged") {
+		t.Errorf("newline survived into log: %q", got)
+	}
+	echo := w.Header().Get("X-Request-Id")
+	if strings.ContainsAny(echo, "\r\n") {
+		t.Errorf("X-Request-Id echoed a newline: %q", echo)
+	}
+}
+
+func TestHealthzIsNotLogged(t *testing.T) {
+	lg, buf := captureLogger()
+	s := startIngestLog(t, &memRecorder{}, lg)
+
+	resp, err := http.Get("http://" + s.Addr() + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("healthz = %d", resp.StatusCode)
+	}
+	if resp.Header.Get("X-Request-Id") == "" {
+		t.Error("healthz missing X-Request-Id")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("healthz must not log, got %q", buf.String())
+	}
+}
+
+func TestIngestLogsBrowserOriginRefusal(t *testing.T) {
+	lg, buf := captureLogger()
+	s := startIngestLog(t, &memRecorder{}, lg)
+
+	req, err := http.NewRequest(http.MethodPost, "http://"+s.Addr()+"/v1/events",
+		strings.NewReader(`{"agent":"forger"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "https://evil.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "status=403") || !strings.Contains(got, "level=WARN") {
+		t.Errorf("403 not logged as warn: %s", got)
 	}
 }

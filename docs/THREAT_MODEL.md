@@ -21,12 +21,12 @@ targets, the static site worker at site/worker.js). Out of scope: the
 
 | # | Risk | Boundary | Where | State |
 |---|------|----------|-------|-------|
-| 1 | Ingest endpoint accepts unauthenticated events from any local process (any network peer if bound non-loopback via `--ingest`); forged telemetry renders as real agents | local processes -> ingest, network -> ingest | internal/ingest/server.go:122-236, cmd/toktop/main.go:55,263-289 | No authentication; browser-driven forgery, DoS, injection, and timestamp forgery mitigated (M3-M7, M21) |
+| 1 | Ingest endpoint accepts unauthenticated events from any local process (any network peer if bound non-loopback via `--ingest`); forged telemetry renders as real agents | local processes -> ingest, network -> ingest | internal/ingest/server.go:219-343, cmd/toktop/main.go:55,263-289 | No authentication; browser-driven forgery, DoS, injection, and timestamp forgery mitigated (M3-M7, M21) |
 | 2 | Trust-on-first-use accepts a first-contact MITM by design; only key *changes* are refused | operator -> ssh target | internal/remote/knownhosts.go:50-51 | Documented residual risk (README "Auth" section) |
 | 3 | Self-update installs whatever binary the named GitHub repo published: integrity rests on the release's own checksums.txt over TLS; no external signature exists | runtime -> update channel | internal/selfupdate/selfupdate.go:133-192, .github/workflows/release.yml | Checksum + size verification present; signing absent |
 | 4 | SSH engine relays bind loopback listeners (`127.0.0.1:0`); any local process can reach the remote engines those listeners front | local processes -> remote engines | internal/remote/client.go:312-353 | Bound loopback-only; no listener auth; previously denied by README (corrected) |
 | 5 | Hot-reload re-execs whatever binary occupies the exe path when its identity changes (Unix); PATH-based vendor CLI lookup executes tools from `$PATH` | build -> runtime, host -> process | internal/selfreload/exec_unix.go:16; internal/gpu/gpu.go:46-67 | Windows Restart does not exec (exec_windows.go:12-14); `--no-hot-reload` exists |
-| 6 | No audit trail: ingest requests are not logged, nothing is persisted, so a poisoning or token-capture incident cannot be reconstructed after the fact | response readiness | internal/ingest/server.go (no logging anywhere in handler) | Gap (note only here; o11y-review owns log structure) |
+| 6 | Ingest bodies are not persisted; a poisoning incident after process exit cannot be reconstructed from event content | response readiness | internal/ingest/server.go (POST /v1/events logs req/status/accepted/duration/remote/error; bodies stay off the log) | HTTP audit line present; payload is still only in the in-memory feed |
 
 Resolved since 2026-08-25: the previous ranking's "bearer token sent to every
 probed endpoint" is closed by origin-scoped token application
@@ -86,7 +86,7 @@ Every externally reachable input, with its code location:
 
 1. **Ingest HTTP server** (on by default): `POST /v1/events` (single JSON or
    NDJSON stream), `GET /v1/events`, `GET /healthz`
-   (internal/ingest/server.go:48-54). Binds `127.0.0.1:8420` unless `--ingest`
+   (internal/ingest/server.go:58-65). Binds `127.0.0.1:8420` unless `--ingest`
    says otherwise (cmd/toktop/main.go:55); any address is accepted, including
    routable interfaces. A routable bind prints a startup warning naming the
    unauthenticated exposure (main.go:276-277, routableBind :314-324). Runs in
@@ -186,8 +186,10 @@ Deployment surface:
 - **B1: local processes -> ingest server.** Any process running as any local
   user who can reach the socket can POST events. There is no named
   authentication or validation-of-origin point; sanitization happens
-  (server.go:199-223) and browser-driven requests are refused by the
-  Origin-header check (server.go:123-132), but attribution does not exist.
+  (server.go:309-335) and browser-driven requests are refused by the
+  Origin-header check (server.go:235-240). POSTs are attributed on stderr
+  by remote and request id (server.go:139-158), not by an authenticated
+  origin.
   When `--ingest` binds a non-loopback address this boundary widens to the
   network; the widening is announced at startup (main.go:276-277) but not
   prevented.
@@ -250,20 +252,21 @@ ports that are then exposed on local loopback (client.go:334-353).
 **B1 (and widened B1 via `--ingest`):**
 - *Spoofing*: forge agent rows ("claude", "codex") with arbitrary throughput,
   models, and notes by POSTing to /v1/events; no origin auth exists
-  (server.go:122-236). Renders beside genuine agentwatch data. The one
+  (server.go:219-343). Renders beside genuine agentwatch data. The one
   sender class refused outright is the browser: a POST carrying an `Origin`
-  header gets 403 (server.go:123-132), closing cross-site forgery from web
+  header gets 403 (server.go:235-240), closing cross-site forgery from web
   pages the operator visits. Forged future timestamps are clamped to arrival
-  time beyond a 2-minute skew (server.go:88,227-229), so the "live" marker
+  time beyond a 2-minute skew (server.go:185,330-335), so the "live" marker
   cannot be pinned by a claimed far-future stamp.
-- *Repudiation*: source address is never recorded, so even loopback forgery
-  cannot be attributed afterward.
+- *Repudiation*: each POST logs remote, request id, status, and accepted
+  count (server.go:139-158); event bodies are not, so content-level
+  attribution still depends on the live feed.
 - *Information disclosure*: none beyond presence (`/healthz` answers any
-  requester, server.go:50-54).
+  requester, server.go:61-65).
 - *Denial of service*: mitigated (see M3-M5). Residual: no per-peer
   connection quota; each open POST holds an fd plus goroutine until the byte
   cap, body-idle timeout (1m), or absolute lifetime (10m) reaps it
-  (server.go:79,98-120) - a local flood of stalled POSTs is bounded but
+  (server.go:176,196-217) - a local flood of stalled POSTs is bounded but
   nonzero.
 - *Elevation of privilege*: none; event content reaches only parsing and
   rendering.
@@ -376,12 +379,12 @@ Controls verified in code, with the threats they cover:
 | Control | Covers | Location |
 |---|---|---|
 | M1: Origin-scoped bearer application. Token attached only to `Allow`-admitted origins, populated exclusively from operator `--add` URLs | Credential harvesting by scanned ports, forwarded remotes, and probes (B2/B4 disclosure; previous summary risk 1, fixed in commit 21e3feb) | internal/bearer/bearer.go:40-97; cmd/toktop/main.go:167; call sites discover.go:72,289; provider.go:59,81; probe.go:242; tests internal/bearer/bearer_test.go |
-| M2: Terminal escape/control-char sanitizer applied both at ingest and at render time (C0/C1 including UTF-8-encoded C1) | OSC/CSI clipboard-cursor-title injection from engines, remotes, and events (asset: terminal integrity) | internal/core/sanitize.go:14-19; ingest side server.go:199-223; render side internal/ui/ui.go, internal/ui/plain.go, internal/ui/format.go:136, internal/ui/agents.go |
-| M3: Ingest body cap 1 MiB + MaxBytesReader | unbounded upload into decode loop (B1 DoS) | server.go:79,136 |
-| M4: Ingest read deadlines: 10 min absolute lifetime, 1 min idle extension, 5 s header timeout, 2 min idle reap | slowloris/drip DoS (B1) | server.go:39,57-58,98-101,107-120,133-136 |
-| M5: Event field clamps (agent 64, model 128, note 512, kind 24 runes) + retention caps (64 agents, 128 probes per snapshot) | memory pinning via oversized or numerous events (B1 DoS) | server.go:199-223; core.HistoryLen constants internal/core/core.go:6-12; collector.go:399-404,415-416 |
-| M6: Event timestamp skew clamp: stamps >2 min in the future reset to arrival time | forged-future stamps pinning the live marker and feed ordering (B1 spoofing) | server.go:88,227-229 |
-| M7: Negative token counts clamped to zero; unknown kinds defaulted | junk values entering retained state (B1 tampering) | server.go:207-223 |
+| M2: Terminal escape/control-char sanitizer applied both at ingest and at render time (C0/C1 including UTF-8-encoded C1) | OSC/CSI clipboard-cursor-title injection from engines, remotes, and events (asset: terminal integrity) | internal/core/sanitize.go:14-19; ingest side server.go:309-335; render side internal/ui/ui.go, internal/ui/plain.go, internal/ui/format.go:136, internal/ui/agents.go |
+| M3: Ingest body cap 1 MiB + MaxBytesReader | unbounded upload into decode loop (B1 DoS) | server.go:176,244 |
+| M4: Ingest read deadlines: 10 min absolute lifetime, 1 min idle extension, 5 s header timeout, 2 min idle reap | slowloris/drip DoS (B1) | server.go:43,68-69,196-198,204-217,241-244 |
+| M5: Event field clamps (agent 64, model 128, note 512, kind 24 runes) + retention caps (64 agents, 128 probes per snapshot) | memory pinning via oversized or numerous events (B1 DoS) | server.go:309-335; core.HistoryLen constants internal/core/core.go:6-12; collector.go:399-404,415-416 |
+| M6: Event timestamp skew clamp: stamps >2 min in the future reset to arrival time | forged-future stamps pinning the live marker and feed ordering (B1 spoofing) | server.go:185,330-335 |
+| M7: Negative token counts clamped to zero; unknown kinds defaulted | junk values entering retained state (B1 tampering) | server.go:319-335 |
 | M8: Engine response caps: 4 MiB JSON, 8 MiB text, 256-rune error snippets | memory blowup and log flooding from hostile engines (B2 DoS/disclosure) | provider/provider.go:68,90; httperr/httperr.go:17,21-38 |
 | M9: Non-finite rejection in metrics (per-value and family-sum overflow guard) and vendor CSV/JSON coercion | poisoned counters/rates propagating through history (B2 tampering) | provider.go:182-185,191,206-208; gpu.go:184-193; collector counter-reset clamp collector.go:322 |
 | M10: Probe generation ceiling 512 tokens; fixed small prompt | probes becoming compute-amplification attacks against engines (B2 DoS) | probe.go:24-31 |
@@ -395,7 +398,8 @@ Controls verified in code, with the threats they cover:
 | M18: Self-update verification: refuses without checksums asset, SHA-256 match required before rename, 256 MiB size cap, temp-file-plus-atomic-rename install | tampered/truncated/unbounded downloads reaching execution (B5) | selfupdate.go:133-192,249-255,201-216 |
 | M19: Flag validation exits 2; set-but-invalid `TOKTOP_COLUMNS`/`TOKTOP_LINES` exit 2 under `--once` (and are named as ignored without it); non-TTY stdout aborts the live dashboard; malformed `~/.gauntlet/agents.json` warned instead of swallowed; unknown `TOKTOP_*` env warned | misconfiguration acting as silent security-relevant behavior change | main.go:87-101,475-487,494-502,509-519,533-550,565-577,585-592 |
 | M20: Supply chain: govulncheck in CI, Dependabot, SHA-pinned workflow actions, SBOM in releases | vulnerable-dependency drift (deployment surface) | .github/workflows/ci.yml, .github/dependabot.yml, .github/workflows/release.yml, Makefile |
-| M21: Ingest POSTs carrying an `Origin` header refused with 403 (browsers always send Origin on cross-site writes; scripts and agents never do; the endpoint's Content-Type blindness would otherwise let `text/plain` POSTs sail past CORS preflight) | browser-driven dashboard forgery from any visited web page (B1 spoofing) | server.go:123-132; tests internal/ingest/server_test.go; README "Agent feed API" documents it |
+| M21: Ingest POSTs carrying an `Origin` header refused with 403 (browsers always send Origin on cross-site writes; scripts and agents never do; the endpoint's Content-Type blindness would otherwise let `text/plain` POSTs sail past CORS preflight) | browser-driven dashboard forgery from any visited web page (B1 spoofing) | server.go:235-240; tests internal/ingest/server_test.go; README "Agent feed API" documents it |
+| M25: Structured ingest POST audit log (req, status, accepted, duration, remote, error) with X-Request-Id; bodies excluded | B1 repudiation of the HTTP exchange; reconstructing whether a POST happened after the fact | server.go:94-158,219-227,342; tests internal/ingest/server_test.go |
 | M22: Remote discovery ports parsed as 16-bit with port 0 rejected, so hostile `/proc/net/tcp` output cannot plant impossible forward targets; pinned by FuzzParseDiscoveryOutput | tunnel-set manipulation by a hostile ssh remote (B3 elevation/DoS) | remote/discover.go:93-116; internal/remote/fuzz_test.go |
 | M23: `--agents` opt-in; `--opencode-db` is a second gate on top of the `sqlite` build tag; crush has no extra flag because the database lives in the watched project | silent process/file scan the operator did not ask for (B7 disclosure) | main.go:57-58,248-256; agentusage/source.go:37-46; crush_sqlite.go:35-41 |
 | M24: SQLite session stores opened `mode=ro`; crush walk capped at 16 parents; crush counters rejected above 1<<40; opencode directory list bound as parameters | accidental writes into agent databases, walk-to-root, overflow, and SQL injection via cwd (B7) | opencode_sqlite.go:68-90,106-107; crush_sqlite.go:44-50,70-94,107,117 |
@@ -408,8 +412,9 @@ Documentation claims checked against code this pass (fd61deb):
   sent to --add endpoints only" and the environment-variable table listing
   `GITHUB_TOKEN` for `toktop update`; both match bearer.go and
   selfupdate.go:85-87.
-- README documents the Origin-header 403 and the stream-resume semantics;
-  both match server.go:123-132 and the fail() path (:144-153).
+- README documents the Origin-header 403, the stream-resume semantics, and
+  the ingest POST audit log; they match server.go:235-240, the fail() path
+  (:252-262), and logPost (:139-158).
 - README previously claimed "no local port forwards, nothing to race or
   leak". The code binds loopback listeners in Forward (client.go:312-353).
   That sentence is now the loopback-listener description above; the claim
@@ -474,7 +479,7 @@ high-impact threats alone.
 
 Recorded as threats with locations; fixes do not happen in this document:
 
-1. **No origin authentication on ingest** (risk 1, Medium): server.go:122-236.
+1. **No origin authentication on ingest** (risk 1, Medium): server.go:219-343.
    The routable-bind case is at least announced now (main.go:276-277) and the
    browser sender class is refused (M21); every non-browser local process
    still forges rows unchallenged, and a hostile script can simply omit
@@ -492,7 +497,7 @@ Recorded as threats with locations; fixes do not happen in this document:
    mode 0600, or in-process HTTP instead of a TCP port) belongs to
    sec-review.
 5. **No per-peer ingest quotas** (Low): bounded per connection
-   (server.go:79-120) but not per peer; matters only once gap 1's exposure
+   (server.go:176,196-217) but not per peer; matters only once gap 1's exposure
    question is settled.
 6. **Hot-reload and PATH-based tool execution** (risk 5, Low): acceptable for
    a same-user dev tool; revisit if toktop ever runs privileged. Unix-only
@@ -500,12 +505,14 @@ Recorded as threats with locations; fixes do not happen in this document:
 
 ## Response readiness (notes only)
 
-- **Audit trail:** none. The ingest handler logs nothing, credentials are
-  never logged (verified: bearer.Token has one caller chain through
-  bearer.Apply), and no state survives process exit, so post-incident
-  reconstruction of a poisoning or capture event is impossible from the
-  process itself. o11y-review owns log structure; noted here because risk 6
-  depends on it.
+- **Audit trail:** each ingest POST writes one structured stderr line
+  (req id, status, accepted count, duration, remote; failures add the
+  same short error the client saw). Event bodies, notes, and token
+  counts are not logged. Credentials are never logged (verified:
+  bearer.Token has one caller chain through bearer.Apply). Nothing
+  survives process exit except what the operator captured from stderr,
+  so payload reconstruction after a poisoning still requires the live
+  feed.
 - **Reported-vulnerability-to-fix path:** undocumented. SECURITY.md exists
   and states that no dedicated disclosure contact or supported-version
   matrix is published; it invents no SLA. CONTRIBUTING.md covers CI gates
