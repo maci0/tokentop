@@ -51,9 +51,10 @@ exec over a running image, so the dashboard exits instead.
 and rendered by `scripts/screenshot.py`:
 
 ```
-make build VERSION=0.5.0
-tmux new-session -d -x 180 -y 50 -s shot './toktop --demo --seed 7 --no-hot-reload'
-sleep 60 && tmux send-keys -t shot p          # let the charts fill, then probe
+make build VERSION=0.6.0
+tmux new-session -d -c "$PWD" -x 180 -y 50 -s shot './toktop --demo --seed 7 --no-hot-reload'
+sleep 60 && tmux send-keys -t shot p   # let the charts fill, then probe
+sleep 40                               # and let the probes answer
 tmux capture-pane -e -p -t shot > .scratch/capture.txt
 tmux kill-session -t shot
 uv run --isolated --no-project --with-requirements scripts/requirements.txt \
@@ -65,7 +66,9 @@ keeps the renderer from re-deriving it and wrapping. `VERSION` is stamped into
 the header, so pass the version being released rather than `dev`. Rendering
 needs a Meslo Nerd Font installed, or `TOKTOP_SCREENSHOT_FONT` pointing at a
 regular-weight `.ttf`. The `uv run` flags match `make scripts-check` so uv
-does not create a `.venv` from `pyproject.toml`.
+does not create a `.venv` from `pyproject.toml`. `-c "$PWD"` is what puts the
+pane in this checkout: a detached session otherwise starts wherever the tmux
+server did, and `./toktop` is not there.
 
 The image's pixel size is repeated in `site/worker.js` as the `og:image`
 dimensions; update both together.
