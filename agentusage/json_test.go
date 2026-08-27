@@ -185,6 +185,16 @@ func TestAbsurdCountersReportNothing(t *testing.T) {
 	}
 }
 
+func TestParseGenericKeepsInputWhenTotalIsAbsent(t *testing.T) {
+	v, _, ok := parseGeneric([]byte(`{"usage":{"input_tokens":900,"output_tokens":120}}`))
+	if !ok || v.output != 120 || v.input != 900 {
+		t.Fatalf("got ok=%v %+v, want input 900 output 120", ok, v)
+	}
+	if v.total != 1020 {
+		t.Fatalf("total %d, want 1020 (input+output when total_tokens is absent)", v.total)
+	}
+}
+
 func TestParseGenericDropsAbsurdCounters(t *testing.T) {
 	if _, _, ok := parseGeneric([]byte(`{"usage":{"output_tokens":1e15}}`)); ok {
 		t.Fatal("1e15 tokens must not count")

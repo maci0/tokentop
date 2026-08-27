@@ -44,17 +44,21 @@ import (
 
 // Sample is cumulative usage observed since the watcher attached. Thinking is
 // the reasoning share of Output, which the agents report separately: it is what
-// the model spent before it wrote anything the user sees.
+// the model spent before it wrote anything the user sees. Input is billed
+// prompt tokens, accrued per request the same way Output is. Total is the
+// largest per-request context size seen, not a sum: summing those would
+// count the same conversation once per turn.
 type Sample struct {
 	Output   int
 	Thinking int
 	Total    int
+	Input    int
 	// At is when the reading was taken, so successive samples make a rate.
 	At time.Time
 }
 
 // Empty reports whether nothing has been observed yet.
-func (s Sample) Empty() bool { return s.Output == 0 && s.Total == 0 }
+func (s Sample) Empty() bool { return s.Output == 0 && s.Total == 0 && s.Input == 0 }
 
 // Rate returns tokens per second between two samples, and whether it could be
 // computed at all. It never extrapolates: without two readings and a positive
@@ -108,6 +112,7 @@ type values struct {
 	output   int
 	thinking int
 	total    int
+	input    int
 }
 
 // maxSaneTokens bounds one counter a transcript line may contribute. Real
@@ -273,10 +278,17 @@ func parseGeneric(line []byte) (values, string, bool) {
 	if !ok || !ev.Usage.Has() {
 		return values{}, "", false
 	}
+	out := counter(ev.Usage.Output)
+	in := counter(ev.Usage.Input)
+	tot := counter(ev.Usage.Total)
+	if tot == 0 && in > 0 {
+		tot = satAdd(in, out)
+	}
 	return values{
-		output:   counter(ev.Usage.Output),
+		output:   out,
 		thinking: counter(ev.Usage.Thinking),
-		total:    counter(ev.Usage.Total),
+		total:    tot,
+		input:    in,
 	}, ev.Cwd, true
 }
 
@@ -346,6 +358,7 @@ type Watcher struct {
 	// watcher attached belongs to an earlier review.
 	base      map[string]int
 	baseThink map[string]int
+	baseInput map[string]int
 	seen      map[string]values // file -> this review's contribution
 	total     map[string]int
 	// srcBase is per-session completion tokens at attach for a sessionSource
@@ -419,7 +432,8 @@ func Watch(tool, dir string, since time.Time) *Watcher {
 		ad: ad, tool: tool, dir: resolveDir(dir), since: since,
 		offsets: map[string]int64{}, preexisting: map[string]bool{}, stamps: map[string]fileStamp{},
 		owner: map[string]bool{}, base: map[string]int{}, baseThink: map[string]int{},
-		seen: map[string]values{}, total: map[string]int{},
+		baseInput: map[string]int{},
+		seen:      map[string]values{}, total: map[string]int{},
 	}
 	// Record where existing files end before anything is counted.
 	for _, path := range w.candidates() {
@@ -513,6 +527,7 @@ func (w *Watcher) seedBaseline(path string) {
 		}
 		w.base[path] = max(w.base[path], v.output)
 		w.baseThink[path] = max(w.baseThink[path], v.thinking)
+		w.baseInput[path] = max(w.baseInput[path], v.input)
 	}
 }
 
@@ -608,13 +623,13 @@ func (w *Watcher) Sample() Sample {
 func (w *Watcher) poll(onChange func(Sample)) {
 	w.pollMu.Lock()
 	defer w.pollMu.Unlock()
-	var out, thinking, total int
+	var out, thinking, total, input int
 	if w.src != nil {
 		v, ok := w.readSrc()
 		if !ok {
 			return
 		}
-		out, thinking, total = v.output, v.thinking, v.total
+		out, thinking, total, input = v.output, v.thinking, v.total, v.input
 	} else {
 		for _, path := range w.candidates() {
 			w.readNew(path)
@@ -622,15 +637,16 @@ func (w *Watcher) poll(onChange func(Sample)) {
 		for _, v := range w.seen {
 			out += v.output
 			thinking += v.thinking
+			input += v.input
 		}
 		for _, v := range w.total {
 			total += v
 		}
 	}
 	w.mu.Lock()
-	grew := out > w.sample.Output || total > w.sample.Total || thinking > w.sample.Thinking
+	grew := out > w.sample.Output || total > w.sample.Total || thinking > w.sample.Thinking || input > w.sample.Input
 	if grew {
-		w.sample = Sample{Output: out, Thinking: thinking, Total: total, At: time.Now()}
+		w.sample = Sample{Output: out, Thinking: thinking, Total: total, Input: input, At: time.Now()}
 	}
 	s := w.sample
 	w.mu.Unlock()
@@ -747,6 +763,7 @@ func (w *Watcher) dropFile(path string) {
 	delete(w.preexisting, path)
 	delete(w.base, path)
 	delete(w.baseThink, path)
+	delete(w.baseInput, path)
 	delete(w.total, path)
 }
 
@@ -894,10 +911,11 @@ func (w *Watcher) applyRecord(path string, v values) {
 		cur := w.seen[path]
 		cur.output = satAdd(cur.output, v.output)
 		cur.thinking = satAdd(cur.thinking, v.thinking)
+		cur.input = satAdd(cur.input, v.input)
 		w.seen[path] = cur
-		// Output accrues per message; a "total" on a per-message record is
-		// the context size at that point, so summing it would be
-		// meaningless. The largest one seen is the honest figure.
+		// Output and input accrue per message (billed tokens). A "total" on
+		// a per-message record is the context size at that point, so summing
+		// it would be meaningless. The largest one seen is the honest figure.
 		w.total[path] = max(w.total[path], v.total)
 	case cumulative:
 		if _, have := w.base[path]; !have {
@@ -909,8 +927,9 @@ func (w *Watcher) applyRecord(path string, v values) {
 			if w.preexisting[path] {
 				w.base[path] = v.output
 				w.baseThink[path] = v.thinking
+				w.baseInput[path] = v.input
 			} else {
-				w.base[path], w.baseThink[path] = 0, 0
+				w.base[path], w.baseThink[path], w.baseInput[path] = 0, 0, 0
 			}
 		}
 		cur := w.seen[path]
@@ -919,6 +938,9 @@ func (w *Watcher) applyRecord(path string, v values) {
 		}
 		if d := v.thinking - w.baseThink[path]; d > cur.thinking {
 			cur.thinking = d
+		}
+		if d := v.input - w.baseInput[path]; d > cur.input {
+			cur.input = d
 		}
 		w.seen[path] = cur
 		if v.total > w.total[path] {
@@ -1011,9 +1033,9 @@ func parseClaude(line []byte) (values, string, bool) {
 	if out == 0 && in == 0 {
 		return values{}, "", false
 	}
-	sum := satAdd(satAdd(in, out),
-		satAdd(counter(u.CacheReadInputTokens), counter(u.CacheCreationInputTokens)))
-	return values{output: out, thinking: counter(u.Details.ThinkingTokens), total: sum}, rec.Cwd, true
+	prompt := satAdd(in, satAdd(counter(u.CacheReadInputTokens), counter(u.CacheCreationInputTokens)))
+	sum := satAdd(prompt, out)
+	return values{output: out, thinking: counter(u.Details.ThinkingTokens), total: sum, input: prompt}, rec.Cwd, true
 }
 
 // parseQwen reads one line of a qwen-code chat transcript. Usage is recorded
@@ -1023,6 +1045,7 @@ func parseQwen(line []byte) (values, string, bool) {
 		Type  string `json:"type"`
 		Cwd   string `json:"cwd"`
 		Usage struct {
+			PromptTokenCount     int `json:"promptTokenCount"`
 			CandidatesTokenCount int `json:"candidatesTokenCount"`
 			ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
 			TotalTokenCount      int `json:"totalTokenCount"`
@@ -1042,6 +1065,7 @@ func parseQwen(line []byte) (values, string, bool) {
 		output:   satAdd(cand, thoughts),
 		thinking: thoughts,
 		total:    total,
+		input:    counter(u.PromptTokenCount),
 	}, rec.Cwd, true
 }
 
@@ -1072,6 +1096,7 @@ func parseCodex(line []byte) (values, string, bool) {
 			Cwd  string `json:"cwd"`
 			Info struct {
 				TotalTokenUsage struct {
+					InputTokens           int `json:"input_tokens"`
 					OutputTokens          int `json:"output_tokens"`
 					ReasoningOutputTokens int `json:"reasoning_output_tokens"`
 					TotalTokens           int `json:"total_tokens"`
@@ -1090,10 +1115,15 @@ func parseCodex(line []byte) (values, string, bool) {
 		if total == 0 && out == 0 {
 			return values{}, "", false
 		}
+		in := counter(u.InputTokens)
+		if remain := satSub(total, out); remain > in {
+			in = remain
+		}
 		return values{
 			output:   out,
 			thinking: counter(u.ReasoningOutputTokens),
 			total:    total,
+			input:    in,
 		}, "", true
 	}
 	return values{}, "", false
@@ -1107,4 +1137,11 @@ func satAdd(a, b int) int {
 		return math.MaxInt
 	}
 	return s
+}
+
+func satSub(a, b int) int {
+	if a < b {
+		return 0
+	}
+	return a - b
 }

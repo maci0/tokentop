@@ -208,7 +208,7 @@ func (w *Watcher) read() {
 		}
 		out := cur.Output - t.last.Output
 		think := cur.Thinking - t.last.Thinking
-		prompt := promptOf(cur) - promptOf(t.last)
+		prompt := cur.Input - t.last.Input
 		if out <= 0 && think <= 0 && prompt <= 0 {
 			continue // nothing new: silence is not an event
 		}
@@ -227,17 +227,6 @@ func (w *Watcher) read() {
 			Note:           note(t.proc, think, t.viaEngine),
 		})
 	}
-}
-
-// promptOf is the input-side of a sample: Total is billed tokens (input,
-// output, cache) and Output is the completion, so the rest is prompt. A
-// transcript that does not report a total yields zero rather than a guess.
-func promptOf(s agentusage.Sample) int {
-	p := s.Total - s.Output
-	if p < 0 {
-		return 0
-	}
-	return p
 }
 
 // note carries what the event cannot: where the agent is working, how much of

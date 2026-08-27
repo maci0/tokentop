@@ -305,6 +305,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			PromptTokens:   prompt,
 			OutputTokens:   output,
 			ThinkingTokens: thinking,
+			ViaEngine:      wire.ViaEngine,
 			Note:           wire.Note,
 		}
 		// Event fields are attacker-shaped text (any local process or peer
@@ -318,6 +319,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			ev.Agent = "anonymous"
 		}
 		ev.Model = clampField(core.SanitizeText(ev.Model), 128)
+		ev.ViaEngine = clampField(core.SanitizeText(ev.ViaEngine), 128)
 		ev.Note = clampField(core.SanitizeText(ev.Note), 512) // free-form fields are capped so one giant event cannot dominate the retained feed
 		// Token counts are unsigned quantities; negative or absurd values
 		// are junk from a misbehaving sender and must not enter the
@@ -363,6 +365,7 @@ type agentEventWire struct {
 	PromptTokens   json.RawMessage `json:"prompt_tokens"`
 	OutputTokens   json.RawMessage `json:"output_tokens"`
 	ThinkingTokens json.RawMessage `json:"thinking_tokens"`
+	ViaEngine      string          `json:"via_engine"`
 	Note           string          `json:"note"`
 }
 
@@ -471,7 +474,7 @@ func parseTokenJSON(raw json.RawMessage, field string) (int64, error) {
 
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintln(w, `{"hint":"POST /v1/events with {id,ts,agent,kind,model,prompt_tokens,output_tokens,thinking_tokens,note}"}`)
+	fmt.Fprintln(w, `{"hint":"POST /v1/events with {id,ts,agent,kind,model,prompt_tokens,output_tokens,thinking_tokens,via_engine,note}"}`)
 }
 
 // maxEventTokens bounds a token count on one event. Real usage never

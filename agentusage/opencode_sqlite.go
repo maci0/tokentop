@@ -65,14 +65,16 @@ func openCodeDBPath() string {
 }
 
 // usageQuery sums what this directory's sessions spent after a point in time.
-// Cached reads are deliberately absent: they are input, not generated output.
+// Cached reads are deliberately absent: they are cache hits, not billed
+// prompt. tokens.input, when present, is billed prompt and is summed.
 // Only assistant messages carry tokens; other roles are prompts. The directory
 // list is spliced in by usageQueryFor, since SQL has no placeholder for a set.
 const usageQuery = `
 	SELECT
 		COALESCE(SUM(json_extract(m.data, '$.tokens.output')), 0),
 		COALESCE(SUM(json_extract(m.data, '$.tokens.reasoning')), 0),
-		COALESCE(MAX(json_extract(m.data, '$.tokens.total')), 0)
+		COALESCE(MAX(json_extract(m.data, '$.tokens.total')), 0),
+		COALESCE(SUM(json_extract(m.data, '$.tokens.input')), 0)
 	FROM message m
 	JOIN session s ON s.id = m.session_id
 	WHERE s.directory IN (%s) AND m.time_created > ?
@@ -106,15 +108,16 @@ func (o openCodeDBSource) read(dirs []string, since time.Time) (values, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbQueryTimeout)
 	defer cancel()
 
-	var out, thinking, total sql.NullInt64
+	var out, thinking, total, input sql.NullInt64
 	row := db.QueryRowContext(ctx, usageQueryFor(len(dirs)), args...)
-	if err := row.Scan(&out, &thinking, &total); err != nil {
+	if err := row.Scan(&out, &thinking, &total, &input); err != nil {
 		return values{}, false
 	}
 	v := values{
 		output:   counter64(out.Int64),
 		thinking: counter64(thinking.Int64),
 		total:    counter64(total.Int64),
+		input:    counter64(input.Int64),
 	}
-	return v, v.output > 0 || v.total > 0
+	return v, v.output > 0 || v.total > 0 || v.input > 0
 }

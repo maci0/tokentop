@@ -42,7 +42,7 @@ func FuzzParseAgentLines(f *testing.F) {
 			if !ok {
 				return
 			}
-			if v.output < 0 || v.thinking < 0 || v.total < 0 {
+			if v.output < 0 || v.thinking < 0 || v.total < 0 || v.input < 0 {
 				t.Fatalf("%s: negative counter for %q: %+v", which, line, v)
 			}
 			if _, _, genOK := parseGeneric(line); !genOK {

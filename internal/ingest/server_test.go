@@ -102,6 +102,24 @@ func TestIngestForwardsId(t *testing.T) {
 	}
 }
 
+// via_engine is the same attribution agentwatch stamps when an agent is
+// generating through a monitored engine: without it, a harness POST would
+// double-count those tokens in header and chart totals.
+func TestIngestForwardsViaEngine(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"coder","output_tokens":50,"via_engine":"127.0.0.1:11434"}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 1)
+	if rec.evs[0].ViaEngine != "127.0.0.1:11434" {
+		t.Errorf("via_engine = %q, want 127.0.0.1:11434", rec.evs[0].ViaEngine)
+	}
+}
+
 // Offset-less RFC 3339 stamps (Python datetime.isoformat() without tzinfo,
 // hand-rolled harnesses) decode as UTC: encoding/json alone would reject
 // them and drop every event queued behind the bad one in the same batch.
@@ -521,7 +539,7 @@ func TestIngestHintListsAllFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"id", "ts", "agent", "kind", "model", "prompt_tokens", "output_tokens", "thinking_tokens", "note"} {
+	for _, field := range []string{"id", "ts", "agent", "kind", "model", "prompt_tokens", "output_tokens", "thinking_tokens", "via_engine", "note"} {
 		if !strings.Contains(string(body), field) {
 			t.Errorf("hint omits accepted field %s: %s", field, body)
 		}

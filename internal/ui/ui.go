@@ -1202,7 +1202,7 @@ func aggOutAt(s core.Snapshot, now time.Time) float64 {
 	for _, p := range s.Providers {
 		t += p.OutTokPS
 	}
-	out, _ := agentOwnTokPS(agentRates(s.Agents, now))
+	out, _ := agentOwnTokPS(s.Agents, now)
 	return t + out
 }
 
@@ -1211,7 +1211,7 @@ func aggInAt(s core.Snapshot, now time.Time) float64 {
 	for _, p := range s.Providers {
 		t += p.InTokPS
 	}
-	_, in := agentOwnTokPS(agentRates(s.Agents, now))
+	_, in := agentOwnTokPS(s.Agents, now)
 	return t + in
 }
 

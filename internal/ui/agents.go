@@ -101,13 +101,19 @@ func agentRates(events []core.AgentEvent, now time.Time) []agentRate {
 	return out
 }
 
-// agentOwnTokPS is the output/prompt rate of agents whose tokens are not
-// already in an engine's totals.
-func agentOwnTokPS(rates []agentRate) (outPS, inPS float64) {
-	for _, r := range rates {
-		if r.ViaEngine != "" {
-			continue
+// agentOwnTokPS is the output/prompt rate of tokens not already in an
+// engine's totals. Skip is per event, not per agent: an agent that
+// connects to (or leaves) a monitored engine mid-window still contributes
+// the unattributed slice. The per-agent row keeps the last ViaEngine so
+// it shows who they are talking to now.
+func agentOwnTokPS(events []core.AgentEvent, now time.Time) (outPS, inPS float64) {
+	own := make([]core.AgentEvent, 0, len(events))
+	for _, ev := range events {
+		if ev.ViaEngine == "" {
+			own = append(own, ev)
 		}
+	}
+	for _, r := range agentRates(own, now) {
 		outPS += r.TokPS
 		inPS += r.PromptPS
 	}

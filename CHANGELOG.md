@@ -15,9 +15,18 @@ support channel (see SECURITY.md).
 - Agent rows whose traffic is already counted by a watched engine are labelled
   `via <engine>` and are not added again to header or chart totals.
 - Ingest `POST /v1/events` accepts optional `id` (a repeat of a key still in
-  the retained feed is ignored, so retries are safe) and `thinking_tokens`.
+  the retained feed is ignored, so retries are safe), `thinking_tokens`, and
+  `via_engine` (the same attribution, so a harness POST is not added on top
+  of a watched engine's totals).
 - Ingest token counts accept whole JSON numbers (`100.0`, `1e2`), matching
   what Python `json.dumps` of a float emits.
+
+### Changed
+
+- `agentusage.Sample` now has `Input` (billed prompt tokens since attach).
+  Prompt rates use that field, not max-context minus summed output.
+- Header and chart totals skip `via_engine` events individually, so an agent
+  that switches onto a watched engine still contributes tokens spent before.
 
 ### Fixed
 

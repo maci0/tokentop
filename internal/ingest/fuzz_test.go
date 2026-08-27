@@ -21,6 +21,8 @@ import (
 func FuzzHandlePost(f *testing.F) {
 	for _, seed := range [][]byte{
 		[]byte(`{"agent":"coder","kind":"tool","prompt_tokens":4200,"output_tokens":310,"note":"shell(git status)"}`),
+		[]byte(`{"agent":"coder","via_engine":"127.0.0.1:11434","output_tokens":50}`),
+		[]byte(`{"via_engine":"127.0.0.1:11434\u001b]0;x\u0007"}`),
 		[]byte(`{"id":"turn-1","agent":"coder","output_tokens":50}`),
 		[]byte(`{"id":"` + strings.Repeat("a", 300) + `","agent":"x"}`),
 		[]byte("{\"agent\":\"a\",\"ts\":\"2026-01-02T03:04:05\"}\n{\"agent\":\"b\",\"ts\":\"2026-01-02T05:04:05+02:00\"}"),
@@ -104,11 +106,15 @@ func FuzzHandlePost(f *testing.F) {
 			if n := utf8.RuneCountInString(ev.ID); n > 128 {
 				t.Errorf("event %d: id = %d runes, cap 128", i, n)
 			}
+			if n := utf8.RuneCountInString(ev.ViaEngine); n > 128 {
+				t.Errorf("event %d: via_engine = %d runes, cap 128", i, n)
+			}
 			assertRenderSafe(t, i, "agent", ev.Agent)
 			assertRenderSafe(t, i, "model", ev.Model)
 			assertRenderSafe(t, i, "note", ev.Note)
 			assertRenderSafe(t, i, "kind", ev.Kind)
 			assertRenderSafe(t, i, "id", ev.ID)
+			assertRenderSafe(t, i, "via_engine", ev.ViaEngine)
 		}
 	})
 }

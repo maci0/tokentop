@@ -295,7 +295,7 @@ func writeFeedPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 // no engines.
 func writeAgentsPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 	now := frameNow(s, time.Time{})
-	outPS, inPS := agentOwnTokPS(agentRates(s.Agents, now))
+	outPS, inPS := agentOwnTokPS(s.Agents, now)
 	b.WriteString("no inference engines detected; --add URL attaches one\n")
 	fmt.Fprintf(b, "out %s tok/s · in %s tok/s\n", fmtRate(outPS), fmtRate(inPS))
 	writeSystemPlain(b, s.Sys)

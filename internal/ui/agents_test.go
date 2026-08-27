@@ -128,6 +128,30 @@ func TestAggSkipsViaEngineTokens(t *testing.T) {
 	}
 }
 
+// An agent that switches onto a monitored engine mid-window still
+// contributes the tokens it spent before that. Last-ViaEngine-wins would
+// drop the unattributed slice from the header the moment the last event
+// is labelled via.
+func TestAggCountsOwnTokensWhenAgentSwitchesOntoAnEngine(t *testing.T) {
+	now := time.Now()
+	s := core.Snapshot{
+		Agents: []core.AgentEvent{
+			{At: now.Add(-2 * time.Second), Agent: "claude", Kind: "turn",
+				OutputTokens: 40, PromptTokens: 10},
+			{At: now.Add(-time.Second), Agent: "claude", Kind: "turn",
+				OutputTokens: 40, PromptTokens: 10},
+			{At: now.Add(-500 * time.Millisecond), Agent: "claude", Kind: "turn",
+				OutputTokens: 100, PromptTokens: 80, ViaEngine: "127.0.0.1:11434"},
+		},
+	}
+	if got := aggOutAt(s, now); got != 80 {
+		t.Errorf("aggOut = %v, want 80 (own 80 tok/s, via event skipped)", got)
+	}
+	if got := aggInAt(s, now); got != 20 {
+		t.Errorf("aggIn = %v, want 20 (own 20 tok/s, via event skipped)", got)
+	}
+}
+
 func TestAggAgentsOnlyUsesAgentRates(t *testing.T) {
 	now := time.Now()
 	s := core.Snapshot{Agents: []core.AgentEvent{

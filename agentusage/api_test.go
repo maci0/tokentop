@@ -18,7 +18,7 @@ import (
 // a breaking change that needs a changelog entry.
 var publicTypes = map[string][]string{
 	"Process": {"PID", "Tool", "Dir", "Started"},
-	"Sample":  {"Output", "Thinking", "Total", "At"},
+	"Sample":  {"Output", "Thinking", "Total", "Input", "At"},
 	"Spec":    {"Roots", "Suffix", "Cumulative", "HeaderCwd"},
 	"Watcher": nil,
 }

@@ -90,6 +90,12 @@ func TestClaudeUsageIsSummedPerMessage(t *testing.T) {
 	if got := w.Sample().Output; got != 400 {
 		t.Fatalf("output tokens %d, want 400", got)
 	}
+	// input_tokens + cache_creation_input_tokens per line, summed: billed
+	// prompt, not the max context. Total-minus-output would shrink toward
+	// zero as output accrues against a maxed context size.
+	if got := w.Sample().Input; got != 306 {
+		t.Fatalf("input tokens %d, want 306 (102 per line × 3)", got)
+	}
 }
 
 func TestClaudeIgnoresOtherProjects(t *testing.T) {
@@ -143,6 +149,11 @@ func TestCodexCumulativeValuesAreRebased(t *testing.T) {
 	w.poll(nil)
 	if got := w.Sample().Output; got != 750 {
 		t.Fatalf("output tokens %d, want 750 (1750 minus the 1000 baseline)", got)
+	}
+	// billed prompt is total-output; the attach-time 4000 is the baseline,
+	// so only the 450 spent after attach counts.
+	if got := w.Sample().Input; got != 450 {
+		t.Fatalf("input tokens %d, want 450 (4450 minus the 4000 baseline)", got)
 	}
 }
 
@@ -203,6 +214,9 @@ func TestQwenUsageMetadataIsSummed(t *testing.T) {
 	// same prompt once per turn.
 	if got := w.Sample().Total; got != 420 {
 		t.Fatalf("total tokens %d, want 420 (the largest context, not the sum)", got)
+	}
+	if got := w.Sample().Input; got != 100 {
+		t.Fatalf("input tokens %d, want 100 (promptTokenCount of the first turn)", got)
 	}
 }
 

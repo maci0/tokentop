@@ -138,6 +138,7 @@ Event fields are all optional; anything omitted gets the default:
 | `model` | string | - | capped at 128 runes |
 | `kind` | string | `turn` | known kinds: `turn`, `tool`, `error`, `note`; custom kinds pass through lowercased, capped at 24 runes |
 | `prompt_tokens` / `output_tokens` / `thinking_tokens` | integer | `0` | negative values and values above 2^40 clamp to `0`; a whole JSON number such as `100.0` counts; thinking is the reasoning share of output when the agent says so |
+| `via_engine` | string | - | monitored engine already counting this output; aggregates skip the event; capped at 128 runes |
 | `note` | string | - | free-form, capped at 512 runes |
 
 One POST answers `202` with `{"accepted":N}` once every event in the stream
