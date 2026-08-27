@@ -30,8 +30,8 @@ type jsonEvent struct {
 }
 
 // jsonUsage holds token counters found on one line. Agents report a mix of
-// per-message and cumulative values; the caller decides which to trust by
-// taking the maximum it has seen.
+// per-message and cumulative values; the adapter's valueKind decides how
+// they combine.
 type jsonUsage struct {
 	Output   int
 	Thinking int

@@ -22,7 +22,7 @@ go install -tags sqlite github.com/maci0/toktop/cmd/toktop@latest
 
 `-tags sqlite` matches the GitHub binaries and `make build`: crush and
 opencode session databases cannot be read without it. Or download a binary
-for linux/macos/windows (amd64 + arm64) from the
+for linux/macos (amd64 + arm64) and windows/amd64 from the
 [releases](https://github.com/maci0/toktop/releases). An installed binary
 updates itself in place:
 
@@ -47,7 +47,10 @@ AGENTS  local, read from their own session logs
 
 `--agents` turns this on. It is off by default because it means scanning this
 machine's processes and reading session files nobody pointed toktop at:
-watching engines you configured does not imply consent to that.
+watching engines you configured does not imply consent to that. The watch
+needs each process's working directory to attribute transcripts; Windows
+does not expose that through a documented API, so `--agents` finds no
+agents there.
 
 With no engines attached, agents mode is the full dashboard: header rates,
 throughput charts and the host strip, all driven from the session logs.
@@ -72,9 +75,9 @@ says so on stderr rather than reporting a silent zero.
 
 crush keeps its database inside the project it is working on
 (`.crush/crush.db`, at the project root it resolves), with the counts in
-`sessions.completion_tokens`. That is the same file a review is already
-reading and writing, so there is no second gate: with the tag, it is read. The
-only JSONL crush writes is its log, which carries no counters.
+`sessions.completion_tokens`. The store is already scoped to that project,
+so there is no second gate: with the tag, it is read. The only JSONL crush
+writes is its log, which carries no counters.
 
 Reading is done by this repo's own `agentusage` package, which gauntlet also
 imports, so both tools report the same numbers. Agents defined in
@@ -107,15 +110,17 @@ Set `GAUNTLET_HOME` to read that file from somewhere else.
   output, prompt and reasoning rates; an agent using a monitored engine is
   labelled `via` that engine so its tokens are not added twice.
 - **System strip** - RAM/swap/load, CPU model, OS+kernel, GPU driver versions
-  (incl. CUDA), NPU enumeration (Intel NPU, AMD XDNA xN, Qualcomm Cloud
+  (incl. CUDA), NPU enumeration (Intel NPU, AMD XDNA NPU, Qualcomm Cloud
   AI100, Apple Neural Engine with chip generation), GPU temp/util/VRAM/
   power - on Apple Silicon including live wired-memory and
   utilization from IOAccelerator - and a second identity row for sensors.
 - **Braille charts** - dot-matrix rendering with btop-style fading bloom;
   timescale compresses leftward (`t` toggles) with faint grid marks showing
   where each doubling begins.
-- **Hot reload** - rebuild the binary while it runs and toktop restarts
-  into the fresh build automatically (`--no-hot-reload` to disable).
+- **Hot reload** - on Unix, rebuild the binary while it runs and toktop
+  re-execs into the fresh build (`--no-hot-reload` to disable). Windows
+  cannot replace a running image: the dashboard exits and asks you to
+  start it again.
 
 ## Agent feed API
 
@@ -214,12 +219,12 @@ loudly.
 
 | key | action |
 |---|---|
-| `q` | quit |
+| `q` / `ctrl+c` | quit |
 | `esc` | close help / quit |
 | `space` | pause streaming |
 | `p` | fire probes at every backend |
 | `t` | toggle compressed timescale + grid |
-| `?` | help |
+| `?` / `h` | help |
 
 ## Accessibility
 

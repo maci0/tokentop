@@ -1,6 +1,7 @@
 // Package selfreload watches the running executable and signals when it has
-// been rebuilt, so `go build` + save gives an instantly fresh dashboard
-// without losing your session.
+// been rebuilt. On Unix, Restart re-execs into the new image so `go build`
+// gives an instantly fresh dashboard. Windows cannot replace a running image,
+// so Restart prints that and the caller exits.
 package selfreload
 
 import (

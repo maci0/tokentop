@@ -1,6 +1,6 @@
-// Package sysmon samples host vitals (RAM, swap, load, temperatures, CPU
-// model) using each platform's native interfaces. Platform implementations
-// live in sysmon_<goos>.go files selected by build tags.
+// Package sysmon samples host vitals: RAM, swap, load, temperatures, CPU
+// model, OS and kernel identity, driver versions, GPUs and NPUs. Platform
+// implementations live in sysmon_<goos>.go files selected by build tags.
 package sysmon
 
 import (

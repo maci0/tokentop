@@ -102,7 +102,7 @@ func main() {
 		noReload  = flag.Bool("no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
 		seed      = flag.Int64("seed", 42, "demo RNG seed")
 		sshKey    = flag.String("ssh-key", "", "private key for ssh:// targets (overrides ~/.ssh/config)")
-		bearerArg = flag.String("bearer", "", "bearer token sent to engines (OmniRoute etc.)")
+		bearerArg = flag.String("bearer", "", "bearer token sent to --add endpoints only (OmniRoute etc.)")
 		showVer   = flag.Bool("version", false, "print version and exit")
 		showHelp  bool
 	)
@@ -517,8 +517,9 @@ Flags:
 Positional arguments are ssh:// targets and may repeat; help and version
 are also accepted as commands. http(s) URLs are rejected with an --add hint;
 anything else points at --help. Bearer tokens fall back to $OMNIROUTE_API_KEY
-then $TOKTOP_BEARER (--bearer wins); ssh passwords come from the terminal
-prompt or $TOKTOP_SSH_PASSWORD. See README.md for all environment variables.
+then $TOKTOP_BEARER (--bearer wins) and are sent only to --add endpoints;
+ssh passwords come from the terminal prompt or $TOKTOP_SSH_PASSWORD. See
+README.md for all environment variables.
 `)
 }
 

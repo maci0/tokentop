@@ -9,8 +9,8 @@ import (
 )
 
 // usageSource reads usage for one review from somewhere other than an
-// appendable transcript file. It exists for opencode, which keeps its sessions
-// in a SQLite database rather than JSONL.
+// appendable transcript file. opencode and crush keep sessions in SQLite
+// rather than JSONL.
 //
 // The contract is the same as everywhere else here: report what the agent
 // recorded for this directory since this moment, or report nothing.

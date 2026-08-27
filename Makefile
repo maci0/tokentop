@@ -16,17 +16,16 @@ export GOARM64 := v8.0
 # go.sum, produce a PIE.
 GO_BUILDFLAGS := -trimpath -buildvcs=false -mod=readonly -buildmode=pie
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck@2026.2.1
-BLACK       := uvx black==26.5.1
-RUFF        := uvx ruff==0.16.5
-MYPY        := uvx --from mypy==2.3.1 --with-requirements scripts/requirements.txt mypy
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 # gofmt from the selected toolchain, not a different major on PATH.
 GOFMT = $$($(GO) env GOROOT)/bin/gofmt
 
-# opencode keeps its sessions in SQLite rather than JSONL, so reading it means
-# linking a database driver in for one agent. Released binaries carry it (it is
-# pure Go, so cross-compilation is unaffected) and it still does nothing until
-# --opencode-db asks for it. Build with TAGS= to leave the driver out entirely.
+# crush and opencode keep sessions in SQLite rather than JSONL, so reading
+# them means linking a database driver. Released binaries carry it (pure Go,
+# so cross-compilation is unaffected). opencode still does nothing until
+# --opencode-db asks for it; crush is read whenever the tag is on, because
+# its database lives inside the watched project. Build with TAGS= to leave
+# the driver out entirely.
 TAGS    ?= sqlite
 GOTAGS  := $(if $(TAGS),-tags $(TAGS),)
 
@@ -119,12 +118,6 @@ lint: ## run staticcheck (both halves of the sqlite tag gate)
 	$(STATICCHECK) ./...
 	$(STATICCHECK) -tags sqlite ./agentusage/...
 
-.PHONY: scripts-check
-scripts-check: ## black, ruff and mypy over scripts/ (CI parity)
-	$(BLACK) --check scripts/
-	$(RUFF) check scripts/
-	$(MYPY) scripts/
-
 .PHONY: site-check
 site-check: ## bun test the Cloudflare Worker in site/ (CI parity)
 	bun test site/
@@ -143,7 +136,7 @@ tidy-check: ## fail if go.mod or go.sum would change
 	$(GO) mod tidy -diff
 
 .PHONY: scripts-check
-scripts-check: ## format, lint and type-check scripts/ with pinned tools
+scripts-check: ## black, ruff and mypy over scripts/ (same pins as CI)
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt black --check scripts/
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt ruff check scripts/
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt mypy scripts/

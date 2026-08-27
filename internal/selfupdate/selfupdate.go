@@ -8,9 +8,11 @@
 // Nothing is executed before it is verified, and a failed verification leaves
 // the running binary untouched.
 //
-// The dashboard notices the replacement on its own: internal/selfreload
-// watches the executable and restarts into whatever is there now, so an update
-// applied from another terminal takes effect without anyone quitting.
+// On Unix the dashboard notices the replacement on its own: internal/selfreload
+// watches the executable and re-execs into whatever is there now, so an update
+// applied from another terminal takes effect without anyone quitting. Windows
+// cannot exec over a running image, so the dashboard exits and asks for a
+// restart instead.
 package selfupdate
 
 import (

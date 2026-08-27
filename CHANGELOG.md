@@ -38,7 +38,7 @@ support channel (see SECURITY.md).
   and `toktop update`, instead of impersonating 0.1.0.
 - `--agents` no longer re-walks every transcript store on each tick, and
   engine attribution reads the kernel connection tables once per pass.
-- Crush session databases are summed once per review; a continued session
+- Crush session databases are summed once per attach; a continued session
   contributes only growth after attach.
 - Transcripts that grew under one mtime stamp are still read.
 

@@ -43,6 +43,9 @@ type Recorder interface {
 // but can be exposed via --ingest.
 var idleTimeout = 2 * time.Minute
 
+// New binds addr and returns a server that Serve will accept on. The listen
+// happens here so Addr reports the actual bound port (including :0) before
+// Serve runs.
 func New(addr string, rec Recorder) (*Server, error) {
 	return newServer(addr, rec, newIngestLogger())
 }

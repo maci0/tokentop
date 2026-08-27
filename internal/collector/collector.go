@@ -58,6 +58,8 @@ type Collector struct {
 	probeInflight map[string]bool // "base|model" -> generation running
 }
 
+// New polls providers every interval. Host vitals come from sysmon; call
+// SetSysFn before Run when merging remote readings onto the local sample.
 func New(providers []provider.Provider, interval time.Duration) *Collector {
 	return &Collector{
 		providers:     providers,

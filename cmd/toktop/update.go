@@ -41,9 +41,10 @@ $GITHUB_TOKEN authenticates GitHub API calls past the anonymous rate limit.
 // runUpdate implements `toktop update`, which replaces this binary with the
 // latest release after verifying its checksum.
 //
-// A running dashboard needs no restart: it watches its own executable and
-// re-execs when it changes (see internal/selfreload), so an update applied in
-// another terminal lands in the session already open.
+// On Unix a running dashboard needs no restart: it watches its own executable
+// and re-execs when it changes (see internal/selfreload), so an update applied
+// in another terminal lands in the session already open. Windows cannot exec
+// over a running image, so the dashboard exits and asks you to start it again.
 func runUpdate(ctx context.Context, out io.Writer, args []string) int {
 	fs := flag.NewFlagSet("toktop update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

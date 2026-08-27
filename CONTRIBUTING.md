@@ -34,8 +34,9 @@ To see the dashboard render without an interactive terminal:
 TOKTOP_COLUMNS=120 TOKTOP_LINES=38 ./toktop --demo --once   # fixed size, for screenshots
 ```
 
-While a TUI instance runs, rebuilding the binary restarts it into the fresh
-build automatically (hot reload); pass `--no-hot-reload` to disable.
+While a TUI instance runs on Unix, rebuilding the binary re-execs into the
+fresh build (hot reload); pass `--no-hot-reload` to disable. Windows cannot
+exec over a running image, so the dashboard exits instead.
 
 ## Regenerating the README screenshot
 

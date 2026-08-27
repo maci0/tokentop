@@ -57,7 +57,7 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - name: test
         run: go test -mod=readonly -race -shuffle=on ./...
-      # The sqlite tag links a database driver in for one agent (opencode), so
+      # The sqlite tag links a database driver for crush and opencode, so
       # both halves of that gate have their own tests and both must pass.
       - name: test (sqlite build)
         run: go test -mod=readonly -tags sqlite -race -shuffle=on ./agentusage/...
@@ -83,8 +83,8 @@ jobs:
         with:
           version: "0.12.6"
       - name: format, lint and type check the screenshot script
-        # Pins live in the Makefile so local `make scripts-check` and CI
-        # cannot run different black/ruff/mypy versions.
+        # Pins live in scripts/requirements-dev.txt so local `make scripts-check`
+        # and CI cannot run different black/ruff/mypy versions.
         run: make scripts-check
 
   build:
