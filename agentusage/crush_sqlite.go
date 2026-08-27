@@ -6,12 +6,11 @@
 package agentusage
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
 	"time"
-
-	_ "modernc.org/sqlite" // pure Go driver: no cgo, so cross-compilation still works
 )
 
 // crush keeps its sessions in SQLite like opencode, but inside the project it
@@ -44,10 +43,6 @@ const (
 	// crushMaxWalkUp bounds the search for the project root, so a review of a
 	// directory outside any project cannot walk to /.
 	crushMaxWalkUp = 16
-	// maxPlausibleCount bounds what a counter may claim. A database row that
-	// large is a misread, not a measurement, and summing it would overflow
-	// whatever it lands in.
-	maxPlausibleCount = 1 << 40
 )
 
 // read sums what crush recorded for this directory since the review began.
@@ -104,18 +99,81 @@ const crushUsageQuery = `
 func readCrushDB(path string, since time.Time) (int, bool) {
 	// mode=ro leaves the database alone; a missing or unreadable one is an
 	// answer ("nothing to report"), not an error worth surfacing.
-	db, err := sql.Open("sqlite", readOnlyDSN(path))
+	db, err := openReadOnly(path)
 	if err != nil {
 		return 0, false
 	}
 	defer db.Close()
 
+	ctx, cancel := context.WithTimeout(context.Background(), dbQueryTimeout)
+	defer cancel()
+
 	var out sql.NullInt64
-	if err := db.QueryRow(crushUsageQuery, since.UnixMilli()).Scan(&out); err != nil {
+	if err := db.QueryRowContext(ctx, crushUsageQuery, since.UnixMilli()).Scan(&out); err != nil {
 		return 0, false
 	}
-	if !out.Valid || out.Int64 <= 0 || out.Int64 > maxPlausibleCount {
+	n := counter64(out.Int64)
+	if n <= 0 {
 		return 0, false
 	}
-	return int(out.Int64), true
+	return n, true
+}
+
+const crushSessionsQuery = `
+	SELECT id, completion_tokens
+	FROM sessions`
+
+// sessions returns each database's current per-session completion tokens.
+// Watch snapshots this at attach so a continued session contributes only
+// what it adds afterwards, matching the file adapters. A missing or
+// unreadable store is not an error: most trees have never run crush.
+func (crushDBSource) sessions(dirs []string) (map[string]map[string]int64, bool) {
+	seen := map[string]bool{}
+	out := map[string]map[string]int64{}
+	for _, dir := range dirs {
+		path := crushDBPath(dir)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		sess, ok := readCrushSessions(path)
+		if !ok {
+			return nil, false
+		}
+		out[path] = sess
+	}
+	return out, true
+}
+
+func readCrushSessions(path string) (map[string]int64, bool) {
+	db, err := openReadOnly(path)
+	if err != nil {
+		return nil, false
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbQueryTimeout)
+	defer cancel()
+
+	rows, err := db.QueryContext(ctx, crushSessionsQuery)
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var n sql.NullInt64
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, false
+		}
+		if v := counter64(n.Int64); v > 0 {
+			out[id] = int64(v)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false
+	}
+	return out, true
 }

@@ -156,13 +156,17 @@ func asInt(v any) (int, bool) {
 		// out-of-range results differ by platform (amd64 gives the minimum,
 		// arm64 saturates to the maximum). A counter outside it is not a
 		// measurement: report nothing rather than a platform-dependent lie.
-		if !(n >= 1) || n >= 1<<63 {
+		if !(n >= 1) || n > float64(maxSaneTokens) {
 			return 0, false
 		}
 		return int(n), true
 	case json.Number:
 		i, err := n.Int64()
-		return int(i), err == nil
+		if err != nil {
+			return 0, false
+		}
+		c := counter64(i)
+		return c, c > 0
 	}
 	return 0, false
 }

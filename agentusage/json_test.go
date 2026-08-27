@@ -79,6 +79,17 @@ func TestUnknownEnvelopeInventsNoNumbers(t *testing.T) {
 	}
 }
 
+func TestAbsurdCounterIsAbsent(t *testing.T) {
+	line := `{"output_tokens":1099511627777}` // maxSaneTokens + 1
+	ev, ok := parseJSON([]byte(line))
+	if !ok {
+		t.Fatal("valid JSON was rejected")
+	}
+	if ev.Usage.Has() {
+		t.Fatalf("invented usage from an absurd counter: %+v", ev.Usage)
+	}
+}
+
 func TestDeeplyNestedPayloadDoesNotRunAway(t *testing.T) {
 	// A tool result can nest arbitrarily; the walk must stop and stay quiet.
 	line := `{"type":"tool_result","content":` + strings.Repeat(`{"a":`, 40) + `"deep"` + strings.Repeat(`}`, 40) + `}`

@@ -7,6 +7,7 @@ package agentusage
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -122,17 +123,36 @@ func TestOpenCodeDBWithoutAStoreReportsNothing(t *testing.T) {
 }
 
 func TestReadOnlyDSNEscapesURISyntax(t *testing.T) {
+	q := fmt.Sprintf("?mode=ro&_query_only=1&_busy_timeout=%d&_defensive=1", dbBusyTimeout.Milliseconds())
 	for _, tc := range []struct{ path, want string }{
 		{"/home/user/.local/share/opencode/opencode.db",
-			"file:/home/user/.local/share/opencode/opencode.db?mode=ro"},
-		{"/home/mar{c}o#witz/db", "file:/home/mar{c}o%23witz/db?mode=ro"},
-		{"/tmp/what?now/db", "file:/tmp/what%3Fnow/db?mode=ro"},
-		{"/tmp/100%20done/db", "file:/tmp/100%2520done/db?mode=ro"},
-		{`C:\Users\mw\.local\share\opencode.db`, `file:C:\Users\mw\.local\share\opencode.db?mode=ro`},
+			"file:/home/user/.local/share/opencode/opencode.db" + q},
+		{"/home/mar{c}o#witz/db", "file:/home/mar{c}o%23witz/db" + q},
+		{"/tmp/what?now/db", "file:/tmp/what%3Fnow/db" + q},
+		{"/tmp/100%20done/db", "file:/tmp/100%2520done/db" + q},
+		{`C:\Users\mw\.local\share\opencode.db`, `file:C:\Users\mw\.local\share\opencode.db` + q},
 	} {
 		if got := readOnlyDSN(tc.path); got != tc.want {
 			t.Errorf("readOnlyDSN(%q) = %q, want %q", tc.path, got, tc.want)
 		}
+	}
+}
+
+// A live session store is opened so it cannot be written: query_only rejects
+// INSERT, and the pool is a single connection.
+func TestOpenReadOnlyRejectsWrites(t *testing.T) {
+	path := opencodeDB(t)
+	db, err := openReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var q int
+	if err := db.QueryRow("PRAGMA query_only").Scan(&q); err != nil || q != 1 {
+		t.Fatalf("PRAGMA query_only = %d (%v), want 1", q, err)
+	}
+	if _, err := db.Exec(`INSERT INTO session (id, directory) VALUES ('x', '/tmp')`); err == nil {
+		t.Fatal("query_only allowed a write")
 	}
 }
 
@@ -158,6 +178,44 @@ func TestOpenCodeDBReadsPathWithURISyntaxCharacters(t *testing.T) {
 	w.poll(nil)
 	if got := w.Sample().Output; got != 42 {
 		t.Fatalf("output tokens %d, want 42: the URI-syntax path was misread", got)
+	}
+}
+
+// Tokens live on assistant messages. A user prompt that carries the same
+// JSON shape must not be summed in, or a review invents output.
+func TestOpenCodeDBIgnoresNonAssistantTokens(t *testing.T) {
+	path := opencodeDB(t)
+	dir := t.TempDir()
+	addSession(t, path, "s", dir)
+	start := time.Now()
+	addMessage(t, path, "m-user", "s", start.Add(time.Second),
+		`{"role":"user","tokens":{"output":9999,"reasoning":50,"total":9999}}`)
+	addMessage(t, path, "m-as", "s", start.Add(2*time.Second),
+		`{"role":"assistant","tokens":{"output":12,"reasoning":3,"total":100}}`)
+	withOpenCodeDB(t, path)
+
+	w := Watch("opencode", dir, start)
+	w.poll(nil)
+	s := w.Sample()
+	if s.Output != 12 || s.Thinking != 3 || s.Total != 100 {
+		t.Fatalf("read %+v, want only the assistant message", s)
+	}
+}
+
+// A counter larger than any real usage is corruption, not a measurement.
+func TestOpenCodeDBRejectsAbsurdCounts(t *testing.T) {
+	path := opencodeDB(t)
+	dir := t.TempDir()
+	addSession(t, path, "s", dir)
+	start := time.Now()
+	addMessage(t, path, "m1", "s", start.Add(time.Second),
+		fmt.Sprintf(`{"role":"assistant","tokens":{"output":%d,"total":%d}}`, maxSaneTokens+1, maxSaneTokens+1))
+	withOpenCodeDB(t, path)
+
+	w := Watch("opencode", dir, start)
+	w.poll(nil)
+	if got := w.Sample(); !got.Empty() {
+		t.Fatalf("invented usage from an absurd counter: %+v", got)
 	}
 }
 

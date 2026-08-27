@@ -125,6 +125,16 @@ func counter(n int) int {
 	return n
 }
 
+// counter64 is counter for values that arrive as int64, from a database
+// column or json.Number, so a magnitude that does not fit in int is rejected
+// before the conversion rather than wrapping.
+func counter64(n int64) int {
+	if n < 0 || n > maxSaneTokens {
+		return 0
+	}
+	return int(n)
+}
+
 var adaptersMu sync.RWMutex
 
 var adapters = map[string]adapter{
@@ -308,8 +318,8 @@ func home(parts ...string) string {
 
 // Watcher tails one agent's transcripts for one review.
 type Watcher struct {
-	// src is set for agents whose usage is not in files (opencode). When it
-	// is, every field below that describes file state is unused.
+	// src is set for agents whose usage is not in files (opencode, crush).
+	// When it is, every field below that describes file state is unused.
 	src usageSource
 	// dirs are the spellings a source matches against, for agents that record
 	// the directory they were started in rather than its resolved form.
@@ -338,6 +348,12 @@ type Watcher struct {
 	baseThink map[string]int
 	seen      map[string]values // file -> this review's contribution
 	total     map[string]int
+	// srcBase is per-session completion tokens at attach for a sessionSource
+	// (crush). completion_tokens is cumulative for the session's life, so
+	// without this a continued session would dump its history into this
+	// review the first time it was updated. nil means the source is not
+	// cumulative (opencode counts per message by timestamp).
+	srcBase map[string]map[string]int64
 
 	// pollMu serializes reads: the ticker goroutine and a caller's final
 	// synchronous Poll both walk the same offsets and counters.
@@ -370,7 +386,15 @@ func (w *Watcher) Dir() string {
 // an earlier review contributes only what it adds from now on.
 func Watch(tool, dir string, since time.Time) *Watcher {
 	if src, ok := sourceFor(tool); ok {
-		return &Watcher{src: src, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
+		w := &Watcher{src: src, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
+		if ss, ok := src.(sessionSource); ok {
+			base, ok := ss.sessions(w.dirs)
+			if !ok {
+				base = map[string]map[string]int64{}
+			}
+			w.srcBase = base
+		}
+		return w
 	}
 	adaptersMu.RLock()
 	ad, ok := adapters[tool]
@@ -517,6 +541,40 @@ func (w *Watcher) Run(ctx context.Context, every time.Duration, onChange func(Sa
 	}
 }
 
+// readSrc is one reading from a non-file source. A sessionSource was
+// snapshotted at attach, so only growth since then is counted. Other
+// sources (opencode) report this review's usage in full each time via
+// a timestamp filter.
+func (w *Watcher) readSrc() (values, bool) {
+	if w.srcBase != nil {
+		ss, ok := w.src.(sessionSource)
+		if !ok {
+			return values{}, false
+		}
+		cur, ok := ss.sessions(w.dirs)
+		if !ok {
+			return values{}, false
+		}
+		var n int64
+		for path, sess := range cur {
+			base := w.srcBase[path]
+			for id, tokens := range sess {
+				d := tokens - base[id]
+				if d <= 0 {
+					continue
+				}
+				if n > int64(maxSaneTokens)-d {
+					return values{}, false
+				}
+				n += d
+			}
+		}
+		out := counter64(n)
+		return values{output: out}, out > 0
+	}
+	return w.src.read(w.dirs, w.since)
+}
+
 // Poll reads whatever the transcripts have gained since the last read and
 // returns the total. Callers use it for a final synchronous read once the
 // agent has exited, since the last records land after the process is gone.
@@ -552,9 +610,7 @@ func (w *Watcher) poll(onChange func(Sample)) {
 	defer w.pollMu.Unlock()
 	var out, thinking, total int
 	if w.src != nil {
-		// A source reports this review's usage in full each time, so there is
-		// no per-file bookkeeping to fold in.
-		v, ok := w.src.read(w.dirs, w.since)
+		v, ok := w.readSrc()
 		if !ok {
 			return
 		}

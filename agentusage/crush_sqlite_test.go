@@ -43,6 +43,22 @@ func crushDB(t *testing.T, dir string, sessions map[string][2]int64) {
 	}
 }
 
+func putCrushSession(t *testing.T, dir, id string, tokens, updatedAt int64) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(dir, ".crush", "crush.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(
+		`INSERT INTO sessions (id, completion_tokens, updated_at) VALUES (?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET completion_tokens = excluded.completion_tokens,
+		     updated_at = excluded.updated_at`,
+		id, tokens, updatedAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // What crush spent on a review is what it wrote while the review ran: rows
 // from before it belong to whatever ran earlier.
 func TestCrushSourceCountsOnlyThisReview(t *testing.T) {
@@ -112,20 +128,45 @@ func TestCrushSourceWithoutADatabase(t *testing.T) {
 }
 
 // Watch routes crush through this source, which is what makes the counts
-// reach a caller without it knowing where they came from.
+// reach a caller without it knowing where they came from. Tokens already in
+// the database at attach belong to an earlier review, the same rule the file
+// adapters apply, so the session is written after Watch.
 func TestWatchUsesTheCrushSource(t *testing.T) {
 	dir := t.TempDir()
-	since := time.Now()
-	crushDB(t, dir, map[string][2]int64{"s": {7, since.Add(time.Second).UnixMilli()}})
-	w := Watch("crush", dir, since)
+	crushDB(t, dir, map[string][2]int64{})
+	w := Watch("crush", dir, time.Now())
 	if w == nil {
 		t.Fatal("crush is readable in this build, so Watch must return a watcher")
 	}
+	putCrushSession(t, dir, "s", 7, time.Now().Add(time.Second).UnixMilli())
 	if got := w.Poll(); got.Output != 7 {
 		t.Fatalf("watcher read %+v, want 7 output tokens", got)
 	}
 	if !Supported("crush") {
 		t.Fatal("Supported must agree that crush is readable here")
+	}
+}
+
+// completion_tokens is cumulative for a session's life. A session that
+// already had tokens when the watcher attached must contribute only what it
+// adds afterwards, or a continued crush dumps its history into this review.
+func TestCrushWatchCountsOnlyGrowthAfterAttach(t *testing.T) {
+	dir := t.TempDir()
+	crushDB(t, dir, map[string][2]int64{
+		"s": {5000, time.Now().Add(-time.Hour).UnixMilli()},
+	})
+	w := Watch("crush", dir, time.Now())
+	if w == nil {
+		t.Fatal("crush is readable in this build, so Watch must return a watcher")
+	}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("counted tokens from before attach: %d", got)
+	}
+	putCrushSession(t, dir, "s", 5100, time.Now().Add(time.Second).UnixMilli())
+	w.poll(nil)
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output %d, want the 100 generated after attach", got)
 	}
 }
 

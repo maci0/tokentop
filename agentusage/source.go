@@ -22,6 +22,14 @@ type usageSource interface {
 	read(dirs []string, since time.Time) (values, bool)
 }
 
+// sessionSource reports per-session cumulative counters. Watch snapshots
+// them at attach so a continued session contributes only what it adds,
+// matching the file adapters. The outer key is the database path, so two
+// projects cannot collide on a session id.
+type sessionSource interface {
+	sessions(dirs []string) (map[string]map[string]int64, bool)
+}
+
 var (
 	sourcesMu sync.RWMutex
 	sources   = map[string]usageSource{}
