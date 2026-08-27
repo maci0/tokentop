@@ -41,8 +41,8 @@ engines:
 
 ```
 AGENTS  local, read from their own session logs
-  claude   ▲ 1.1k tok/s   ↓2.4k ↑8.1k   ● live
-  codex    ▲ 340 tok/s    ↓18k ↑40k     via 127.0.0.1:11434  ● live
+  claude   ▲ 1.1k tok/s   ▲2.4k ▼8.1k   ● live
+  codex    ▲ 340 tok/s    ▲18k ▼40k     via 127.0.0.1:11434  ● live
 ```
 
 `--agents` turns this on. It is off by default because it means scanning this
@@ -126,7 +126,7 @@ func main() {
 
 ## What it shows
 
-- **Backends** - every engine found locally or via ssh, with model, version,
+- **Engines** - every engine found locally or via ssh, with model, version,
   KV-cache pressure, queue depth and throughput. Fingerprinted kinds:
   Ollama, llama.cpp/llamafile/ramalama, vLLM, SGLang, TRT-LLM/Triton,
   LM Studio, MLX (mlx-lm / LM Studio), KoboldCpp, LocalAI, TGI, LiteLLM,
@@ -139,7 +139,7 @@ func main() {
   Agents with no local engine (or whose engine is not monitored) add their
   own rates; tokens already counted by a watched engine are not added again.
 - **Probes** (`p`, `--probe N`) - tiny streaming generations measuring real
-  TTFT and decode speed per backend.
+  TTFT and decode speed per engine.
 - **Agent feed** - any harness can POST usage events:
   ```
   curl -X POST localhost:8420/v1/events -d \
@@ -261,7 +261,7 @@ loudly.
 | `q` / `ctrl+c` | quit |
 | `esc` | close help / quit |
 | `space` | pause streaming |
-| `p` | fire probes at every backend |
+| `p` | probe every engine with a real generation |
 | `t` | toggle compressed timescale + grid |
 | `?` / `h` | help |
 

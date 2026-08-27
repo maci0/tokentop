@@ -169,9 +169,9 @@ func agentRows(rates []agentRate, now time.Time) []string {
 		} else if r.ViaEngine != "" {
 			rate = dim("via engine")
 		}
-		tok := dim("↓" + fmtCount(r.Tokens))
+		tok := dim("▲" + fmtCount(r.Tokens))
 		if r.Prompt > 0 {
-			tok += dim(" ↑" + fmtCount(r.Prompt))
+			tok += dim(" ▼" + fmtCount(r.Prompt))
 		}
 		if r.Thinking > 0 {
 			tok += dim(" " + fmtCount(r.Thinking) + " think")
@@ -227,7 +227,7 @@ func (m Model) renderAgentsOnly() string {
 
 	feed := feedLines(m.snap.Agents, feedIn, w)
 	if len(feed) == 0 {
-		feed = append(feed, dim("no agent activity yet"))
+		feed = append(feed, m.feedEmptyLines(w)...)
 	}
 
 	body := lipgloss.JoinVertical(lipgloss.Left,
@@ -236,7 +236,7 @@ func (m Model) renderAgentsOnly() string {
 		m.renderCharts(),
 		m.renderSystem(),
 		panel(title, strings.Join(rows, "\n"), w, midIn),
-		panel("AGENT FEED", strings.Join(feed, "\n"), w, feedIn),
+		panel(m.feedTitle(w, 0, 0, nil), strings.Join(feed, "\n"), w, feedIn),
 	)
 	return composeFrame(body, m.renderFooter(), m.w, m.h)
 }

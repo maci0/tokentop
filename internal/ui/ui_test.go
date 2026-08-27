@@ -259,6 +259,21 @@ func TestFeedLineRendersEventTimeInLocalZone(t *testing.T) {
 	}
 }
 
+// Header rates are ▲ out / ▼ in. Feed counts used the opposite arrows, so
+// one screen taught two directions for the same quantities.
+func TestFeedLineTokenArrowsMatchHeader(t *testing.T) {
+	line := strip(feedLine(core.AgentEvent{
+		At: time.Now(), Agent: "claude", Kind: "turn",
+		PromptTokens: 4200, OutputTokens: 310,
+	}))
+	if !strings.Contains(line, "▲310") || !strings.Contains(line, "▼4.2k") {
+		t.Errorf("feed line arrows = %q, want ▲ output then ▼ prompt", line)
+	}
+	if strings.Contains(line, "↑") || strings.Contains(line, "↓") {
+		t.Errorf("feed line still uses the old ↑↓ pair: %q", line)
+	}
+}
+
 func TestGaugeBar(t *testing.T) {
 	g := GaugeBar(50, 10, kvHeat)
 	if !strings.Contains(g, "50%") {
@@ -485,7 +500,7 @@ func TestStaticFrameRenders(t *testing.T) {
 			PromptTokens: 10, OutputTokens: 5}},
 	}
 	out := StaticFrame(Config{Version: "t"}, snap, 110, 36)
-	for _, want := range []string{"TOKTOP", "BACKENDS", "ENGINE STATE", "PROBES", "AGENT FEED", "SYS", "llama3"} {
+	for _, want := range []string{"TOKTOP", "ENGINES", "ENGINE STATE", "PROBES", "AGENT FEED", "SYS", "llama3"} {
 		if !strings.Contains(strip(out), want) {
 			t.Errorf("frame missing %q", want)
 		}
@@ -900,6 +915,25 @@ func TestProbePressAcknowledgesUntilResult(t *testing.T) {
 
 // All backends down: ENGINE STATE must say so instead of promising telemetry
 // that will never arrive.
+// Engine rows used a bare bar and "r1 w2": first-timers could not tell the
+// bar was KV cache or that r/w were running/waiting queues.
+func TestEnginesPanelLabelsKVAndQueue(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.snap = core.Snapshot{Providers: []core.ProviderSnapshot{{
+		Label: "ollama", Kind: core.KindOllama, OK: true,
+		OutTokPS: 42, InTokPS: 10, KVPct: 55, Running: 1, Waiting: 2,
+	}}}
+	out := strip(m.providersBody(50))
+	for _, want := range []string{"kv ", "run 1", "wait 2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("engine row missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "r1 w2") {
+		t.Errorf("engine row still uses terse r/w queue labels:\n%s", out)
+	}
+}
+
 func TestEngineStateNamesAllDownEngines(t *testing.T) {
 	m := New(Config{Version: "t"}, nil)
 	m.snap = core.Snapshot{Providers: []core.ProviderSnapshot{
@@ -933,7 +967,7 @@ func TestMinimalViewGuidesRecovery(t *testing.T) {
 	empty := New(Config{Version: "t"}, nil)
 	empty.w, empty.h, empty.ready = 40, 12, true
 	out = strip(empty.View())
-	for _, want := range []string{"no inference engines detected", "--demo"} {
+	for _, want := range []string{"no inference engines detected", "--demo", "--agents"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("empty minimal view missing %q:\n%s", want, out)
 		}
@@ -1126,9 +1160,9 @@ func TestProbeTimeoutFollowsClock(t *testing.T) {
 	}
 }
 
-// The BACKENDS panel must mark down engines by more than color (WCAG 1.4.1):
+// The ENGINES panel must mark down engines by more than color (WCAG 1.4.1):
 // the ✗ glyph matches the probe feed's convention and survives greyscale.
-func TestBackendsPanelMarksDownEnginesWithoutColor(t *testing.T) {
+func TestEnginesPanelMarksDownEnginesWithoutColor(t *testing.T) {
 	m := New(Config{Version: "t"}, nil)
 	nm, _ := m.Update(snapMsg(core.Snapshot{Providers: []core.ProviderSnapshot{
 		{Label: "vllm", OK: false, Err: "connection refused"},
@@ -1177,6 +1211,20 @@ func TestSuccessfulProbeUsesTokPerSec(t *testing.T) {
 	}
 }
 
+// --probe is a startup flag: without "quit, then" this panel used to look
+// like you could type it into the dashboard, the same trap the empty card
+// used to have.
+func TestProbeEmptyHintsRerunForAuto(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	out := strip(m.probesBody(40, 8))
+	if !strings.Contains(out, "press") || !strings.Contains(out, "p") {
+		t.Errorf("empty probes lost the p hint:\n%s", out)
+	}
+	if !strings.Contains(out, "quit") || !strings.Contains(out, "--probe") {
+		t.Errorf("empty probes must say --probe needs a re-run:\n%s", out)
+	}
+}
+
 // p and t only have a visible effect with engines (or agents, for t). The
 // compact strip already hides them; the full footer must match.
 func TestFooterOmitsDeadKeys(t *testing.T) {
@@ -1207,5 +1255,19 @@ func TestHelpSaysFlagsNeedRerun(t *testing.T) {
 	out := strip(m.View())
 	if !strings.Contains(out, "quit, then re-run") {
 		t.Errorf("help does not say flags need a restart:\n%s", out)
+	}
+}
+
+// p fires a real generation that burns tokens and GPU time: calling it
+// "synthetic" read as a no-op simulation.
+func TestHelpDescribesLiveProbe(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.help, m.w, m.h, m.ready = true, 110, 36, true
+	out := strip(m.View())
+	if !strings.Contains(out, "real generation") {
+		t.Errorf("help does not say p runs a real generation:\n%s", out)
+	}
+	if strings.Contains(out, "synthetic") {
+		t.Errorf("help still calls the probe synthetic:\n%s", out)
 	}
 }

@@ -432,7 +432,7 @@ func TestVersionCacheRetriesUntilResolved(t *testing.T) {
 }
 
 // Engines explain rejections in the error body (OOM, bad api key, model
-// not found); poll failures surface in the BACKENDS panel and must carry
+// not found); poll failures surface in the ENGINES panel and must carry
 // that text, not just the status code.
 func TestHTTPErrorCarriesEngineBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

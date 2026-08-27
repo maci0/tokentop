@@ -177,13 +177,13 @@ func TestAgentRowsShowPromptThinkingAndVia(t *testing.T) {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
 	claude := strip(rows[0])
-	for _, want := range []string{"claude", "tok/s", "↓2.4k", "↑8.1k", "400 think", "live"} {
+	for _, want := range []string{"claude", "tok/s", "▲2.4k", "▼8.1k", "400 think", "live"} {
 		if !strings.Contains(claude, want) {
 			t.Errorf("claude row missing %q:\n%s", want, claude)
 		}
 	}
 	codex := strip(rows[1])
-	for _, want := range []string{"codex", "via 127.0.0.1:11434", "↓18.0k", "↑40.0k"} {
+	for _, want := range []string{"codex", "via 127.0.0.1:11434", "▲18.0k", "▼40.0k"} {
 		if !strings.Contains(codex, want) {
 			t.Errorf("codex row missing %q:\n%s", want, codex)
 		}
@@ -225,6 +225,31 @@ func TestRenderAgentsOnlyShowsDashboardChrome(t *testing.T) {
 	}
 	if strings.Contains(out, "0/0 engines") {
 		t.Errorf("agents-only dashboard still shows the engines-empty header:\n%s", out)
+	}
+}
+
+// Agents-only used a stripped AGENT FEED that hid ingest death and the POST
+// target the full dashboard already shows.
+func TestAgentsOnlyFeedMirrorsIngestStatus(t *testing.T) {
+	now := time.Now()
+	snap := core.Snapshot{Agents: []core.AgentEvent{
+		{At: now, Agent: "claude", Kind: "turn", OutputTokens: 40},
+	}}
+	live := New(Config{Version: "t", IngestAddr: "127.0.0.1:8420"}, nil)
+	live.snap, live.w, live.h, live.ready, live.clock = snap, 110, 36, true, now
+	if out := strip(live.renderAgentsOnly()); !strings.Contains(out, "POST http://127.0.0.1:8420/v1/events") {
+		t.Errorf("agents-only live ingest lost the POST target:\n%s", out)
+	}
+
+	down := New(Config{Version: "t", IngestAddr: "127.0.0.1:8420"}, nil)
+	down.snap, down.w, down.h, down.ready, down.clock = snap, 110, 36, true, now
+	down.feedDown = "listener closed"
+	out := strip(down.renderAgentsOnly())
+	if strings.Contains(out, "POST http://127.0.0.1:8420") {
+		t.Errorf("agents-only dead ingest still advertised:\n%s", out)
+	}
+	if !strings.Contains(out, "ingest down") {
+		t.Errorf("agents-only missing ingest-down after feed death:\n%s", out)
 	}
 }
 

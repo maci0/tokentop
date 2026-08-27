@@ -598,7 +598,7 @@ func (m Model) renderMidRow() string {
 	rw := m.w - pw - gw
 	_, midIn, _ := m.sectionHeights()
 
-	prov := panel("BACKENDS", m.providersBody(pw-4), pw-4, midIn)
+	prov := panel("ENGINES", m.providersBody(pw-4), pw-4, midIn)
 	gaug := panel("ENGINE STATE", m.gaugesBody(gw-4), gw-4, midIn)
 	prb := panel(m.probesTitle(), m.probesBody(rw-4, midIn), rw-4, midIn)
 
@@ -807,8 +807,8 @@ func (m Model) providersBody(w int) string {
 		if !p.OK {
 			b.WriteString(styleBad.Render("  "+clip(shorten(core.SanitizeText(p.Err), w-3), w-3)) + "\n")
 		} else {
-			kvg := GaugeBar(p.KVPct, clampi(w-26, 4, 14), kvHeat)
-			stats := fmt.Sprintf("▲%s ▼%s r%d w%d",
+			kvg := "kv " + GaugeBar(p.KVPct, clampi(w-30, 4, 14), kvHeat)
+			stats := fmt.Sprintf("▲%s ▼%s run %d wait %d",
 				fmtRate(p.OutTokPS), fmtRate(p.InTokPS), p.Running, p.Waiting)
 			line2 := "  " + kvg + " " + styleDim.Render(stats)
 			b.WriteString(clip(line2, w) + "\n")
@@ -835,7 +835,7 @@ func (m Model) gaugesBody(w int) string {
 		if len(m.snap.Providers) == 0 {
 			return dim("waiting for telemetry…")
 		}
-		return dim("no healthy engines (see BACKENDS)")
+		return dim("no healthy engines (see ENGINES)")
 	}
 	return b.String()
 }
@@ -899,7 +899,7 @@ func (m Model) probesBody(w, h int) string {
 		model := styleDim.Render(shorten(core.SanitizeText(p.Model), w-18))
 		var line string
 		if !p.OK {
-			// Match the plain frame and BACKENDS: name the failure and keep
+			// Match the plain frame and ENGINES: name the failure and keep
 			// the reason. Printing 0.0/s in the same shape as a success
 			// hides why the probe did not land.
 			line = styleBad.Render("✗") + " " + model + " " + styleBad.Render("failed")
@@ -915,7 +915,7 @@ func (m Model) probesBody(w, h int) string {
 	}
 	if len(m.snap.Probes) == 0 {
 		out.WriteString(dim("press ") + styleInfo.Render("p") + dim(" to fire a probe") + "\n")
-		out.WriteString(dim("--probe N: auto mode"))
+		out.WriteString(dim("--probe N: quit and re-run"))
 	}
 	return out.String()
 }
@@ -923,19 +923,6 @@ func (m Model) probesBody(w, h int) string {
 func (m Model) renderFeed() string {
 	w := m.w - 4
 	_, _, feedIn := m.sectionHeights()
-	// A panel title is not clipped by the panel, and JoinVertical pads every
-	// other block out to the widest one, so an over-wide title here silently
-	// stretches the whole frame past the pane. Optional parts are therefore
-	// added only while they fit, most useful first.
-	title := "AGENT FEED"
-	add := func(part string) {
-		if lipgloss.Width(title)+lipgloss.Width(part) <= w {
-			title += part
-		}
-	}
-	if m.paused {
-		add("  " + styleWarn.Render("(paused)"))
-	}
 	rates := agentRates(m.snap.Agents, m.clock)
 	rows := agentRows(rates, m.clock)
 	statsN := 0
@@ -945,19 +932,6 @@ func (m Model) renderFeed() string {
 			statsN = feedIn - 1
 		}
 	}
-	if statsN == 0 {
-		if s := agentSummary(rates); s != "" {
-			add("  " + s)
-		}
-	} else if statsN < len(rows) {
-		add("  " + dim(fmt.Sprintf("+%d more", len(rows)-statsN)))
-	}
-	switch {
-	case m.feedDown != "":
-		add("  " + styleBad.Render("✗ ingest down"))
-	case m.cfg.IngestAddr != "":
-		add(dim("  ← POST http://" + m.cfg.IngestAddr + "/v1/events"))
-	}
 	var lines []string
 	if statsN > 0 {
 		lines = append(lines, rows[:statsN]...)
@@ -965,24 +939,57 @@ func (m Model) renderFeed() string {
 	rest := feedIn - len(lines)
 	lines = append(lines, feedLines(m.snap.Agents, rest, w)...)
 	if len(lines) == 0 {
-		switch {
-		case m.feedDown != "":
-			// The reason (listener failure, fd exhaustion) is otherwise only
-			// on stderr, invisible under the alternate screen.
-			reason := clip(shorten(core.SanitizeText("ingest stopped: "+m.feedDown), w), w)
-			lines = append(lines, styleBad.Render(reason))
-		case m.cfg.Agents:
-			lines = append(lines, dim("no agent activity yet: agents running locally are picked up automatically"))
-		case m.cfg.IngestAddr != "":
-			lines = append(lines, dim("no agent activity yet: point your harness at the endpoint above"))
-		default:
-			// Ingest off and agent watching off: without naming a knob this
-			// panel reads as a feature that silently never works.
-			lines = append(lines, dim("no agent activity yet: run with --agents to watch coding agents on this machine"))
-		}
+		lines = append(lines, m.feedEmptyLines(w)...)
 	}
 	content := strings.Join(lines, "\n")
-	return panel(title, content, w, feedIn)
+	return panel(m.feedTitle(w, statsN, len(rows), rates), content, w, feedIn)
+}
+
+// feedTitle is the AGENT FEED heading. A panel title is not clipped by the
+// panel, and JoinVertical pads every other block out to the widest one, so
+// an over-wide title here silently stretches the whole frame past the pane.
+// Optional parts are therefore added only while they fit, most useful first.
+func (m Model) feedTitle(w, statsN, nRows int, rates []agentRate) string {
+	title := "AGENT FEED"
+	add := func(part string) {
+		if lipgloss.Width(title)+lipgloss.Width(part) <= w {
+			title += part
+		}
+	}
+	if m.paused {
+		add("  " + styleWarn.Render("(paused)"))
+	}
+	if statsN == 0 {
+		if s := agentSummary(rates); s != "" {
+			add("  " + s)
+		}
+	} else if statsN < nRows {
+		add("  " + dim(fmt.Sprintf("+%d more", nRows-statsN)))
+	}
+	switch {
+	case m.feedDown != "":
+		add("  " + styleBad.Render("✗ ingest down"))
+	case m.cfg.IngestAddr != "":
+		add(dim("  ← POST http://" + m.cfg.IngestAddr + "/v1/events"))
+	}
+	return title
+}
+
+// feedEmptyLines is the empty AGENT FEED body: which knob fills this panel
+// is invisible from a bare "empty", and a dead ingest's reason is otherwise
+// only on stderr, hidden under the alternate screen.
+func (m Model) feedEmptyLines(w int) []string {
+	switch {
+	case m.feedDown != "":
+		reason := clip(shorten(core.SanitizeText("ingest stopped: "+m.feedDown), w), w)
+		return []string{styleBad.Render(reason)}
+	case m.cfg.Agents:
+		return []string{dim("no agent activity yet: agents running locally are picked up automatically")}
+	case m.cfg.IngestAddr != "":
+		return []string{dim("no agent activity yet: point your harness at the endpoint above")}
+	default:
+		return []string{dim("no agent activity yet: run with --agents to watch coding agents on this machine")}
+	}
 }
 
 var kindIcons = map[string]string{"turn": "▸", "tool": "⚙", "error": "✗", "note": "✎"}
@@ -1017,7 +1024,9 @@ func feedLine(ev core.AgentEvent) string {
 		st = styleWarn
 	}
 	name := shorten(core.SanitizeText(ev.Agent), 16)
-	tok := fmt.Sprintf("↑%s ↓%s", fmtCount(ev.PromptTokens), fmtCount(ev.OutputTokens))
+	// ▲ output / ▼ prompt, same directions as the header rates. Output
+	// first so a feed row scans like the header: out, then in.
+	tok := fmt.Sprintf("▲%s ▼%s", fmtCount(ev.OutputTokens), fmtCount(ev.PromptTokens))
 	if ev.ThinkingTokens > 0 {
 		tok += " think " + fmtCount(ev.ThinkingTokens)
 	}
@@ -1119,7 +1128,7 @@ func (m Model) renderHelp() string {
 		{"q / ctrl+c", "quit"},
 		{"esc", "close help / quit"},
 		{"space", "pause / resume streaming"},
-		{"p", "fire synthetic probe at every backend"},
+		{"p", "probe every engine with a real generation"},
 		{"t", "toggle compressed timescale + grid"},
 		{"? / h", "toggle this help"},
 		{"", ""},
@@ -1162,7 +1171,7 @@ func (m Model) renderMinimal() string {
 			if m.cfg.Agents {
 				b.WriteString(dim(clip("watching local agents…", m.w)) + "\n")
 			} else {
-				b.WriteString(dim(clip("try toktop --demo or --add URL", m.w)) + "\n")
+				b.WriteString(dim(clip("try toktop --demo --add URL --agents", m.w)) + "\n")
 			}
 		}
 		for _, r := range rates {
@@ -1176,7 +1185,7 @@ func (m Model) renderMinimal() string {
 		}
 		line := dot + " " + core.SanitizeText(p.Label) + " " + fmtRate(p.OutTokPS) + " tok/s"
 		if !p.OK {
-			// ✗ matches BACKENDS/probes so greyscale still reads, and "down"
+			// ✗ matches ENGINES/probes so greyscale still reads, and "down"
 			// plus the error keep the reason the full view shows.
 			line += " " + styleBad.Render("down")
 			if msg := strings.TrimSpace(core.SanitizeText(p.Err)); msg != "" {

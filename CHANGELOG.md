@@ -34,12 +34,22 @@ support channel (see SECURITY.md).
   that switches onto a watched engine still contributes tokens spent before.
 - Dashboard colors match toktop.ai (cool dark, green accent, amber pressure).
   The wordmark is a single accent color.
+- The engine list panel is titled ENGINES, matching the header, site, and
+  `--once --plain` report.
+- Per-agent token counts use ▲ for output and ▼ for prompt, the same
+  directions as the header rates.
 
 ### Fixed
 
 - Empty dashboard names how to quit and re-run, shows when it is paused, and
   does not suggest `--agents` when that watch is already on.
 - Failed probes show the error instead of a green zero rate.
+- Engine rows label the KV-cache bar and run/wait queues instead of a bare
+  bar and `r/w`.
+- Help describes `p` as a real generation, not a synthetic one; the empty
+  PROBES panel says `--probe N` needs a quit and re-run.
+- Agents-only AGENT FEED shows ingest-down and the POST target, matching
+  the full dashboard.
 - `--add` rejects non-http(s) URLs, values with no host, and URLs that embed
   userinfo (use `--bearer` / `$TOKTOP_BEARER`). `--ingest` rejects an empty
   or non-`host:port` listen address instead of binding every interface on an
