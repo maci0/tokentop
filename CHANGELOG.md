@@ -41,6 +41,8 @@ support channel (see SECURITY.md).
 - Crush session databases are summed once per attach; a continued session
   contributes only growth after attach.
 - Transcripts that grew under one mtime stamp are still read.
+- Probes hang up after the requested token budget if an engine keeps
+  streaming, and ignore engine-reported usage figures far past that budget.
 
 ## [0.5.0] - 2026-08-26
 

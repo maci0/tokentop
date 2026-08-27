@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/maci0/toktop/internal/core"
 )
@@ -238,5 +239,140 @@ func TestRunRequestsBoundedGeneration(t *testing.T) {
 	opts := gotOllama["options"].(map[string]any)
 	if n := opts["num_predict"]; n != float64(probeTokens) {
 		t.Errorf("ollama num_predict = %v, want %d", n, probeTokens)
+	}
+}
+
+// Engines that ignore max_tokens keep streaming; the client must hang up
+// after probeTokens content frames so a billed gateway cannot run until the
+// HTTP timeout.
+func TestRunOpenAIStopsAfterProbeTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := http.NewResponseController(w)
+		for i := 0; i < probeTokens*8; i++ {
+			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n")
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if !s.OK {
+		t.Fatalf("probe failed: %+v", s)
+	}
+	if s.Tokens != probeTokens {
+		t.Errorf("tokens = %d, want client cap %d", s.Tokens, probeTokens)
+	}
+}
+
+func TestRunOllamaStopsAfterProbeTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		f := http.NewResponseController(w)
+		for i := 0; i < probeTokens*8; i++ {
+			fmt.Fprintf(w, `{"response":"x","done":false}`+"\n")
+			f.Flush()
+		}
+		fmt.Fprintf(w, `{"response":"","done":true,"eval_count":999,"eval_duration":1000000}`+"\n")
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindOllama, Base: srv.URL, Model: "m"})
+	if !s.OK {
+		t.Fatalf("probe failed: %+v", s)
+	}
+	if s.Tokens != probeTokens {
+		t.Errorf("tokens = %d, want client cap %d", s.Tokens, probeTokens)
+	}
+}
+
+// A usage field far past the requested generation is engine junk, not a
+// measurement. Fall back to the content frames actually observed.
+func TestRunOpenAIRejectsUnboundedUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n" +
+			"data: {\"usage\":{\"completion_tokens\":1000000000}}\n\n" +
+			"data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if !s.OK || s.Tokens != 1 {
+		t.Fatalf("unbounded usage must not win, got %+v", s)
+	}
+}
+
+func TestRunOllamaRejectsUnboundedEvalCount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(
+			`{"response":"one","done":false}` + "\n" +
+				`{"response":"two","done":false}` + "\n" +
+				`{"response":"","done":true,"eval_count":1000000000,"eval_duration":1}` + "\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindOllama, Base: srv.URL, Model: "m"})
+	if !s.OK || s.Tokens != 2 {
+		t.Fatalf("unbounded eval_count must not win, got %+v", s)
+	}
+}
+
+// Usage on the last content chunk must replace the delta count, not add to it.
+func TestRunOpenAIUsageNotStackedOnContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"completion_tokens\":4}}\n\n" +
+			"data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if !s.OK || s.Tokens != 4 {
+		t.Fatalf("usage must replace delta count, got %+v", s)
+	}
+}
+
+// A mid-stream transport drop after the first token still yields a sample:
+// throwing it away would hide TTFT already measured.
+func TestRunOpenAIKeepsPartialOnReadError(t *testing.T) {
+	old := client.Timeout
+	client.Timeout = 200 * time.Millisecond
+	defer func() { client.Timeout = old }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := http.NewResponseController(w)
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+		f.Flush()
+		time.Sleep(time.Second)
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if !s.OK || s.Tokens < 1 {
+		t.Fatalf("partial stream should still sample, got %+v", s)
+	}
+}
+
+// Shutdown must not mint a success from a stream cancelled under us.
+func TestRunCanceledContextFails(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := http.NewResponseController(w)
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+		f.Flush()
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+	s := Run(ctx, Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if s.OK {
+		t.Fatalf("canceled probe should fail, got %+v", s)
 	}
 }

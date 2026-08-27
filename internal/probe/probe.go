@@ -21,8 +21,16 @@ var client = &http.Client{Timeout: 30 * time.Second}
 
 // probeTokens sizes a probe: a few dozen tokens are plenty to time
 // first-token latency and decode rate without turning a benchmark into an
-// unbounded generation.
+// unbounded generation. The request asks the engine to stop there; the
+// client also stops reading after this many content frames, because some
+// gateways ignore max_tokens/num_predict and would otherwise generate (and
+// bill) until the HTTP timeout.
 const probeTokens = 32
+
+// probeTokenTrust is the highest engine-reported eval_count /
+// completion_tokens we believe. Tokenizers can overshoot the request a
+// little; a billion-token usage field is junk that would poison tok/s.
+const probeTokenTrust = probeTokens * 4
 
 const promptText = "Count from one to twenty as words."
 
@@ -88,6 +96,7 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 	defer resp.Body.Close()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	var reported int
 	for sc.Scan() {
 		line := bytes.TrimSpace(sc.Bytes())
 		if len(line) == 0 {
@@ -116,20 +125,27 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 			if ttft == 0 {
 				ttft = time.Since(s.At)
 			}
+			if tokens >= probeTokens { // engine ignored num_predict: hang up
+				break
+			}
 			continue
 		}
 		if chunk.EvalCount > 0 {
-			tokens = chunk.EvalCount
+			reported = chunk.EvalCount
 			evalDur = time.Duration(chunk.EvalDuration) * time.Nanosecond
 		}
 	}
-	if err := sc.Err(); err != nil {
+	if err := streamReadErr(ctx, sc.Err(), tokens); err != nil {
 		return 0, 0, ttft, err
 	}
-	if tokens == 0 { // stream closed without a single token: engine is broken
+	n, trust := resolveTokens(tokens, reported)
+	if !trust {
+		evalDur = 0 // eval_duration is paired with the rejected count
+	}
+	if n == 0 { // stream closed without a single token: engine is broken
 		return 0, 0, ttft, fmt.Errorf("empty stream")
 	}
-	return tokens, evalDur, ttft, nil
+	return n, evalDur, ttft, nil
 }
 
 func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens int, ttft time.Duration, err error) {
@@ -150,6 +166,7 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 	defer resp.Body.Close()
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	var reported int
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if !strings.HasPrefix(line, "data:") {
@@ -180,7 +197,7 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 			return 0, ttft, fmt.Errorf("engine error: %s", msg)
 		}
 		if chunk.Usage != nil && chunk.Usage.CompletionTokens > 0 {
-			tokens = chunk.Usage.CompletionTokens
+			reported = chunk.Usage.CompletionTokens
 		}
 		for _, c := range chunk.Choices {
 			if c.Delta.Content != "" {
@@ -190,14 +207,51 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 				}
 			}
 		}
+		if tokens >= probeTokens { // engine ignored max_tokens: hang up
+			break
+		}
 	}
-	if err := sc.Err(); err != nil {
+	if err := streamReadErr(ctx, sc.Err(), tokens); err != nil {
 		return 0, ttft, err
 	}
-	if tokens == 0 {
+	n, _ := resolveTokens(tokens, reported)
+	if n == 0 {
 		return 0, ttft, fmt.Errorf("empty stream")
 	}
-	return tokens, ttft, nil
+	return n, ttft, nil
+}
+
+// resolveTokens picks a probe's token count. Engine-reported usage is
+// preferred when it sits in a plausible band around the requested
+// generation; anything outside is ignored in favour of content frames
+// actually observed. Observed counts are capped at probeTokens because
+// the client stops reading there.
+func resolveTokens(observed, reported int) (tokens int, trustReported bool) {
+	if reported > 0 && reported <= probeTokenTrust {
+		return reported, true
+	}
+	if observed > probeTokens {
+		return probeTokens, false
+	}
+	return observed, false
+}
+
+// streamReadErr maps a scanner/body error onto a probe outcome. A cancelled
+// caller's context is a real failure (shutdown must not mint a sample). A
+// mid-stream drop after at least one token still yields a timed sample:
+// hanging up is how we bound engines that ignore max_tokens, and a client
+// timeout would otherwise throw away TTFT already measured.
+func streamReadErr(ctx context.Context, err error, tokens int) error {
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return err
+	}
+	if tokens > 0 {
+		return nil
+	}
+	return err
 }
 
 // sseErrorMessage extracts an engine-reported failure from a streaming data
