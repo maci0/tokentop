@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -65,13 +66,30 @@ const usageQuery = `
 		COALESCE(SUM(json_extract(m.data, '$.tokens.input')), 0)
 	FROM message m
 	JOIN session s ON s.id = m.session_id
-	WHERE s.directory IN (%s) AND m.time_created > ?
+	WHERE %s AND m.time_created > ?
 	  AND json_extract(m.data, '$.role') = 'assistant'`
+
+// foldSessionDirectory compares session.directory case-insensitively and with
+// either path separator. Windows filesystems do that; an agent records
+// whichever spelling its runtime produced. Tests may flip it.
+var foldSessionDirectory = runtime.GOOS == "windows"
 
 // usageQueryFor builds the query for n directory spellings. Only the number of
 // placeholders varies: every value still travels as a bound parameter.
 func usageQueryFor(n int) string {
-	return fmt.Sprintf(usageQuery, strings.TrimSuffix(strings.Repeat("?,", n), ","))
+	return fmt.Sprintf(usageQuery, directoryPred(n))
+}
+
+func directoryPred(n int) string {
+	ph := strings.TrimSuffix(strings.Repeat("?,", n), ",")
+	pred := "s.directory IN (" + ph + ")"
+	if foldSessionDirectory {
+		// lower() is ASCII-only, which is enough for drive letters and the
+		// rest of a Windows path; char(92) is backslash so the source file
+		// stays portable when edited on Unix.
+		pred = "(" + pred + " OR lower(replace(s.directory, char(92), '/')) IN (" + ph + "))"
+	}
+	return pred
 }
 
 func (o openCodeDBSource) read(dirs []string, since time.Time) (values, bool) {
@@ -87,9 +105,14 @@ func (o openCodeDBSource) read(dirs []string, since time.Time) (values, bool) {
 	}
 	defer db.Close()
 
-	args := make([]any, 0, len(dirs)+1)
+	args := make([]any, 0, len(dirs)*2+1)
 	for _, d := range dirs {
 		args = append(args, d)
+	}
+	if foldSessionDirectory {
+		for _, d := range dirs {
+			args = append(args, strings.ToLower(filepath.ToSlash(d)))
+		}
 	}
 	args = append(args, since.UnixMilli())
 

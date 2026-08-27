@@ -262,7 +262,7 @@ func RegisterSpec(tool string, spec Spec) error {
 }
 
 func expandHome(p string) string {
-	if strings.HasPrefix(p, "~/") {
+	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
 		if dir, err := os.UserHomeDir(); err == nil {
 			return filepath.Join(dir, p[2:])
 		}

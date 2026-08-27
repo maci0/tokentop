@@ -67,10 +67,23 @@ var currentUser = func() string {
 	if u := os.Getenv("USER"); u != "" {
 		return u
 	}
+	if u := os.Getenv("USERNAME"); u != "" {
+		return u
+	}
 	if u, err := user.Current(); err == nil {
-		return u.Username
+		return basenameLogin(u.Username)
 	}
 	return ""
+}
+
+// basenameLogin strips a Windows DOMAIN\user or user/user prefix so the
+// default ssh username is the account name, not the qualified form
+// os/user.Current reports on domain-joined machines.
+func basenameLogin(name string) string {
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		return name[i+1:]
+	}
+	return name
 }
 
 // bannerTimeout bounds the wait for the remote sshd's version banner after

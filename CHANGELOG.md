@@ -22,6 +22,7 @@ support channel (see SECURITY.md).
   what Python `json.dumps` of a float emits.
 - `agentusage.MatchingEndpoints` attributes many agent processes to engines
   in one connection-table pass.
+- windows/arm64 release binaries, matching the other ARM64 targets.
 
 ### Changed
 
@@ -34,6 +35,11 @@ support channel (see SECURITY.md).
 
 ### Fixed
 
+- Agent session directories on Windows (and default APFS) match the
+  filesystem's case and separator rules, so transcripts are not dropped
+  when an agent recorded `C:/Users/Foo` and toktop resolved `c:\users\foo`.
+- `toktop ssh://host` on Windows uses `%USERNAME%` when `$USER` is unset, and
+  strips a `DOMAIN\` prefix from the account name.
 - Ingest type errors for `POST /v1/events` name the JSON field (for example
   `prompt_tokens must be an integer`) instead of the internal Go type.
 - `go install` binaries report the installed module version from `--version`

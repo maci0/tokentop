@@ -96,6 +96,7 @@ jobs:
           - { goos: darwin, goarch: amd64 }
           - { goos: darwin, goarch: arm64 }
           - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

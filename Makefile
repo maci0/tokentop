@@ -49,7 +49,7 @@ TAR_REPRO := --sort=name --mtime="@$(SOURCE_DATE_EPOCH)" --owner=0 --group=0 --n
 PLATFORMS := \
 	linux/amd64 linux/arm64 \
 	darwin/amd64 darwin/arm64 \
-	windows/amd64
+	windows/amd64 windows/arm64
 
 .DEFAULT_GOAL := help
 

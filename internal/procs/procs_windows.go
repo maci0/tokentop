@@ -27,8 +27,10 @@ type cimProc struct {
 func listWindows() ([]raw, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
 	defer cancel()
+	// PowerShell 5.1 otherwise writes redirected stdout in the OEM code
+	// page, which json.Unmarshal rejects for command lines that are not ASCII.
 	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command",
-		`Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine,WorkingSetSize | ConvertTo-Json -Compress`)
+		`$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Select-Object ProcessId,Name,CommandLine,WorkingSetSize | ConvertTo-Json -Compress`)
 	cmd.WaitDelay = listPipeGrace
 	out, err := cmd.Output()
 	if err != nil {

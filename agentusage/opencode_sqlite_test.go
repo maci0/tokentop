@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -129,6 +130,47 @@ func TestOpenCodeDBDropsAbsurdCounts(t *testing.T) {
 
 // A missing database is an ordinary state (no opencode on this machine), not
 // an error, and must never invent a number.
+func TestUsageQueryForPlaceholderCount(t *testing.T) {
+	orig := foldSessionDirectory
+	t.Cleanup(func() { foldSessionDirectory = orig })
+
+	foldSessionDirectory = false
+	if n := strings.Count(usageQueryFor(2), "?"); n != 3 {
+		t.Errorf("unfolded usageQueryFor(2) has %d placeholders, want 3 (2 dirs + time)", n)
+	}
+	foldSessionDirectory = true
+	if n := strings.Count(usageQueryFor(2), "?"); n != 5 {
+		t.Errorf("folded usageQueryFor(2) has %d placeholders, want 5 (2 dirs twice + time)", n)
+	}
+}
+
+func TestOpenCodeDBMatchesFoldedDirectorySpellings(t *testing.T) {
+	orig := foldSessionDirectory
+	foldSessionDirectory = true
+	t.Cleanup(func() { foldSessionDirectory = orig })
+
+	path := opencodeDB(t)
+	work := t.TempDir()
+	stored := strings.ToUpper(filepath.ToSlash(work))
+	if stored == work {
+		t.Skip("temp dir has no case or slash to fold")
+	}
+	addSession(t, path, "s-mine", stored)
+	start := time.Now()
+	addMessage(t, path, "m1", "s-mine", start.Add(time.Second),
+		`{"role":"assistant","tokens":{"output":42}}`)
+	withOpenCodeDB(t, path)
+
+	w := Watch("opencode", work, start)
+	if w == nil {
+		t.Fatal("the source is registered, so a watcher is expected")
+	}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 42 {
+		t.Fatalf("output tokens %d, want 42: folded directory spelling was not matched", got)
+	}
+}
+
 func TestOpenCodeDBWithoutAStoreReportsNothing(t *testing.T) {
 	withOpenCodeDB(t, filepath.Join(t.TempDir(), "absent.db"))
 	w := Watch("opencode", t.TempDir(), time.Now())

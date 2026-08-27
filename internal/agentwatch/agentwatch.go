@@ -316,6 +316,8 @@ func note(p agentusage.Process, thinking int, via string) string {
 // checkout without filling the row. A path under the operator's home is
 // rewritten with ~ first so a username sitting in those last two components
 // (home itself, or a project directly in it) never becomes the note.
+// Separators are folded to '/' so a Windows path is shortened the same way
+// as a Unix one.
 func shortDir(dir string) string {
 	if dir == "" {
 		return ""
@@ -351,6 +353,7 @@ func resolvePath(p string) string {
 }
 
 func lastTwoComponents(dir string) string {
+	dir = filepath.ToSlash(dir)
 	cut := 0
 	for i := len(dir) - 1; i >= 0; i-- {
 		if dir[i] == '/' || dir[i] == '\\' {

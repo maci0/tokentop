@@ -184,7 +184,7 @@ func expandTilde(p string) string {
 		home, _ := os.UserHomeDir()
 		return home
 	}
-	if strings.HasPrefix(p, "~/") {
+	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			return filepath.Join(home, p[2:])

@@ -87,12 +87,12 @@ CI (`.github/workflows/ci.yml`) runs gofmt -s, `go mod tidy -diff`, and
 `govulncheck ./...` on Linux only (all three are platform-independent),
 `staticcheck` and `go vet ./...` and `go test -race -shuffle=on ./...` on
 Linux, macOS and Windows, plus cross-compiles of linux/amd64, linux/arm64,
-darwin/amd64, darwin/arm64 and windows/amd64. Each cross-compile job also runs
-`go vet ./...` and staticcheck under its GOOS/GOARCH, so platform-specific
-files get the same static analysis as the host build. Both halves of the
-sqlite tag gate (`agentusage` with and without `-tags sqlite`) are vetted
-and staticchecked everywhere. Everything Go except the three-OS matrix is one
-command locally:
+darwin/amd64, darwin/arm64, windows/amd64 and windows/arm64. Each
+cross-compile job also runs `go vet ./...` and staticcheck under its
+GOOS/GOARCH, so platform-specific files get the same static analysis as
+the host build. Both halves of the sqlite tag gate (`agentusage` with and
+without `-tags sqlite`) are vetted and staticchecked everywhere. Everything
+Go except the three-OS matrix is one command locally:
 
 ```
 make ci

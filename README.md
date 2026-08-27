@@ -354,9 +354,10 @@ and what CI runs, and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for the
 attack surface, what toktop trusts, and the mitigations already in place.
 
 Releases: push a tag `v*` and GitHub Actions attaches binaries for
-linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, plus a
-CycloneDX SBOM of every dependency (`make sbom`). Versions are 0.x: the CLI,
-the ingest `/v1/events` body, and the `agentusage` Go API may change without a
-major bump. Consumer-facing notes live in [CHANGELOG.md](CHANGELOG.md). CI
+linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64 and
+windows/arm64, plus a CycloneDX SBOM of every dependency (`make sbom`).
+Versions are 0.x: the CLI, the ingest `/v1/events` body, and the
+`agentusage` Go API may change without a major bump. Consumer-facing notes
+live in [CHANGELOG.md](CHANGELOG.md). CI
 runs `govulncheck` on every push; Dependabot keeps go modules and workflow
 actions current.

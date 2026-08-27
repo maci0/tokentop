@@ -96,6 +96,25 @@ Host *
 	}
 }
 
+func TestExpandTildeAcceptsBothSeparators(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if got := expandTilde("~"); got != home {
+		t.Errorf("expandTilde(~) = %q, want %q", got, home)
+	}
+	want := filepath.Join(home, "rel")
+	if got := expandTilde("~/rel"); got != want {
+		t.Errorf("expandTilde(~/rel) = %q, want %q", got, want)
+	}
+	if got := expandTilde(`~\rel`); got != want {
+		t.Errorf(`expandTilde(~\rel) = %q, want %q`, got, want)
+	}
+	if got := expandTilde("/abs/key"); got != "/abs/key" {
+		t.Errorf("expandTilde(absolute) = %q, want unchanged", got)
+	}
+}
+
 func TestCutConfigField(t *testing.T) {
 	cases := []struct {
 		line, key, val string

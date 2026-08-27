@@ -36,6 +36,9 @@ func TestSameSpellingAcrossNormalizationForms(t *testing.T) {
 	if !sameSpelling("caf\u00e9", "cafe\u0301") {
 		t.Error("NFC and NFD spellings of one name must match on darwin")
 	}
+	if !sameSpelling("/Users/Foo/proj", "/Users/foo/proj") {
+		t.Error("case-insensitive APFS default: case must fold")
+	}
 	if sameSpelling("/home/café", "/home/other") {
 		t.Error("different names must not match")
 	}

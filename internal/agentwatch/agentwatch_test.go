@@ -182,6 +182,10 @@ func TestShortDirKeepsTheIdentifyingPart(t *testing.T) {
 		"/":                     "/",
 		`C:\Users\dev\src\app`:  `src\app`,
 	}
+	if runtime.GOOS == "windows" {
+		cases[`C:\Users\dev\src\project`] = "src/project"
+		cases[`C:/Users/dev/project`] = "dev/project"
+	}
 	for in, want := range cases {
 		if got := shortDir(in); got != want {
 			t.Errorf("shortDir(%q) = %q, want %q", in, got, want)

@@ -226,6 +226,32 @@ func (s *testSSHServer) serveDirect(nch ssh.NewChannel) {
 	}()
 }
 
+func TestCurrentUserPrefersUSERThenUSERNAME(t *testing.T) {
+	t.Setenv("USER", "from-user")
+	t.Setenv("USERNAME", "from-username")
+	if got := currentUser(); got != "from-user" {
+		t.Errorf("currentUser = %q, want from-user", got)
+	}
+	t.Setenv("USER", "")
+	if got := currentUser(); got != "from-username" {
+		t.Errorf("currentUser = %q, want from-username", got)
+	}
+}
+
+func TestBasenameLoginStripsWindowsDomain(t *testing.T) {
+	cases := map[string]string{
+		"alice":           "alice",
+		`CORP\alice`:      "alice",
+		"CORP/alice":      "alice",
+		`CORP\unit\alice`: "alice",
+	}
+	for in, want := range cases {
+		if got := basenameLogin(in); got != want {
+			t.Errorf("basenameLogin(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func testTarget(t *testing.T, port int) Target {
 	t.Helper()
 	t.Setenv("USER", "tester") // currentUser() reads it; scoped to this test

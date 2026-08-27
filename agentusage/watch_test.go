@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -343,6 +344,46 @@ func TestRegisterSpecValidates(t *testing.T) {
 	}
 	if err := RegisterSpec("x", Spec{}); err == nil {
 		t.Error("a spec with no roots should be rejected")
+	}
+}
+
+func TestClaudeUsageMatchesFoldedDirectorySpelling(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+		t.Skip("directory folding is a Windows/macOS filesystem rule")
+	}
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	w := Watch("claude", work, time.Now())
+	if w == nil {
+		t.Fatal("claude should be supported")
+	}
+	alt := strings.ToUpper(w.Dir())
+	if alt == w.Dir() {
+		t.Skip("temp dir has no case to fold")
+	}
+	path := filepath.Join(store, "session.jsonl")
+	append_(t, path, claudeLine(alt, 40))
+	w.poll(nil)
+	if got := w.Sample().Output; got != 40 {
+		t.Fatalf("output tokens %d, want 40: folded cwd %q was not attributed to %q", got, alt, w.Dir())
+	}
+}
+
+func TestExpandHomeAcceptsBothSeparators(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	got := expandHome("~/rel")
+	want := filepath.Join(home, "rel")
+	if got != want {
+		t.Errorf("expandHome(~/rel) = %q, want %q", got, want)
+	}
+	got = expandHome(`~\rel`)
+	if got != want {
+		t.Errorf(`expandHome(~\rel) = %q, want %q`, got, want)
+	}
+	if got := expandHome("rel"); got != "rel" {
+		t.Errorf("expandHome(rel) = %q, want unchanged", got)
 	}
 }
 
