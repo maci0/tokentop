@@ -163,7 +163,7 @@ Deployment surface:
   (.github/workflows/ci.yml, actions pinned by SHA, bun from `.bun-version`,
   uv 0.12.6, Python tools from `scripts/requirements-dev.txt`); Dependabot updates
   modules, actions, and `scripts/` pip deps (.github/dependabot.yml); tag
-  pushes build release binaries for five platforms plus a CycloneDX SBOM
+  pushes build release binaries for six platforms plus a CycloneDX SBOM
   (.github/workflows/release.yml, Makefile `release`/`sbom`). Release
   artifacts ship SHA-256 checksums only; no signature step exists.
 - The marketing site is a single Cloudflare Worker serving one static page

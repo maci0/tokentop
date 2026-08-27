@@ -22,7 +22,7 @@ go install -tags sqlite github.com/maci0/toktop/cmd/toktop@latest
 
 `-tags sqlite` matches the GitHub binaries and `make build`: crush and
 opencode session databases cannot be read without it. Or download a binary
-for linux/macos (amd64 + arm64) and windows/amd64 from the
+for linux, macOS, and Windows (amd64 + arm64) from the
 [releases](https://github.com/maci0/toktop/releases). An installed binary
 updates itself in place:
 

@@ -14,8 +14,13 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      LC_ALL: C
+      TZ: UTC
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -37,6 +42,13 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
+          # Tag names reach ldflags and dist filenames; refuse anything that
+          # is not a safe identifier so a v* glob cannot inject the recipe.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[A-Za-z0-9._+-]+$'; then
+            echo "refusing to release from tag '$GITHUB_REF_NAME'" >&2
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           # Platform list, checksum generation and deterministic archive
           # metadata live in the Makefile so local and CI releases cannot
           # drift apart.
@@ -62,7 +74,7 @@ jobs:
           fi
 
       - name: generate dependency sbom
-        run: make sbom VERSION="${GITHUB_REF_NAME#v}"
+        run: make sbom VERSION="$VERSION"
 
       - name: publish github release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2

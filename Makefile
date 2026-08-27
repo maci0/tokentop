@@ -2,6 +2,9 @@ BINARY  := toktop
 CMD     := ./cmd/toktop
 DIST    := dist
 VERSION ?= dev
+# VERSION is interpolated into -ldflags and dist filenames. Refuse values
+# that would break the shell, the linker flag, or the artifact name.
+CHECK_VERSION = printf '%s' '$(VERSION)' | grep -qE '^[A-Za-z0-9._+-]+$$' || { echo "make: VERSION must match [A-Za-z0-9._+-]+ (got '$(VERSION)')" >&2; exit 1; }
 
 GO          ?= go
 # go.mod's go line is the compiler pin. GOTOOLCHAIN=auto would keep a newer
@@ -63,6 +66,7 @@ help: ## show available targets
 # two developer machines produce different binaries from identical source.
 .PHONY: build
 build: ## build the toktop binary for this host
+	@$(CHECK_VERSION)
 	CGO_ENABLED=0 $(GO) build $(GOTAGS) $(GO_BUILDFLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
 
 .PHONY: run
@@ -103,7 +107,7 @@ test-pkg: ## one package/test: PKG=./internal/ui [RUN=TestName] [TESTTAGS=sqlite
 		exit 1; \
 	fi
 	@$(NEED_CC)
-	CGO_ENABLED=1 $(GO) test -mod=readonly $(if $(TESTTAGS),-tags $(TESTTAGS) )-race -shuffle=on $(if $(RUN),-run $(RUN) )$(PKG)
+	CGO_ENABLED=1 $(GO) test -mod=readonly $(if $(TESTTAGS),-tags $(TESTTAGS) )-race -shuffle=on $(if $(RUN),-run "$(RUN)" )"$(PKG)"
 
 .PHONY: cover
 cover: ## test coverage summary per package into dist/
@@ -114,6 +118,7 @@ cover: ## test coverage summary per package into dist/
 
 .PHONY: sbom
 sbom: ## generate CycloneDX SBOM of all dependencies into dist/
+	@$(CHECK_VERSION)
 	mkdir -p $(DIST)
 	$(GO) run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0 \
 		mod -licenses -std -json -output $(DIST)/toktop-sbom-$(VERSION).cdx.json .
@@ -223,6 +228,7 @@ checksums: test-dist ## checksum the dist/ binaries into a byte-reproducible tar
 # otherwise ride the toktop_* glob into checksums.txt and the release.
 .PHONY: test-dist
 test-dist: ## build every release platform without packaging
+	@$(CHECK_VERSION)
 	@mkdir -p $(DIST)
 	@rm -f $(DIST)/$(BINARY)_*
 	@for target in $(PLATFORMS); do \
