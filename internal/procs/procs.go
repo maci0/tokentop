@@ -158,16 +158,6 @@ func ExtractPort(args []string) int {
 // isPort reports whether p is a number a process can listen on.
 func isPort(p int) bool { return p >= 1 && p <= 65535 }
 
-// keepProcess reports whether a process is relevant to engine discovery or
-// accounting: a known engine, or any process that names a listen port.
-func keepProcess(name string, args []string) bool {
-	if ExtractPort(args) != 0 {
-		return true
-	}
-	_, _, ok := MatchEngine(Info{Name: name, Args: args})
-	return ok
-}
-
 // ListenPort returns the process's effective listen port: an explicit --port
 // flag on the command line when present, else the matched engine's default.
 // Zero when neither applies (DefPort is only set for engine matches).

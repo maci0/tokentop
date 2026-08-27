@@ -173,7 +173,7 @@ func (w *Watcher) discover(ctx context.Context) {
 		}
 	}
 	w.mu.Unlock()
-	sortTracked(gone)
+	sortTracked(exited)
 	slices.SortFunc(newProcs, func(a, b agentusage.Process) int {
 		return cmp.Compare(a.PID, b.PID)
 	})
