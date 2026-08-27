@@ -53,11 +53,28 @@ func New(addr string, rec Recorder) (*Server, error) {
 		fmt.Fprint(w, "ok")
 	})
 	s.srv = http.Server{
-		Handler:           mux,
+		Handler:           withSecurityHeaders(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       idleTimeout,
 	}
 	return s, nil
+}
+
+// withSecurityHeaders sets browser-facing controls on every ingest
+// response. The endpoint is HTTP (loopback by default, optionally a
+// routable bind); HSTS is omitted because it would pin HTTPS on a
+// cleartext listener. nosniff/frame/CSP stop a fetched JSON body from
+// being sniffed as HTML or framed when --ingest is exposed.
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		h.Set("Cache-Control", "no-store")
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Addr returns the actual bound address (useful when starting on :0).

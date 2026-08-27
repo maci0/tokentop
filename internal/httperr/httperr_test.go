@@ -68,3 +68,13 @@ func TestStatusCarriesStatusLineAndBodySnippet(t *testing.T) {
 		t.Errorf("empty body produced dangling separator: %q", msg)
 	}
 }
+
+func TestSnippetStripsTerminalInjection(t *testing.T) {
+	got := Snippet([]byte("ok\x1b]52;c;QUJD\x07tail"))
+	if strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, 0x07) {
+		t.Errorf("snippet retained escape bytes: %q", got)
+	}
+	if !strings.Contains(got, "ok") || !strings.Contains(got, "tail") {
+		t.Errorf("snippet lost visible text: %q", got)
+	}
+}

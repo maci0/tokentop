@@ -231,6 +231,8 @@ func TestRunUpdateUsageErrors(t *testing.T) {
 		{name: "unknown flag", args: []string{"--bogus"}, wantSub: "flag provided but not defined"},
 		{name: "unexpected argument", args: []string{"extra"}, wantSub: "unexpected argument"},
 		{name: "unexpected argument points at help", args: []string{"extra"}, wantSub: "toktop update --help"},
+		{name: "repo path traversal", args: []string{"--repo", "maci0/toktop/../../../users/octocat"}, wantSub: "owner/name"},
+		{name: "repo query string", args: []string{"--repo", "maci0/toktop?evil=1"}, wantSub: "owner/name"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

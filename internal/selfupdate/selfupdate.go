@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,6 +39,12 @@ const DefaultRepo = "maci0/toktop"
 // maxAssetBytes bounds a download. A release binary that large is a mistake or
 // an attack, and either way should not fill the disk.
 const maxAssetBytes = 256 << 20
+
+// maxChecksumsDecoded bounds decompressed checksums-archive bytes. The
+// compressed fetch is already 1 MiB; without a decoded cap a gzip bomb
+// inside that envelope would expand while the tar walker skipped non-
+// matching members.
+const maxChecksumsDecoded = 2 << 20
 
 // Release is the subset of a GitHub release that matters here.
 type Release struct {
@@ -68,7 +75,90 @@ func checksumsName(version string) string {
 	return fmt.Sprintf("toktop_%s_checksums.tar.gz", version)
 }
 
-var client = &http.Client{Timeout: 5 * time.Minute}
+var client = &http.Client{
+	Timeout:       5 * time.Minute,
+	CheckRedirect: githubRedirect,
+}
+
+// trustedAssetURL reports whether a release asset URL is a GitHub download.
+// Tests that serve fixtures from httptest swap this.
+var trustedAssetURL = githubAssetURL
+
+// ValidateRepo reports whether repo is a GitHub owner/name, the only shape
+// interpolated into the releases API path. Anything else is path traversal,
+// a query string, or log injection into the error that names the URL.
+func ValidateRepo(repo string) error {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return fmt.Errorf("repo %q must be owner/name", repo)
+	}
+	if !githubOwner(owner) || !githubRepoName(name) {
+		return fmt.Errorf("repo %q is not a GitHub owner/name", repo)
+	}
+	return nil
+}
+
+func githubOwner(s string) bool {
+	if len(s) < 1 || len(s) > 39 || !alnum(s[0]) {
+		return false
+	}
+	if len(s) == 1 {
+		return true
+	}
+	for i := 1; i < len(s)-1; i++ {
+		if !alnum(s[i]) && s[i] != '-' {
+			return false
+		}
+	}
+	return alnum(s[len(s)-1])
+}
+
+func githubRepoName(s string) bool {
+	if s == "" || s == "." || s == ".." || len(s) > 100 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if alnum(c) || c == '.' || c == '_' || c == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func alnum(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+func githubDownloadHost(host string) bool {
+	h := strings.ToLower(host)
+	if h == "github.com" || h == "api.github.com" {
+		return true
+	}
+	return strings.HasSuffix(h, ".githubusercontent.com")
+}
+
+func githubAssetURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return false
+	}
+	return githubDownloadHost(u.Hostname())
+}
+
+// githubRedirect refuses hops off GitHub's download hosts, including
+// http downgrades and SSRF via a hostile browser_download_url. Replaces
+// the client's default policy, so it also caps the hop count.
+func githubRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != "https" || !githubDownloadHost(req.URL.Hostname()) {
+		return fmt.Errorf("refusing redirect to %s", req.URL.Redacted())
+	}
+	return nil
+}
 
 // Check queries the latest release. It is never called on the startup path:
 // a version check must not stand between the user and the first review.
@@ -76,8 +166,15 @@ func Check(ctx context.Context, repo string) (*Release, error) {
 	if repo == "" {
 		repo = DefaultRepo
 	}
-	url := "https://api.github.com/repos/" + repo + "/releases/latest"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err := ValidateRepo(repo); err != nil {
+		return nil, err
+	}
+	owner, name, _ := strings.Cut(repo, "/")
+	latest, err := url.JoinPath("https://api.github.com/repos", owner, name, "releases", "latest")
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, latest, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +188,7 @@ func Check(ctx context.Context, repo string) (*Release, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github returned %s for %s", resp.Status, url)
+		return nil, fmt.Errorf("github returned %s for %s", resp.Status, latest)
 	}
 	var rel Release
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&rel); err != nil {
@@ -148,6 +245,9 @@ func applyTo(ctx context.Context, rel *Release, self string) (string, error) {
 	}
 	if sumsURL == "" {
 		return "", fmt.Errorf("release %s has no %s; refusing to install unverified binary", rel.TagName, sumsFile)
+	}
+	if !trustedAssetURL(assetURL) || !trustedAssetURL(sumsURL) {
+		return "", fmt.Errorf("release %s asset URL is not a GitHub download", rel.TagName)
 	}
 
 	archive, err := fetch(ctx, sumsURL, 1<<20)
@@ -284,7 +384,7 @@ func ChecksumListing(archive []byte) (string, error) {
 		return "", err
 	}
 	defer gz.Close()
-	tr := tar.NewReader(gz)
+	tr := tar.NewReader(io.LimitReader(gz, maxChecksumsDecoded))
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {

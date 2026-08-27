@@ -450,6 +450,42 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestIngestSecurityHeaders(t *testing.T) {
+	s := startIngest(t, &memRecorder{})
+	want := map[string]string{
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":         "DENY",
+		"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+		"Cache-Control":           "no-store",
+		"Referrer-Policy":         "no-referrer",
+	}
+	for _, path := range []string{"/healthz", "/v1/events"} {
+		resp, err := http.Get("http://" + s.Addr() + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		for k, v := range want {
+			if got := resp.Header.Get(k); got != v {
+				t.Errorf("GET %s %s = %q, want %q", path, k, got, v)
+			}
+		}
+	}
+	resp, err := http.Post("http://"+s.Addr()+"/v1/events", "application/json",
+		strings.NewReader(`{"agent":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	for k, v := range want {
+		if got := resp.Header.Get(k); got != v {
+			t.Errorf("POST /v1/events %s = %q, want %q", k, got, v)
+		}
+	}
+}
+
 func TestIngestClampsOversizedFields(t *testing.T) {
 	rec := &memRecorder{}
 	s := startIngest(t, rec)
@@ -539,6 +575,21 @@ func TestIdleKeepAliveConnsReaped(t *testing.T) {
 
 // kind is attacker-shaped text like every other event field: escape
 // sequences must be stripped before the value enters the retained feed.
+func TestIngestStripsBidiFromAgent(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"clau\u200bde\u202e"}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 1)
+	if rec.evs[0].Agent != "claude" {
+		t.Errorf("agent = %q, want claude with bidi/zwsp stripped", rec.evs[0].Agent)
+	}
+}
+
 func TestIngestSanitizesCustomKind(t *testing.T) {
 	rec := &memRecorder{}
 	s := startIngest(t, rec)

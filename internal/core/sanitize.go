@@ -8,14 +8,16 @@ package core
 
 import (
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
 // SanitizeText strips ANSI/ECMA-48 escape sequences (CSI, OSC, DCS, SOS, PM,
 // APC and two-byte forms) plus C0 and C1 control characters from s. Newlines
-// and tabs survive so layout text is unaffected. Other multi-byte runes are
-// preserved: only control characters and well-formed escape sequences are
-// removed.
+// and tabs survive so layout text is unaffected. Bidi overrides, isolates,
+// and zero-width format characters that spoof identity-bearing fields
+// (agent names, host labels) are removed too. ZWJ (U+200D) stays so emoji
+// sequences remain whole. Other multi-byte runes are preserved.
 func SanitizeText(s string) string {
 	if !needsSanitize(s) {
 		return s
@@ -37,8 +39,7 @@ func SanitizeText(s string) string {
 			i++
 		default:
 			r, size := utf8.DecodeRuneInString(s[i:])
-			if r >= 0x80 && r <= 0x9f {
-				// C1 control (e.g. U+009B, the 8-bit CSI): unsafe to render
+			if unsafeRune(r) {
 				i += size
 				continue
 			}
@@ -49,17 +50,39 @@ func SanitizeText(s string) string {
 	return b.String()
 }
 
+// unsafeRune reports a code point that must not reach a terminal or an
+// identity field: C1 controls, bidi overrides/isolates, and the zero-width
+// format characters used to spoof or hide names. U+200D (ZWJ) is kept so
+// 👩‍💻-style emoji survive as one cluster.
+func unsafeRune(r rune) bool {
+	if r >= 0x80 && r <= 0x9f {
+		return true
+	}
+	if unicode.Is(unicode.Bidi_Control, r) {
+		return true
+	}
+	switch r {
+	case 0x00AD, // soft hyphen
+		0x034F,                         // combining grapheme joiner
+		0x180E,                         // mongolian vowel separator
+		0x200B,                         // zero-width space
+		0x200C,                         // zero-width non-joiner
+		0x2060,                         // word joiner
+		0x2061, 0x2062, 0x2063, 0x2064, // invisible math operators
+		0xFEFF: // BOM / ZWNBSP
+		return true
+	}
+	return false
+}
+
 // needsSanitize reports whether s contains any byte that SanitizeText would
-// remove. Such bytes are the ASCII controls below 0x20 (including ESC), DEL,
-// or lead bytes 0xC2-0xC3, which may encode a C1 control; other multi-byte
-// UTF-8 takes the slow path.
+// remove. ASCII controls (except newline/tab) and DEL are one class; any
+// non-ASCII byte takes the slow path because bidi and zero-width marks are
+// 2- and 3-byte UTF-8 that the previous C2-C3-only check missed.
 func needsSanitize(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if (c < 0x20 && c != '\n' && c != '\t') || c == 0x7f {
-			return true
-		}
-		if c >= 0xc2 && c <= 0xc3 { // possible UTF-8 encoding of a C1 control
+		if (c < 0x20 && c != '\n' && c != '\t') || c == 0x7f || c >= 0x80 {
 			return true
 		}
 	}

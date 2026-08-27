@@ -34,5 +34,6 @@ func Status(url string, resp *http.Response) error {
 // accented letter from an engine's body is never sliced in half.
 func Snippet(b []byte) string {
 	s := strings.Join(strings.Fields(string(b)), " ")
+	s = core.SanitizeText(s)
 	return core.TruncateClusters(s, SnippetCap)
 }

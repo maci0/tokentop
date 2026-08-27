@@ -119,19 +119,25 @@ test("HEAD with Accept-Encoding matches GET's coding and length, with no body", 
   expect((await head.arrayBuffer()).byteLength).toBe(0);
 });
 
-test("non-GET methods and /health keep their contract", async () => {
-  expect((await call({}, { method: "POST" })).status).toBe(405);
-  const health = await call({}, { path: "/health" });
-  expect(health.status).toBe(200);
-  expect(health.headers.get("cache-control")).toBe("no-store");
-});
-
 const SECURITY_HEADER_NAMES = [
   "content-security-policy",
   "x-content-type-options",
   "strict-transport-security",
   "referrer-policy",
 ];
+
+test("non-GET methods and /health keep their contract", async () => {
+  const denied = await call({}, { method: "POST" });
+  expect(denied.status).toBe(405);
+  const health = await call({}, { path: "/health" });
+  expect(health.status).toBe(200);
+  expect(health.headers.get("cache-control")).toBe("no-store");
+  for (const res of [denied, health]) {
+    for (const name of SECURITY_HEADER_NAMES) {
+      expect(res.headers.get(name)).not.toBeNull();
+    }
+  }
+});
 
 test("every page answer carries the security headers, not only revalidations", async () => {
   const fresh = await call();

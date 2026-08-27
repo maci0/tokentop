@@ -43,10 +43,19 @@ func checksumsArchive(t *testing.T, listing string) []byte {
 	return buf.Bytes()
 }
 
+// allowTestAssetURLs lets applyTo fetch fixtures from httptest.Server.
+func allowTestAssetURLs(t *testing.T) {
+	t.Helper()
+	orig := trustedAssetURL
+	trustedAssetURL = func(string) bool { return true }
+	t.Cleanup(func() { trustedAssetURL = orig })
+}
+
 // releaseServer serves one asset and the checksums archive, optionally lying
 // about the hash.
 func releaseServer(t *testing.T, payload []byte, sum string) (*httptest.Server, *Release) {
 	t.Helper()
+	allowTestAssetURLs(t)
 	name := AssetName("9.9.9")
 	sums := checksumsArchive(t, sum+"  "+name+"\n")
 	mux := http.NewServeMux()
@@ -153,6 +162,7 @@ func TestApplyTwiceLeavesTargetUnchanged(t *testing.T) {
 	sum := sha256.Sum256(payload)
 	name := AssetName("9.9.9")
 	sums := checksumsArchive(t, hex.EncodeToString(sum[:])+"  "+name+"\n")
+	allowTestAssetURLs(t)
 	var assets atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/asset", func(w http.ResponseWriter, r *http.Request) {

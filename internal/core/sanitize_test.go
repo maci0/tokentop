@@ -75,3 +75,20 @@ func TestSanitizeTextNewlineTabSurvive(t *testing.T) {
 		t.Errorf("newline/tab handling changed: %q", got)
 	}
 }
+
+func TestSanitizeTextStripsBidiAndZeroWidth(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"RLO spoofs claude", "\u202eedualc", "edualc"},
+		{"LRM/RLM marks", "cla\u200eude\u200f", "claude"},
+		{"isolate wrap", "\u2066claude\u2069", "claude"},
+		{"zero-width space in name", "clau\u200bde", "claude"},
+		{"BOM prefix", "\ufeffclaude", "claude"},
+		{"soft hyphen", "cla\u00adude", "claude"},
+		{"ZWJ emoji stays one sequence", "👩\u200d💻", "👩\u200d💻"},
+	}
+	for _, tc := range cases {
+		if got := SanitizeText(tc.in); got != tc.want {
+			t.Errorf("%s: SanitizeText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}

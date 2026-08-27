@@ -302,13 +302,20 @@ export default {
   async fetch(request) {
     const url = new URL(request.url);
     if (request.method !== "GET" && request.method !== "HEAD") {
-      return new Response("method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
+      return new Response("method not allowed", {
+        status: 405,
+        headers: { allow: "GET, HEAD", ...SECURITY_HEADERS },
+      });
     }
     if (url.pathname === "/health") {
       // Uptime probes hit this continuously; caching it would only blur
       // what the last probe actually saw.
       return new Response("ok\n", {
-        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "no-store",
+          ...SECURITY_HEADERS,
+        },
       });
     }
     // One page: anything else is that page too, rather than a 404 nobody

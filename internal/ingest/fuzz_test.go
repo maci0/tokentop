@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -33,6 +34,7 @@ func FuzzHandlePost(f *testing.F) {
 		[]byte("\n\n"),
 		[]byte(`{"kind":"\u001b]0;pwned\u0007weird"}`),
 		[]byte(`{"agent":"esc\u001b[2Jclear","model":"\u009bhidden"}`),
+		[]byte(`{"agent":"clau\u200bde\u202eedualc"}`),
 		[]byte(`{"agent":"` + strings.Repeat("a", 300) + `"}`),
 		[]byte(`{"agent":"` + strings.Repeat("é", 300) + `"}`),
 		[]byte(`{"prompt_tokens":-500,"output_tokens":-99999999999}`),
@@ -119,6 +121,9 @@ func assertRenderSafe(t *testing.T, i int, field, s string) {
 	for _, r := range s {
 		if r >= 0x80 && r <= 0x9f {
 			t.Fatalf("event %d: %s retains C1 control %U: %q", i, field, r, s)
+		}
+		if unicode.Is(unicode.Bidi_Control, r) || r == '\u200b' || r == '\ufeff' || r == '\u00ad' {
+			t.Fatalf("event %d: %s retains format/bidi %U: %q", i, field, r, s)
 		}
 	}
 }

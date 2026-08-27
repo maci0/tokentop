@@ -63,7 +63,16 @@ func runUpdate(ctx context.Context, out io.Writer, args []string) int {
 		return 2
 	}
 
-	rel, err := selfupdate.Check(ctx, *repo)
+	repoName := *repo
+	if repoName == "" {
+		repoName = selfupdate.DefaultRepo
+	}
+	if err := selfupdate.ValidateRepo(repoName); err != nil {
+		fmt.Fprintf(os.Stderr, "toktop update: %v\n", err)
+		return 2
+	}
+
+	rel, err := selfupdate.Check(ctx, repoName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "toktop: cannot check for updates: %v\n", err)
 		return 1
