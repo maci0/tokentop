@@ -134,7 +134,10 @@ func TestPlainFrameAgentsOnly(t *testing.T) {
 		},
 	}
 	out := PlainTextFrame(Config{Version: "t"}, snap)
-	for _, want := range []string{"AGENTS", "codex", "live", "AGENT FEED", "--add URL attaches one"} {
+	for _, want := range []string{
+		"AGENTS", "codex", "live", "AGENT FEED", "--add URL attaches one",
+		"out ", "tok/s", "output ", "prompt ",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("agents-only plain frame missing %q in:\n%s", want, out)
 		}

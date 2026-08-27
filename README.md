@@ -39,13 +39,20 @@ engines:
 
 ```
 AGENTS  local, read from their own session logs
-  claude   ▲ 1.1k tok/s   2.4k tok   ● live
-  codex    ▲ 340 tok/s    18k tok    idle 12s
+  claude   ▲ 1.1k tok/s   ↓2.4k ↑8.1k   ● live
+  codex    ▲ 340 tok/s    ↓18k ↑40k     via 127.0.0.1:11434  ● live
 ```
 
 `--agents` turns this on. It is off by default because it means scanning this
 machine's processes and reading session files nobody pointed toktop at:
 watching engines you configured does not imply consent to that.
+
+With no engines attached, agents mode is the full dashboard: header rates,
+throughput charts and the host strip, all driven from the session logs.
+Prompt, output and (when the agent reports it) reasoning tokens are shown
+per agent. An agent generating through an engine toktop is already measuring
+still appears in the list, labelled `via <engine>`, but those tokens are not
+added on top of the engine's own numbers.
 
 Once asked for, nothing else has to be configured and the agent does not have
 to cooperate: claude, codex, qwen, copilot, pi, prime-agent, feynman, clanker,
@@ -85,13 +92,18 @@ Set `GAUNTLET_HOME` to read that file from somewhere else.
   discovered by process/port but identified as generic OpenAI).
 - **Throughput charts** - aggregate decode + prompt tokens/sec as heat-colored
   area charts; engine-published tok/s gauges are trusted when present.
+  Agents with no local engine (or whose engine is not monitored) add their
+  own rates; tokens already counted by a watched engine are not added again.
 - **Probes** (`p`, `--probe N`) - tiny streaming generations measuring real
   TTFT and decode speed per backend.
 - **Agent feed** - any harness can POST usage events:
   ```
   curl -X POST localhost:8420/v1/events -d \
-    '{"agent":"coder","kind":"tool","prompt_tokens":4200,"output_tokens":310,"note":"shell(git status)"}'
+    '{"agent":"coder","kind":"tool","prompt_tokens":4200,"output_tokens":310,"thinking_tokens":40,"note":"shell(git status)"}'
   ```
+  `--agents` also fills this from local session logs. Per-agent rows show
+  output, prompt and reasoning rates; an agent using a monitored engine is
+  labelled `via` that engine so its tokens are not added twice.
 - **System strip** - RAM/swap/load, CPU model, OS+kernel, GPU driver versions
   (incl. CUDA), NPU enumeration (Intel NPU, AMD XDNA xN, Qualcomm Cloud
   AI100, Apple Neural Engine with chip generation), GPU temp/util/VRAM/
@@ -122,7 +134,7 @@ Event fields are all optional; anything omitted gets the default:
 | `agent` | string | `anonymous` | capped at 64 runes |
 | `model` | string | - | capped at 128 runes |
 | `kind` | string | `turn` | known kinds: `turn`, `tool`, `error`, `note`; custom kinds pass through lowercased, capped at 24 runes |
-| `prompt_tokens` / `output_tokens` | integer | `0` | negative values clamp to `0` |
+| `prompt_tokens` / `output_tokens` / `thinking_tokens` | integer | `0` | negative values clamp to `0`; thinking is the reasoning share of output when the agent says so |
 | `note` | string | - | free-form, capped at 512 runes |
 
 One POST answers `202` with `{"accepted":N}` once every event in the stream

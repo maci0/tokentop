@@ -76,13 +76,13 @@ func TestIngestAcceptsEvents(t *testing.T) {
 	s := startIngest(t, rec)
 
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
-		`{"agent":"coder","kind":"tool","prompt_tokens":100,"output_tokens":5}`+"\n"+
+		`{"agent":"coder","kind":"tool","prompt_tokens":100,"output_tokens":5,"thinking_tokens":2}`+"\n"+
 			`{"agent":"coder","kind":"turn","output_tokens":50}`+"\n")
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
 	awaitEvents(t, rec, 2)
-	if rec.evs[0].Agent != "coder" || rec.evs[0].Kind != "tool" {
+	if rec.evs[0].Agent != "coder" || rec.evs[0].Kind != "tool" || rec.evs[0].ThinkingTokens != 2 {
 		t.Errorf("event 0 = %+v", rec.evs[0])
 	}
 	if !rec.evs[1].At.After(time.Time{}) {
@@ -301,12 +301,12 @@ func TestIngestClampsNegativeTokenCounts(t *testing.T) {
 	s := startIngest(t, rec)
 
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
-		`{"agent":"buggy","prompt_tokens":-500,"output_tokens":-99999999999}`)
+		`{"agent":"buggy","prompt_tokens":-500,"output_tokens":-99999999999,"thinking_tokens":-3}`)
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
 	awaitEvents(t, rec, 1)
-	if rec.evs[0].PromptTokens != 0 || rec.evs[0].OutputTokens != 0 {
+	if rec.evs[0].PromptTokens != 0 || rec.evs[0].OutputTokens != 0 || rec.evs[0].ThinkingTokens != 0 {
 		t.Errorf("negative token counts retained: %+v", rec.evs[0])
 	}
 }
@@ -389,7 +389,7 @@ func TestIngestHintListsAllFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"ts", "agent", "kind", "model", "prompt_tokens", "output_tokens", "note"} {
+	for _, field := range []string{"ts", "agent", "kind", "model", "prompt_tokens", "output_tokens", "thinking_tokens", "note"} {
 		if !strings.Contains(string(body), field) {
 			t.Errorf("hint omits accepted field %s: %s", field, body)
 		}

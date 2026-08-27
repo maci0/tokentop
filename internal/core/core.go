@@ -78,13 +78,15 @@ func (p *ProviderSnapshot) PrimaryModel() string {
 // AgentEvent is a token-usage event pushed by an agent or harness. The HTTP
 // wire shape is defined separately by ingest's agentEventWire.
 type AgentEvent struct {
-	At           time.Time
-	Agent        string
-	Model        string
-	Kind         string // turn | tool | error | note
-	PromptTokens int64
-	OutputTokens int64
-	Note         string
+	At             time.Time
+	Agent          string
+	Model          string
+	Kind           string // turn | tool | error | note
+	PromptTokens   int64
+	OutputTokens   int64
+	ThinkingTokens int64  // reasoning share of OutputTokens, when the agent says so
+	ViaEngine      string // monitored engine already counting this output; aggregates skip it
+	Note           string
 }
 
 // ProbeSample is one synthetic generation probe result.

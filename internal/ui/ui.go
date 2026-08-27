@@ -244,18 +244,42 @@ func (m Model) renderHeader() string {
 	segs := []headerSeg{{text: logo}, {text: dim("v" + m.cfg.Version), shed: 40}}
 
 	up, tot := m.upCount()
-	dot := dotUp
-	st := styleOK
-	switch {
-	case up == 0:
-		dot, st = dotBad, styleBad
-	case up < tot:
-		dot, st = dotWarn, styleWarn
+	rates := agentRates(m.snap.Agents, m.clock)
+	if tot == 0 {
+		n := len(rates)
+		if n == 0 {
+			n = uniqueAgents(m.snap.Agents)
+		}
+		label := fmt.Sprintf("%d agents", n)
+		if n == 1 {
+			label = "1 agent"
+		}
+		st := styleOK
+		if n == 0 {
+			st = styleWarn
+		}
+		segs = append(segs, headerSeg{text: st.Render(label)})
+	} else {
+		dot := dotUp
+		st := styleOK
+		switch {
+		case up == 0:
+			dot, st = dotBad, styleBad
+		case up < tot:
+			dot, st = dotWarn, styleWarn
+		}
+		segs = append(segs, headerSeg{text: st.Render(fmt.Sprintf("%s %d/%d engines", strip(dot), up, tot))})
+		if n := len(rates); n > 0 {
+			label := fmt.Sprintf("%d agents", n)
+			if n == 1 {
+				label = "1 agent"
+			}
+			segs = append(segs, headerSeg{text: dim(label), shed: 45})
+		}
 	}
-	segs = append(segs, headerSeg{text: st.Render(fmt.Sprintf("%s %d/%d engines", strip(dot), up, tot))})
 
 	outV := styleValue.Foreground(heatColor(norm(m.lastAgg, m.maxAgg))).Render("▲ " + fmtRate(m.lastAgg))
-	inV := styleInfo.Render("▼ " + fmtRate(aggIn(m.snap)))
+	inV := styleInfo.Render("▼ " + fmtRate(aggInAt(m.snap, m.clock)))
 	segs = append(segs,
 		headerSeg{text: outV + " " + dim("tok/s out"), shed: 10},
 		headerSeg{text: inV + " " + dim("in"), shed: 20},
@@ -409,7 +433,11 @@ func (m Model) outSeries(w int, cadence time.Duration) ([]float64, map[int]bool)
 }
 
 func (m Model) throughputTitle() string {
-	title := "THROUGHPUT " + styleHot.Render("▲ "+fmtRate(m.lastAgg)+" tok/s") + dim("  decode")
+	kind := dim("  decode")
+	if len(m.snap.Providers) == 0 {
+		kind = dim("  output")
+	}
+	title := "THROUGHPUT " + styleHot.Render("▲ "+fmtRate(m.lastAgg)+" tok/s") + kind
 	// Advertise the toggle in both modes: the hint only showing while
 	// compressed hid how to get back to the uniform timescale. Brackets mark
 	// the key so "compressed [t]" reads as mode plus switch rather than one
@@ -434,6 +462,7 @@ type timedVal struct {
 // buckets must tell engines apart to average within one and sum across all.
 func timedSeries(s core.Snapshot, out bool, cadence time.Duration) []timedVal {
 	var tv []timedVal
+	var end time.Time
 	for i := range s.Providers {
 		p := &s.Providers[i]
 		vals, t0 := p.OutHist, p.OutT0
@@ -444,7 +473,32 @@ func timedSeries(s core.Snapshot, out bool, cadence time.Duration) []timedVal {
 			continue
 		}
 		for j, v := range vals {
-			tv = append(tv, timedVal{t: t0.Add(time.Duration(j) * cadence), v: v, s: i})
+			t := t0.Add(time.Duration(j) * cadence)
+			tv = append(tv, timedVal{t: t, v: v, s: i})
+			if t.After(end) {
+				end = t
+			}
+		}
+	}
+	if aend := agentHistEnd(s.Agents); aend.After(end) {
+		end = aend
+	}
+	if !end.IsZero() {
+		n := core.HistoryLen
+		hist := agentDenseHist(s.Agents, out, end, n, cadence)
+		src := len(s.Providers)
+		any := false
+		for _, v := range hist {
+			if v > 0 {
+				any = true
+				break
+			}
+		}
+		if any {
+			start := end.Add(-time.Duration(n-1) * cadence)
+			for j, v := range hist {
+				tv = append(tv, timedVal{t: start.Add(time.Duration(j) * cadence), v: v, s: src})
+			}
 		}
 	}
 	sort.Slice(tv, func(i, j int) bool { return tv[i].t.Before(tv[j].t) })
@@ -882,8 +936,21 @@ func (m Model) renderFeed() string {
 	if m.paused {
 		add("  " + styleWarn.Render("(paused)"))
 	}
-	if s := agentSummary(agentRates(m.snap.Agents, m.clock)); s != "" {
-		add("  " + s)
+	rates := agentRates(m.snap.Agents, m.clock)
+	rows := agentRows(rates, m.clock)
+	statsN := 0
+	if len(rows) > 0 && feedIn > 0 {
+		statsN = min(len(rows), max(feedIn/2, 1))
+		if statsN >= feedIn && feedIn > 1 {
+			statsN = feedIn - 1
+		}
+	}
+	if statsN == 0 {
+		if s := agentSummary(rates); s != "" {
+			add("  " + s)
+		}
+	} else if statsN < len(rows) {
+		add("  " + dim(fmt.Sprintf("+%d more", len(rows)-statsN)))
 	}
 	switch {
 	case m.feedDown != "":
@@ -891,7 +958,12 @@ func (m Model) renderFeed() string {
 	case m.cfg.IngestAddr != "":
 		add(dim("  ← POST http://" + m.cfg.IngestAddr + "/v1/events"))
 	}
-	lines := feedLines(m.snap.Agents, feedIn, w)
+	var lines []string
+	if statsN > 0 {
+		lines = append(lines, rows[:statsN]...)
+	}
+	rest := feedIn - len(lines)
+	lines = append(lines, feedLines(m.snap.Agents, rest, w)...)
 	if len(lines) == 0 {
 		switch {
 		case m.feedDown != "":
@@ -946,6 +1018,9 @@ func feedLine(ev core.AgentEvent) string {
 	}
 	name := shorten(core.SanitizeText(ev.Agent), 16)
 	tok := fmt.Sprintf("↑%s ↓%s", fmtCount(ev.PromptTokens), fmtCount(ev.OutputTokens))
+	if ev.ThinkingTokens > 0 {
+		tok += " think " + fmtCount(ev.ThinkingTokens)
+	}
 	parts := []string{
 		// Event timestamps come from external senders and may carry any
 		// zone (or none, which decodes as UTC); render the viewer's clock.
@@ -953,6 +1028,9 @@ func feedLine(ev core.AgentEvent) string {
 		st.Render(icon + " " + name),
 		styleDim.Render(shorten(core.SanitizeText(ev.Model), 20)),
 		tok,
+	}
+	if ev.ViaEngine != "" {
+		parts = append(parts, dim("via "+shorten(core.SanitizeText(ev.ViaEngine), 18)))
 	}
 	if ev.Note != "" {
 		parts = append(parts, styleWarn.Render(shorten(core.SanitizeText(ev.Note), 28)))
@@ -1042,8 +1120,14 @@ func (m Model) renderMinimal() string {
 		b.WriteString(styleWarn.Render("‖ PAUSED") + "\n")
 	}
 	if len(m.snap.Providers) == 0 {
-		b.WriteString(styleWarn.Render("no inference engines detected") + "\n")
-		b.WriteString(dim(clip("try toktop --demo or --add URL", m.w)) + "\n")
+		rates := agentRates(m.snap.Agents, m.clock)
+		if len(rates) == 0 {
+			b.WriteString(styleWarn.Render("no inference engines detected") + "\n")
+			b.WriteString(dim(clip("try toktop --demo or --add URL", m.w)) + "\n")
+		}
+		for _, r := range rates {
+			b.WriteString(clip(agentMiniLine(r), m.w) + "\n")
+		}
 	}
 	for _, p := range m.snap.Providers {
 		st := styleOK
@@ -1060,6 +1144,11 @@ func (m Model) renderMinimal() string {
 			}
 		}
 		b.WriteString(line + "\n")
+	}
+	if len(m.snap.Providers) > 0 {
+		for _, r := range agentRates(m.snap.Agents, m.clock) {
+			b.WriteString(clip(agentMiniLine(r), m.w) + "\n")
+		}
 	}
 	// Only keys with a visible effect in this layout are advertised: p and t
 	// still work, but their results (probe rows, chart timescale) render only
@@ -1098,20 +1187,36 @@ func kvHeat(v float64) lipgloss.Color {
 	}
 }
 
-func aggOut(s core.Snapshot) float64 {
+func aggOut(s core.Snapshot) float64 { return aggOutAt(s, time.Now()) }
+
+func aggIn(s core.Snapshot) float64 { return aggInAt(s, time.Now()) }
+
+func aggOutAt(s core.Snapshot, now time.Time) float64 {
 	t := 0.0
 	for _, p := range s.Providers {
 		t += p.OutTokPS
 	}
-	return t
+	out, _ := agentOwnTokPS(agentRates(s.Agents, now))
+	return t + out
 }
 
-func aggIn(s core.Snapshot) float64 {
+func aggInAt(s core.Snapshot, now time.Time) float64 {
 	t := 0.0
 	for _, p := range s.Providers {
 		t += p.InTokPS
 	}
-	return t
+	_, in := agentOwnTokPS(agentRates(s.Agents, now))
+	return t + in
+}
+
+func uniqueAgents(events []core.AgentEvent) int {
+	seen := map[string]bool{}
+	for _, ev := range events {
+		if ev.Agent != "" {
+			seen[ev.Agent] = true
+		}
+	}
+	return len(seen)
 }
 
 // aggHist sums every provider's history onto one absolute time grid of w
@@ -1140,7 +1245,10 @@ func aggHist(s core.Snapshot, out bool, w int, cadence time.Duration) []float64 
 			end = last
 		}
 	}
-	if len(srcs) == 0 || end.IsZero() {
+	if aend := agentHistEnd(s.Agents); aend.After(end) {
+		end = aend
+	}
+	if end.IsZero() || w <= 0 {
 		return nil
 	}
 	grid := make([]float64, w)
@@ -1162,6 +1270,9 @@ func aggHist(s core.Snapshot, out bool, w int, cadence time.Duration) []float64 
 			sum += sr.vals[idx]
 		}
 		grid[j] = sum
+	}
+	for i, v := range agentDenseHist(s.Agents, out, end, w, cadence) {
+		grid[i] += v
 	}
 	return grid
 }

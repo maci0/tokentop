@@ -76,7 +76,7 @@ func FuzzHandlePost(f *testing.F) {
 			if ev.At.IsZero() {
 				t.Errorf("event %d: zero timestamp must be stamped", i)
 			}
-			if ev.PromptTokens < 0 || ev.OutputTokens < 0 {
+			if ev.PromptTokens < 0 || ev.OutputTokens < 0 || ev.ThinkingTokens < 0 {
 				t.Errorf("event %d: negative token counts retained: %+v", i, ev)
 			}
 			if n := utf8.RuneCountInString(ev.Agent); n > 64 {

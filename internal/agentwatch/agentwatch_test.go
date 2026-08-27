@@ -216,9 +216,10 @@ func waitFor(t *testing.T, limit time.Duration, cond func() bool) {
 }
 
 // TestEngineTakesPrecedence is the double-counting guard: an agent generating
-// through an engine toktop already measures must not add its tokens on top
-// of the engine's. It stays visible, with a note saying where its output is
-// being counted.
+// through an engine toktop already measures is still reported (the dashboard
+// has to show who is working) but every event is marked ViaEngine so
+// aggregates can skip those tokens instead of adding them on top of the
+// engine's.
 func TestEngineTakesPrecedence(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("connection attribution reads /proc")
@@ -278,13 +279,18 @@ func TestEngineTakesPrecedence(t *testing.T) {
 	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 500))
 
 	waitFor(t, 3*time.Second, func() bool { return len(rec.all()) > 0 })
+	var out int64
 	for _, ev := range rec.all() {
-		if ev.OutputTokens != 0 {
-			t.Fatalf("counted tokens the engine already reports: %+v", ev)
+		if ev.ViaEngine == "" {
+			t.Fatalf("agent using the engine was not attributed: %+v", ev)
 		}
-		if ev.Kind != "note" || !strings.Contains(ev.Note, "counted by engine") {
-			t.Fatalf("the agent should stay visible with an explanation: %+v", ev)
+		if !strings.Contains(ev.Note, "counted by engine") {
+			t.Fatalf("attribution missing from the note: %+v", ev)
 		}
+		out += ev.OutputTokens
+	}
+	if out == 0 {
+		t.Fatal("attributed agent produced no token events to display")
 	}
 }
 
@@ -297,12 +303,11 @@ func port(t *testing.T, ln net.Listener) string {
 	return p
 }
 
-// TestEngineNoteEmittedOncePerEngine pins the difference between state and
-// events: an agent generating through the same engine reads as one note no
-// matter how many readings pass, and a switch of engines says so once. A
-// fresh note per reading would flood the retained feed (AgentHistoryLen
-// rows) and evict every event carrying real numbers.
-func TestEngineNoteEmittedOncePerEngine(t *testing.T) {
+// TestAttributedAgentKeepsReporting pins display vs aggregate: an agent
+// generating through a monitored engine still emits a turn per reading (the
+// dashboard needs the deltas) and each event names the engine so totals can
+// skip them. Switching engines updates the label on the next growth.
+func TestAttributedAgentKeepsReporting(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home) // os.UserHomeDir on windows
@@ -323,30 +328,82 @@ func TestEngineNoteEmittedOncePerEngine(t *testing.T) {
 	}
 	w.tracked[tr.proc.PID] = tr
 
-	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 100))
+	path := filepath.Join(transcript, "s.jsonl")
+	appendLine(t, path, usageLine(work, 100))
 	tr.viaEngine = "http://127.0.0.1:11434"
-	w.read() // first growth through this engine: attributed once
+	w.read()
 
-	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 150))
-	w.read() // same engine again: attribution is unchanged, no new note
+	appendLine(t, path, usageLine(work, 150))
+	w.read()
 
-	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 180))
+	appendLine(t, path, usageLine(work, 180))
 	tr.viaEngine = "http://127.0.0.1:8080"
-	w.read() // engine changed: said once
+	w.read()
 
 	evs := rec.all()
-	if len(evs) != 2 {
-		t.Fatalf("got %d events, want one note per engine: %+v", len(evs), evs)
+	if len(evs) != 3 {
+		t.Fatalf("got %d events, want one turn per reading: %+v", len(evs), evs)
 	}
-	for _, ev := range evs {
-		if ev.Kind != "note" || !strings.Contains(ev.Note, "counted by engine") {
-			t.Fatalf("expected an attribution note, got: %+v", ev)
+	// Claude transcripts are per-message: each line adds, it is not a running total.
+	wantOut := []int64{100, 150, 180}
+	wantVia := []string{"http://127.0.0.1:11434", "http://127.0.0.1:11434", "http://127.0.0.1:8080"}
+	for i, ev := range evs {
+		if ev.Kind != "turn" {
+			t.Fatalf("event %d kind = %q, want turn: %+v", i, ev.Kind, ev)
 		}
-		if ev.OutputTokens != 0 {
-			t.Fatalf("counted tokens the engine already reports: %+v", ev)
+		if ev.OutputTokens != wantOut[i] {
+			t.Fatalf("event %d output = %d, want %d: %+v", i, ev.OutputTokens, wantOut[i], ev)
+		}
+		if ev.ViaEngine != wantVia[i] {
+			t.Fatalf("event %d ViaEngine = %q, want %q", i, ev.ViaEngine, wantVia[i])
 		}
 	}
-	if !strings.Contains(evs[0].Note, "11434") || !strings.Contains(evs[1].Note, "8080") {
-		t.Fatalf("notes name the wrong engines: %q, %q", evs[0].Note, evs[1].Note)
+}
+
+// TestReportsPromptAndThinking is the input-side counterpart: a transcript
+// that names prompt and reasoning tokens must not drop them, or the dashboard
+// can only show completions.
+func TestReportsPromptAndThinking(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	work := t.TempDir()
+	transcript := filepath.Join(home, ".claude", "projects", "p")
+	if err := os.MkdirAll(transcript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recorder{}
+	w := New(rec, nil, time.Hour, time.Hour)
+	tr := &tracked{
+		proc:  agentusage.Process{PID: 1, Tool: "claude", Dir: work},
+		watch: agentusage.Watch("claude", work, time.Now()),
+	}
+	if tr.watch == nil {
+		t.Fatal("no claude adapter")
+	}
+	w.tracked[tr.proc.PID] = tr
+
+	quoted, err := json.Marshal(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := `{"type":"assistant","cwd":` + string(quoted) +
+		`,"message":{"usage":{"input_tokens":900,"output_tokens":120,` +
+		`"output_tokens_details":{"thinking_tokens":40}}}}`
+	appendLine(t, filepath.Join(transcript, "s.jsonl"), line)
+	w.read()
+
+	evs := rec.all()
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1: %+v", len(evs), evs)
+	}
+	ev := evs[0]
+	if ev.PromptTokens != 900 || ev.OutputTokens != 120 || ev.ThinkingTokens != 40 {
+		t.Fatalf("prompt/output/thinking = %d/%d/%d, want 900/120/40: %+v",
+			ev.PromptTokens, ev.OutputTokens, ev.ThinkingTokens, ev)
+	}
+	if !strings.Contains(ev.Note, "40 reasoning") {
+		t.Fatalf("reasoning missing from the note: %+v", ev)
 	}
 }

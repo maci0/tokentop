@@ -816,6 +816,22 @@ func TestMinimalViewGuidesRecovery(t *testing.T) {
 			t.Errorf("empty minimal view missing %q:\n%s", want, out)
 		}
 	}
+
+	now := time.Now()
+	agents := New(Config{Version: "t"}, nil)
+	nm, _ = agents.Update(snapMsg(core.Snapshot{Agents: []core.AgentEvent{
+		{At: now.Add(-2 * time.Second), Agent: "claude", Kind: "turn", OutputTokens: 40},
+		{At: now.Add(-time.Second), Agent: "claude", Kind: "turn", OutputTokens: 40},
+	}}))
+	agents = nm.(Model)
+	agents.w, agents.h, agents.ready, agents.clock = 40, 12, true, now
+	out = strip(agents.View())
+	if !strings.Contains(out, "claude") || !strings.Contains(out, "tok/s") {
+		t.Errorf("minimal view lost agent stats:\n%s", out)
+	}
+	if strings.Contains(out, "no inference engines detected") {
+		t.Errorf("minimal view hid agents behind the engines-empty message:\n%s", out)
+	}
 }
 
 // A dead ingest endpoint must be visible in-band: stderr is hidden under the

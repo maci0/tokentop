@@ -182,13 +182,14 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ev := core.AgentEvent{
-			At:           at,
-			Agent:        wire.Agent,
-			Model:        wire.Model,
-			Kind:         wire.Kind,
-			PromptTokens: wire.PromptTokens,
-			OutputTokens: wire.OutputTokens,
-			Note:         wire.Note,
+			At:             at,
+			Agent:          wire.Agent,
+			Model:          wire.Model,
+			Kind:           wire.Kind,
+			PromptTokens:   wire.PromptTokens,
+			OutputTokens:   wire.OutputTokens,
+			ThinkingTokens: wire.ThinkingTokens,
+			Note:           wire.Note,
 		}
 		// Event fields are attacker-shaped text (any local process or peer
 		// able to reach this endpoint): strip terminal escape sequences and
@@ -208,6 +209,9 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 		if ev.OutputTokens < 0 {
 			ev.OutputTokens = 0
+		}
+		if ev.ThinkingTokens < 0 {
+			ev.ThinkingTokens = 0
 		}
 		switch ev.Kind {
 		case "turn", "tool", "error", "note":
@@ -236,13 +240,14 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 // well-formed but offset-less stamp would abort the whole stream with 400
 // before parseEventTime could apply the UTC default the feed documents.
 type agentEventWire struct {
-	At           json.RawMessage `json:"ts"`
-	Agent        string          `json:"agent"`
-	Model        string          `json:"model"`
-	Kind         string          `json:"kind"`
-	PromptTokens int64           `json:"prompt_tokens"`
-	OutputTokens int64           `json:"output_tokens"`
-	Note         string          `json:"note"`
+	At             json.RawMessage `json:"ts"`
+	Agent          string          `json:"agent"`
+	Model          string          `json:"model"`
+	Kind           string          `json:"kind"`
+	PromptTokens   int64           `json:"prompt_tokens"`
+	OutputTokens   int64           `json:"output_tokens"`
+	ThinkingTokens int64           `json:"thinking_tokens"`
+	Note           string          `json:"note"`
 }
 
 // parseEventTime decodes an event's ts field. Offset-aware RFC 3339 stamps
@@ -286,7 +291,7 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintln(w, `{"hint":"POST /v1/events with {ts,agent,kind,model,prompt_tokens,output_tokens,note}"}`)
+	fmt.Fprintln(w, `{"hint":"POST /v1/events with {ts,agent,kind,model,prompt_tokens,output_tokens,thinking_tokens,note}"}`)
 }
 
 // clampField caps a free-form event field at n user-perceived characters

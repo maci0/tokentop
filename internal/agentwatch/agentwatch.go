@@ -37,9 +37,10 @@ type Recorder interface {
 
 // Engines reports the endpoints toktop is already measuring, as the URLs the
 // providers advertise. An agent generating through one of those engines has
-// its tokens counted by the engine already, so this watcher must not add them
-// again: the engine is the closer, more complete source (it sees every client,
-// including ones that keep no transcript).
+// its tokens counted by the engine already. Events are still recorded so the
+// agent stays on the dashboard, with ViaEngine set so header and chart
+// totals skip them: the engine is the closer, more complete source (it sees
+// every client, including ones that keep no transcript).
 type Engines func() []string
 
 // Defaults chosen so a monitor stays cheap: discovery is a /proc walk, and
@@ -66,14 +67,10 @@ type tracked struct {
 	watch *agentusage.Watcher
 	last  agentusage.Sample
 	// viaEngine names the monitored engine this agent generates through, when
-	// it has one. Its tokens are then the engine's to report.
+	// it has one. Token deltas are still recorded so the agent stays on the
+	// dashboard; ViaEngine on the event is what stops aggregates adding them
+	// on top of the engine's own numbers.
 	viaEngine string
-	// viaAdvertised is the engine last named in an attribution note. The note
-	// carries state, not progress: re-sending it on every read while the
-	// agent keeps generating would pour an event per polling interval into a
-	// retained feed that holds AgentHistoryLen rows, evicting the events that
-	// carry real numbers - this agent's own included.
-	viaAdvertised string
 }
 
 // New returns a watcher feeding rec. Zero intervals take the defaults, and a
@@ -217,46 +214,48 @@ func (w *Watcher) read() {
 		}
 		out := cur.Output - t.last.Output
 		think := cur.Thinking - t.last.Thinking
-		if out <= 0 && think <= 0 {
+		prompt := promptOf(cur) - promptOf(t.last)
+		if out <= 0 && think <= 0 && prompt <= 0 {
 			continue // nothing new: silence is not an event
 		}
 		t.last = cur
 		if w.rec == nil {
 			continue
 		}
-		if t.viaEngine != "" {
-			// The engine is already reporting these tokens. Saying so keeps
-			// the agent visible without counting its output twice; saying it
-			// once per engine is attribution, while repeating it every read
-			// is noise that starves the feed of real events.
-			if t.viaEngine == t.viaAdvertised {
-				continue
-			}
-			t.viaAdvertised = t.viaEngine
-			w.rec.RecordAgent(core.AgentEvent{
-				At:    cur.At,
-				Agent: t.proc.Tool,
-				Kind:  "note",
-				Note:  shortDir(t.proc.Dir) + " · counted by engine " + t.viaEngine,
-			})
-			continue
-		}
 		w.rec.RecordAgent(core.AgentEvent{
-			At:           cur.At,
-			Agent:        t.proc.Tool,
-			Kind:         "turn",
-			OutputTokens: int64(max(out, 0)),
-			Note:         note(t.proc, think),
+			At:             cur.At,
+			Agent:          t.proc.Tool,
+			Kind:           "turn",
+			PromptTokens:   int64(max(prompt, 0)),
+			OutputTokens:   int64(max(out, 0)),
+			ThinkingTokens: int64(max(think, 0)),
+			ViaEngine:      t.viaEngine,
+			Note:           note(t.proc, think, t.viaEngine),
 		})
 	}
 }
 
-// note carries what the event cannot: where the agent is working, and how much
-// of the output was reasoning when the agent says so.
-func note(p agentusage.Process, thinking int) string {
+// promptOf is the input-side of a sample: Total is billed tokens (input,
+// output, cache) and Output is the completion, so the rest is prompt. A
+// transcript that does not report a total yields zero rather than a guess.
+func promptOf(s agentusage.Sample) int {
+	p := s.Total - s.Output
+	if p < 0 {
+		return 0
+	}
+	return p
+}
+
+// note carries what the event cannot: where the agent is working, how much of
+// the output was reasoning when the agent says so, and which monitored engine
+// already counts this output when one does.
+func note(p agentusage.Process, thinking int, via string) string {
 	s := shortDir(p.Dir)
 	if thinking > 0 {
 		s += " · " + strconv.Itoa(thinking) + " reasoning"
+	}
+	if via != "" {
+		s += " · counted by engine " + via
 	}
 	return s
 }

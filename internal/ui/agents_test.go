@@ -99,3 +99,155 @@ func TestFeedLinesNewestLast(t *testing.T) {
 		}
 	}
 }
+
+// Tokens an agent spends through a monitored engine must not raise the
+// header/chart totals: the engine already reports them. Unattributed agents
+// (cloud APIs, engines toktop is not watching) still add in.
+func TestAggSkipsViaEngineTokens(t *testing.T) {
+	now := time.Now()
+	ev := func(agent string, dt time.Duration, out, prompt int64, via string) core.AgentEvent {
+		return core.AgentEvent{
+			At: now.Add(dt), Agent: agent, Kind: "turn",
+			OutputTokens: out, PromptTokens: prompt, ViaEngine: via,
+		}
+	}
+	s := core.Snapshot{
+		Providers: []core.ProviderSnapshot{{OutTokPS: 100, InTokPS: 20}},
+		Agents: []core.AgentEvent{
+			ev("claude", -2*time.Second, 50, 80, "127.0.0.1:11434"),
+			ev("claude", -time.Second, 50, 80, "127.0.0.1:11434"),
+			ev("codex", -2*time.Second, 40, 10, ""),
+			ev("codex", -time.Second, 40, 10, ""),
+		},
+	}
+	if got := aggOutAt(s, now); got != 180 {
+		t.Errorf("aggOut = %v, want 180 (engine 100 + codex 80, claude skipped)", got)
+	}
+	if got := aggInAt(s, now); got != 40 {
+		t.Errorf("aggIn = %v, want 40 (engine 20 + codex 20, claude skipped)", got)
+	}
+}
+
+func TestAggAgentsOnlyUsesAgentRates(t *testing.T) {
+	now := time.Now()
+	s := core.Snapshot{Agents: []core.AgentEvent{
+		{At: now.Add(-2 * time.Second), Agent: "claude", Kind: "turn", OutputTokens: 30, PromptTokens: 90},
+		{At: now.Add(-time.Second), Agent: "claude", Kind: "turn", OutputTokens: 30, PromptTokens: 90},
+	}}
+	if got := aggOutAt(s, now); got != 60 {
+		t.Errorf("aggOut = %v, want 60", got)
+	}
+	if got := aggInAt(s, now); got != 180 {
+		t.Errorf("aggIn = %v, want 180", got)
+	}
+}
+
+func TestAgentRowsShowPromptThinkingAndVia(t *testing.T) {
+	now := time.Now()
+	rates := []agentRate{
+		{Agent: "claude", TokPS: 12, Tokens: 2400, Prompt: 8100, Thinking: 400, Last: now},
+		{Agent: "codex", Tokens: 18000, Prompt: 40000, Last: now, ViaEngine: "127.0.0.1:11434"},
+	}
+	rows := agentRows(rates, now)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	claude := strip(rows[0])
+	for _, want := range []string{"claude", "tok/s", "↓2.4k", "↑8.1k", "400 think", "live"} {
+		if !strings.Contains(claude, want) {
+			t.Errorf("claude row missing %q:\n%s", want, claude)
+		}
+	}
+	codex := strip(rows[1])
+	for _, want := range []string{"codex", "via 127.0.0.1:11434", "↓18.0k", "↑40.0k"} {
+		if !strings.Contains(codex, want) {
+			t.Errorf("codex row missing %q:\n%s", want, codex)
+		}
+	}
+}
+
+func TestAgentRowsSanitizeViaEngine(t *testing.T) {
+	now := time.Now()
+	rows := agentRows([]agentRate{{
+		Agent: "claude", Last: now, ViaEngine: "127.0.0.1:11434\x1b]52;c;QUJD\x07",
+	}}, now)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if strings.ContainsAny(rows[0], "\x1b\x07") {
+		t.Errorf("via-engine leaked escape bytes:\n%s", rows[0])
+	}
+	if !strings.Contains(strip(rows[0]), "127.0.0.1:11434") {
+		t.Errorf("via-engine lost the address:\n%s", strip(rows[0]))
+	}
+}
+
+func TestRenderAgentsOnlyShowsDashboardChrome(t *testing.T) {
+	now := time.Now()
+	snap := core.Snapshot{
+		Agents: []core.AgentEvent{
+			{At: now.Add(-2 * time.Second), Agent: "claude", Kind: "turn",
+				OutputTokens: 40, PromptTokens: 100},
+			{At: now.Add(-time.Second), Agent: "claude", Kind: "turn",
+				OutputTokens: 40, PromptTokens: 100},
+		},
+		Sys: &core.SysSample{MemTotal: 32 << 30, MemUsed: 16 << 30, Load1: 1.5},
+	}
+	out := strip(StaticFrame(Config{Version: "t"}, snap, 110, 36))
+	for _, want := range []string{"1 agent", "tok/s", "THROUGHPUT", "output", "SYS", "AGENTS", "claude", "AGENT FEED"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("agents-only dashboard missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "0/0 engines") {
+		t.Errorf("agents-only dashboard still shows the engines-empty header:\n%s", out)
+	}
+}
+
+func TestAgentsOnlyFrameFitsPane(t *testing.T) {
+	now := time.Now()
+	snap := core.Snapshot{
+		Agents: []core.AgentEvent{
+			{At: now.Add(-2 * time.Second), Agent: "日本語エージェント", Kind: "turn",
+				OutputTokens: 40, PromptTokens: 100, Note: strings.Repeat("x", 80)},
+			{At: now.Add(-time.Second), Agent: "日本語エージェント", Kind: "turn",
+				OutputTokens: 40, PromptTokens: 100},
+		},
+		Sys: &core.SysSample{
+			MemTotal: 32 << 30, MemUsed: 16 << 30,
+			CPUModel: "Test CPU", OsName: "TestOS",
+		},
+	}
+	for _, sz := range [][2]int{{62, 30}, {80, 32}, {110, 36}, {160, 44}} {
+		w, h := sz[0], sz[1]
+		out := StaticFrame(Config{Version: "t"}, snap, w, h)
+		if got := lipgloss.Height(out); got > h {
+			t.Errorf("%dx%d: frame is %d lines, overflows pane", w, h, got)
+		}
+		for i, ln := range strings.Split(out, "\n") {
+			if lw := lipgloss.Width(ln); lw > w {
+				t.Fatalf("%dx%d: line %d renders %d cells, want <= %d:\n%s",
+					w, h, i, lw, w, ln)
+			}
+		}
+	}
+}
+
+func TestAgentDenseHistSkipsViaEngine(t *testing.T) {
+	end := time.Unix(1_700_000_010, 0)
+	events := []core.AgentEvent{
+		{At: end.Add(-time.Second), Agent: "claude", OutputTokens: 100, ViaEngine: "127.0.0.1:11434"},
+		{At: end.Add(-time.Second), Agent: "codex", OutputTokens: 50},
+	}
+	got := agentDenseHist(events, true, end, 3, time.Second)
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+	// middle bucket is end-1s: only the unattributed 50 tokens, as 50 tok/s.
+	if got[1] != 50 {
+		t.Fatalf("hist = %v, want 50 tok/s from the unattributed event in the middle bucket", got)
+	}
+	if got[0] != 0 || got[2] != 0 {
+		t.Fatalf("hist = %v, want zeros outside the event bucket", got)
+	}
+}

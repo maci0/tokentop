@@ -31,7 +31,7 @@ func PlainTextFrame(cfg Config, s core.Snapshot) string {
 
 	if len(s.Providers) == 0 {
 		if len(s.Agents) > 0 {
-			writeAgentsPlain(&b, s)
+			writeAgentsPlain(&b, s, cfg)
 			return b.String()
 		}
 		b.WriteString("no inference engines detected\n")
@@ -54,8 +54,12 @@ func PlainTextFrame(cfg Config, s core.Snapshot) string {
 	case up < tot:
 		state += " (partial)"
 	}
+	now := time.Now()
 	fmt.Fprintf(&b, "%s · out %s tok/s · in %s tok/s",
-		state, fmtRate(aggOut(s)), fmtRate(aggIn(s)))
+		state, fmtRate(aggOutAt(s, now)), fmtRate(aggInAt(s, now)))
+	if n := len(agentRates(s.Agents, now)); n > 0 {
+		b.WriteString(fmt.Sprintf(" · %d agents", n))
+	}
 	if s.Uptime > 0 {
 		b.WriteString(" · session " + fmtDur(s.Uptime))
 	}
@@ -274,6 +278,12 @@ func writeFeedPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 			core.SanitizeText(ev.Agent),
 			orDash(core.SanitizeText(ev.Model)),
 			fmtCount(ev.PromptTokens), fmtCount(ev.OutputTokens))
+		if ev.ThinkingTokens > 0 {
+			b.WriteString(" thinking " + fmtCount(ev.ThinkingTokens))
+		}
+		if ev.ViaEngine != "" {
+			b.WriteString(" via " + core.SanitizeText(ev.ViaEngine))
+		}
 		if ev.Note != "" {
 			b.WriteString(" note " + shorten(core.SanitizeText(ev.Note), 60))
 		}
@@ -283,9 +293,13 @@ func writeFeedPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 
 // writeAgentsPlain is the plain counterpart of renderAgentsOnly: agents but
 // no engines.
-func writeAgentsPlain(b *strings.Builder, s core.Snapshot) {
+func writeAgentsPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 	now := time.Now()
-	b.WriteString("no inference engines detected; --add URL attaches one\n\nAGENTS\n")
+	outPS, inPS := agentOwnTokPS(agentRates(s.Agents, now))
+	b.WriteString("no inference engines detected; --add URL attaches one\n")
+	fmt.Fprintf(b, "out %s tok/s · in %s tok/s\n", fmtRate(outPS), fmtRate(inPS))
+	writeSystemPlain(b, s.Sys)
+	b.WriteString("\nAGENTS\n")
 	rows := 0
 	for _, r := range agentRates(s.Agents, now) {
 		name := core.SanitizeText(r.Agent)
@@ -293,19 +307,30 @@ func writeAgentsPlain(b *strings.Builder, s core.Snapshot) {
 		if now.Sub(r.Last) < 3*time.Second {
 			recency = "live"
 		}
-		if r.TokPS > 0 {
-			fmt.Fprintf(b, "%s %s tok/s %s tok %s\n", name, fmtRate(r.TokPS),
-				fmtCount(r.Tokens), recency)
-		} else {
-			fmt.Fprintf(b, "%s no rate yet %s tok %s\n", name,
-				fmtCount(r.Tokens), recency)
+		if r.ViaEngine != "" {
+			recency = "via " + core.SanitizeText(r.ViaEngine) + " " + recency
 		}
+		line := name
+		if r.TokPS > 0 {
+			line += " " + fmtRate(r.TokPS) + " tok/s"
+		} else {
+			line += " no rate yet"
+		}
+		line += " output " + fmtCount(r.Tokens)
+		if r.Prompt > 0 {
+			line += " prompt " + fmtCount(r.Prompt)
+		}
+		if r.Thinking > 0 {
+			line += " thinking " + fmtCount(r.Thinking)
+		}
+		line += " " + recency
+		b.WriteString(line + "\n")
 		rows++
 	}
 	if rows == 0 {
 		b.WriteString("waiting for an agent to report tokens\n")
 	}
-	writeFeedPlain(b, s, Config{})
+	writeFeedPlain(b, s, cfg)
 }
 
 // kindWord names an event kind in text; unknown kinds pass through like the
