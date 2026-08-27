@@ -1,4 +1,8 @@
 # Dependencies of scripts/screenshot.py (renders a tmux ANSI capture to PNG).
 # Install into a scratch venv, not the system: uv pip install -r scripts/requirements.txt
-pyte>=0.8.2
-pillow>=12.3.0
+# Exact pins: a newer release must arrive as a reviewed bump, not an implicit install.
+# pyte is LGPLv3 (wcwidth and pillow are MIT). This renderer is a local developer
+# tool and is not linked into the toktop binary.
+pyte==0.8.2
+wcwidth==0.8.2
+pillow==12.3.0

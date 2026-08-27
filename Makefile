@@ -111,17 +111,28 @@ fix: ## apply go fix modernization autofixes, then gofmt
 	$(GO) fix ./...
 	gofmt -s -w .
 
+.PHONY: tidy-check
+tidy-check: ## fail if go.mod or go.sum would change
+	$(GO) mod tidy -diff
+
+.PHONY: scripts-check
+scripts-check: ## format, lint and type-check scripts/ with pinned tools
+	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt black --check scripts/
+	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt ruff check scripts/
+	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt mypy scripts/
+
 .PHONY: check
-check: ## verify gofmt -s formatting, vet and staticcheck (CI parity)
+check: ## verify go.mod, gofmt -s formatting, vet and staticcheck (CI parity)
 	@unformatted=$$(gofmt -s -l .); \
 		if [ -n "$$unformatted" ]; then \
 			echo "needs gofmt:"; echo "$$unformatted"; exit 1; \
 		fi
+	@$(MAKE) tidy-check
 	@$(MAKE) lint
 	@$(MAKE) vet
 
 .PHONY: ci
-ci: ## everything CI runs before merging: fmt, lint, vet, govulncheck, race tests
+ci: ## everything CI runs before merging: tidy-diff, fmt, lint, vet, govulncheck, race tests
 	@$(MAKE) check
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 	@$(MAKE) test

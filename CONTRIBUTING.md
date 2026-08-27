@@ -71,8 +71,9 @@ dimensions; update both together.
 | `make demo` / `make run` | build, then launch |
 | `make test` | all tests, `-race -shuffle=on` (same flags as CI) |
 | `make cover` | coverage summary per package into `dist/` |
-| `make check` | gofmt -s + staticcheck + vet |
-| `make ci` | everything CI gates on: fmt, lint, vet, govulncheck, race tests |
+| `make check` | go.mod tidy-diff + gofmt -s + staticcheck + vet |
+| `make scripts-check` | black, ruff and mypy over `scripts/` at pinned versions |
+| `make ci` | everything CI gates on: tidy-diff, fmt, lint, vet, govulncheck, race tests |
 | `make fmt` | rewrite files with gofmt -s |
 | `make fix` | apply `go fix` modernization autofixes, then gofmt |
 | `make lint` | staticcheck over both halves of the sqlite tag gate |
@@ -80,11 +81,11 @@ dimensions; update both together.
 
 ## Before opening a PR
 
-CI (`.github/workflows/ci.yml`) runs gofmt -s and `govulncheck ./...` on
-Linux only (both are platform-independent), `staticcheck` and
-`go vet ./...` and `go test -race -shuffle=on ./...` on Linux, macOS and
-Windows, plus cross-compiles of linux/amd64, linux/arm64, darwin/amd64,
-darwin/arm64 and windows/amd64. Each cross-compile job also runs
+CI (`.github/workflows/ci.yml`) runs gofmt -s, `go mod tidy -diff`, and
+`govulncheck ./...` on Linux only (all three are platform-independent),
+`staticcheck` and `go vet ./...` and `go test -race -shuffle=on ./...` on
+Linux, macOS and Windows, plus cross-compiles of linux/amd64, linux/arm64,
+darwin/amd64, darwin/arm64 and windows/amd64. Each cross-compile job also runs
 `go vet ./...` and staticcheck under its GOOS/GOARCH, so platform-specific
 files get the same static analysis as the host build. Both halves of the
 sqlite tag gate (`agentusage` with and without `-tags sqlite`) are vetted
@@ -96,14 +97,17 @@ make ci
 ```
 
 Two jobs cover what is not Go: `bun test site/` for the Cloudflare Worker in
-`site/`, and `black --check`, `ruff check` and `mypy` over `scripts/`. Run them
-the same way locally:
+`site/`, and the screenshot-script checks. Run them the same way locally:
 
 ```
 bun test site/
-uvx black --check scripts/ && uvx ruff check scripts/
-uvx --with-requirements scripts/requirements.txt mypy scripts/
+make scripts-check
 ```
+
+`scripts-check` installs the exact versions in `scripts/requirements-dev.txt`
+into an isolated env (black, ruff, mypy, plus the renderer deps). Do not run
+unpinned `uvx black` / `uvx ruff` / `uvx mypy`: those resolve to whatever
+PyPI returns today.
 
 Keep platform-specific code behind build tags or runtime checks; the
 cross-compile job catches code that only builds, or only vets and lints

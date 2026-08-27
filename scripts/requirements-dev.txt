@@ -1,0 +1,6 @@
+# Format, lint and type-check tools for scripts/. CI and CONTRIBUTING run from
+# this file so those versions cannot float to whatever PyPI returns today.
+-r requirements.txt
+black==26.5.1
+ruff==0.16.4
+mypy==2.3.1
