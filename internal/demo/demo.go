@@ -226,6 +226,14 @@ func (s *Source) genEvent(now time.Time) {
 
 func (s *Source) addAgent(ev core.AgentEvent) {
 	s.agents = append(s.agents, ev)
+	// Consumers assume newest-last ordering (core.Snapshot); keep the ring
+	// sorted by time the way addProbe does, so a harness POST with an older
+	// stamp cannot land last and eviction cannot drop the wrong end.
+	i := len(s.agents) - 1
+	last := s.agents[i]
+	dst := sort.Search(i, func(j int) bool { return s.agents[j].At.After(last.At) })
+	copy(s.agents[dst+1:], s.agents[dst:])
+	s.agents[dst] = last
 	if len(s.agents) > core.AgentHistoryLen {
 		s.agents = s.agents[len(s.agents)-core.AgentHistoryLen:]
 	}

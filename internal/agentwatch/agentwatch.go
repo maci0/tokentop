@@ -18,6 +18,7 @@ package agentwatch
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -235,11 +236,21 @@ func (w *Watcher) engineEndpoints() ([]netip.AddrPort, []string) {
 // parseEngineAddr turns "http://127.0.0.1:11434" into an endpoint and a label.
 // A hostname that is not an address cannot be compared against a connection
 // table, so it is skipped rather than resolved: resolving would make a monitor
-// do DNS on a timer.
+// do DNS on a timer. URLs that omit the port (http://127.0.0.1, https://…)
+// use the scheme default: without it ParseAddrPort fails and an agent talking
+// to that engine would not be labelled via, so its tokens would be counted
+// twice.
 func parseEngineAddr(addr string) (netip.AddrPort, string, bool) {
 	host := addr
 	if u, err := url.Parse(addr); err == nil && u.Host != "" {
 		host = u.Host
+		if u.Port() == "" {
+			port := "80"
+			if u.Scheme == "https" {
+				port = "443"
+			}
+			host = net.JoinHostPort(u.Hostname(), port)
+		}
 	}
 	ap, err := netip.ParseAddrPort(host)
 	if err != nil {

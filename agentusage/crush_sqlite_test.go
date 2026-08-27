@@ -180,6 +180,39 @@ func TestCrushWatchCountsOnlyGrowthAfterAttach(t *testing.T) {
 	}
 }
 
+// A store that cannot be read at attach must not be treated as empty: the
+// first successful poll would otherwise count every continued session's
+// history as growth. Snapshot then, and count only what is added after.
+func TestCrushWatchRetriesFailedAttachSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".crush", "crush.db")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not a sqlite database"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := Watch("crush", dir, time.Now())
+	if w == nil {
+		t.Fatal("crush is readable in this build, so Watch must return a watcher")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	crushDB(t, dir, map[string][2]int64{
+		"s": {5000, time.Now().Add(-time.Hour).UnixMilli()},
+	})
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("counted tokens from a store that was unreadable at attach: %d", got)
+	}
+	putCrushSession(t, dir, "s", 5100, time.Now().Add(time.Second).UnixMilli())
+	w.poll(nil)
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output %d, want the 100 generated after the store became readable", got)
+	}
+}
+
 // A review's directory is watched under every spelling it can be recorded
 // under, and on macOS that always includes a symlinked one. All of them
 // address a single database, whose sessions must be summed once.

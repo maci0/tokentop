@@ -391,9 +391,12 @@ type Watcher struct {
 	// sourceBase is per-session counters at attach for a sessionSource
 	// (crush). completion_tokens and prompt_tokens are cumulative for the
 	// session's life, so without this a continued session would dump its
-	// history into this review the first time it was updated. nil means the
-	// source is not cumulative (opencode counts per message by timestamp).
-	sourceBase map[string]map[string]sessionCounts
+	// history into this review the first time it was updated. hasSessionBase
+	// is the latch: an empty map is a valid snapshot (no sessions yet), and
+	// a failed attach read must not look like that or a later successful
+	// poll would count the whole store as growth.
+	sourceBase     map[string]map[string]sessionCounts
+	hasSessionBase bool
 
 	// pollMu serializes reads: the ticker goroutine and a caller's final
 	// synchronous Poll both walk the same offsets and counters.
@@ -433,11 +436,10 @@ func Watch(tool, dir string, since time.Time) *Watcher {
 	if source, ok := sourceFor(tool); ok {
 		w := &Watcher{source: source, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
 		if ss, ok := source.(sessionSource); ok {
-			base, ok := ss.sessions(w.dirs, time.Time{})
-			if !ok {
-				base = map[string]map[string]sessionCounts{}
+			if base, ok := ss.sessions(w.dirs, time.Time{}); ok {
+				w.sourceBase = base
+				w.hasSessionBase = true
 			}
-			w.sourceBase = base
 		}
 		return w
 	}
@@ -588,44 +590,50 @@ func (w *Watcher) Run(ctx context.Context, every time.Duration, onChange func(Sa
 	}
 }
 
-// readSource is one reading from a non-file source. A sessionSource was
-// snapshotted at attach, so only growth since then is counted. Other
-// sources (opencode) report this review's usage in full each time via
-// a timestamp filter.
+// readSource is one reading from a non-file source. A sessionSource is
+// snapshotted at attach (or on the first successful poll if that read
+// failed), so only growth since then is counted. Other sources (opencode)
+// report this review's usage in full each time via a timestamp filter.
 func (w *Watcher) readSource() (values, bool) {
-	if w.sourceBase != nil {
-		ss, ok := w.source.(sessionSource)
+	ss, ok := w.source.(sessionSource)
+	if !ok {
+		return w.source.read(w.dirs, w.since)
+	}
+	if !w.hasSessionBase {
+		base, ok := ss.sessions(w.dirs, time.Time{})
 		if !ok {
 			return values{}, false
 		}
-		cur, ok := ss.sessions(w.dirs, w.since)
-		if !ok {
-			return values{}, false
-		}
-		var outN, inN int64
-		for path, sess := range cur {
-			base := w.sourceBase[path]
-			for id, tokens := range sess {
-				b := base[id]
-				if d := tokens.output - b.output; d > 0 {
-					if outN > int64(maxSaneTokens)-d {
-						return values{}, false
-					}
-					outN += d
+		w.sourceBase = base
+		w.hasSessionBase = true
+		return values{}, false // attach baseline: nothing yet is this review's
+	}
+	cur, ok := ss.sessions(w.dirs, w.since)
+	if !ok {
+		return values{}, false
+	}
+	var outN, inN int64
+	for path, sess := range cur {
+		base := w.sourceBase[path]
+		for id, tokens := range sess {
+			b := base[id]
+			if d := tokens.output - b.output; d > 0 {
+				if outN > int64(maxSaneTokens)-d {
+					return values{}, false
 				}
-				if d := tokens.input - b.input; d > 0 {
-					if inN > int64(maxSaneTokens)-d {
-						return values{}, false
-					}
-					inN += d
+				outN += d
+			}
+			if d := tokens.input - b.input; d > 0 {
+				if inN > int64(maxSaneTokens)-d {
+					return values{}, false
 				}
+				inN += d
 			}
 		}
-		out := counter64(outN)
-		in := counter64(inN)
-		return values{output: out, input: in}, out > 0 || in > 0
 	}
-	return w.source.read(w.dirs, w.since)
+	out := counter64(outN)
+	in := counter64(inN)
+	return values{output: out, input: in}, out > 0 || in > 0
 }
 
 // Poll reads whatever the transcripts have gained since the last read and

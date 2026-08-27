@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -443,5 +444,45 @@ func TestReportsPromptAndThinking(t *testing.T) {
 	}
 	if !strings.Contains(ev.Note, "40 reasoning") {
 		t.Fatalf("reasoning missing from the note: %+v", ev)
+	}
+}
+
+// URLs that omit the port still name a TCP endpoint (scheme default). Without
+// that, an agent generating through http://127.0.0.1 would not be labelled
+// via and its tokens would be added on top of the engine's.
+func TestParseEngineAddrDefaultPorts(t *testing.T) {
+	must := func(s string) netip.AddrPort {
+		t.Helper()
+		ap, err := netip.ParseAddrPort(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ap
+	}
+	tests := []struct {
+		in    string
+		want  netip.AddrPort
+		label string
+		ok    bool
+	}{
+		{in: "http://127.0.0.1:11434", want: must("127.0.0.1:11434"), label: "127.0.0.1:11434", ok: true},
+		{in: "http://127.0.0.1", want: must("127.0.0.1:80"), label: "127.0.0.1:80", ok: true},
+		{in: "https://127.0.0.1", want: must("127.0.0.1:443"), label: "127.0.0.1:443", ok: true},
+		{in: "http://[::1]", want: must("[::1]:80"), label: "[::1]:80", ok: true},
+		{in: "127.0.0.1:8080", want: must("127.0.0.1:8080"), label: "127.0.0.1:8080", ok: true},
+		{in: "http://localhost:11434"}, // hostname: skip rather than DNS
+	}
+	for _, tt := range tests {
+		ap, label, ok := parseEngineAddr(tt.in)
+		if ok != tt.ok {
+			t.Errorf("parseEngineAddr(%q) ok=%v, want %v", tt.in, ok, tt.ok)
+			continue
+		}
+		if !tt.ok {
+			continue
+		}
+		if ap != tt.want || label != tt.label {
+			t.Errorf("parseEngineAddr(%q) = %v %q, want %v %q", tt.in, ap, label, tt.want, tt.label)
+		}
 	}
 }

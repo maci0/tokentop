@@ -235,6 +235,29 @@ func TestSourceConcurrentAccess(t *testing.T) {
 	}
 }
 
+// Demo mode shares the ingest recorder: events must stay newest-last the
+// same way the live collector keeps them, or the agent feed renders a
+// stale event last and eviction drops the wrong end.
+func TestRecordAgentKeepsChronologicalOrder(t *testing.T) {
+	s := NewSource(time.Second, 1)
+	base := time.Now()
+	order := []time.Duration{3 * time.Second, 7 * time.Second, 0, 5 * time.Second}
+	for _, d := range order {
+		s.RecordAgent(core.AgentEvent{At: base.Add(d), Agent: "a", OutputTokens: 1})
+	}
+	s.mu.Lock()
+	agents := append([]core.AgentEvent(nil), s.agents...)
+	s.mu.Unlock()
+	for i := 1; i < len(agents); i++ {
+		if agents[i].At.Before(agents[i-1].At) {
+			t.Fatalf("agent ring not sorted at %d: %v", i, agents)
+		}
+	}
+	if !agents[len(agents)-1].At.Equal(base.Add(7 * time.Second)) {
+		t.Fatal("newest agent is not last")
+	}
+}
+
 // Demo mode shares the ingest recorder: a retried POST with the same id
 // must not grow the feed, matching the live collector.
 func TestRecordAgentSameIDKeptOnce(t *testing.T) {
