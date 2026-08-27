@@ -872,7 +872,13 @@ func procLine(p core.ProviderSnapshot) string {
 func (m Model) probesTitle() string {
 	t := "PROBES"
 	if last, ok := m.lastProbe(); ok {
-		t += " " + dim("last") + " " + fmtMs(last.TTFTms) + " " + styleOK.Render(fmtRate(last.TokPS)+"/s")
+		if last.OK {
+			t += " " + dim("last") + " " + fmtMs(last.TTFTms) + " " + styleOK.Render(fmtRate(last.TokPS)+" tok/s")
+		} else {
+			// A failed last result used to print "last - 0.0/s" in the success
+			// color, which reads as a measurement of nothing.
+			t += " " + styleBad.Render("last failed")
+		}
 	}
 	// Pressing p fires real generations that take seconds: acknowledge the
 	// keypress immediately or it reads as dead until the first result lands.
@@ -890,12 +896,20 @@ func (m Model) probesBody(w, h int) string {
 	shown := 0
 	for i := len(m.snap.Probes) - 1; i >= 0 && shown < 2; i-- {
 		p := m.snap.Probes[i]
-		icon, st := "✓", styleOK
+		model := styleDim.Render(shorten(core.SanitizeText(p.Model), w-18))
+		var line string
 		if !p.OK {
-			icon, st = "✗", styleBad
+			// Match the plain frame and BACKENDS: name the failure and keep
+			// the reason. Printing 0.0/s in the same shape as a success
+			// hides why the probe did not land.
+			line = styleBad.Render("✗") + " " + model + " " + styleBad.Render("failed")
+			if msg := strings.TrimSpace(core.SanitizeText(p.Err)); msg != "" {
+				line += " " + dim(shorten(msg, max(w-24, 8)))
+			}
+		} else {
+			line = styleOK.Render("✓") + " " + model +
+				" " + fmtRate(p.TokPS) + " tok/s " + dim("ttft") + " " + fmtMs(p.TTFTms)
 		}
-		line := st.Render(icon) + " " + styleDim.Render(shorten(core.SanitizeText(p.Model), w-18)) +
-			" " + fmtRate(p.TokPS) + "/s " + dim("ttft") + " " + fmtMs(p.TTFTms)
 		out.WriteString(clip(line, w) + "\n")
 		shown++
 	}
@@ -1026,10 +1040,18 @@ func feedLine(ev core.AgentEvent) string {
 
 func (m Model) renderFooter() string {
 	foot := styleInfo.Render("q") + dim(" quit  ") +
-		styleInfo.Render("space") + dim(" pause  ") +
-		styleInfo.Render("p") + dim(" probe  ") +
-		styleInfo.Render("t") + dim(" timescale  ") +
-		styleInfo.Render("?") + dim(" help")
+		styleInfo.Render("space") + dim(" pause  ")
+	// p fires real generations and the probing marker lives on the PROBES
+	// panel, which is absent without engines. Advertising it here would be
+	// a key that appears to do nothing (same rule as renderMinimal).
+	if m.cfg.Prober != nil && len(m.snap.Providers) > 0 {
+		foot += styleInfo.Render("p") + dim(" probe  ")
+	}
+	// t only changes the throughput chart; the empty setup card has none.
+	if len(m.snap.Providers) > 0 || len(m.snap.Agents) > 0 {
+		foot += styleInfo.Render("t") + dim(" timescale  ")
+	}
+	foot += styleInfo.Render("?") + dim(" help")
 	tag := ""
 	if m.cfg.Demo {
 		tag = styleWarn.Render(" DEMO ") + " "
@@ -1044,20 +1066,52 @@ func (m Model) renderEmpty() string {
 		"",
 		styleWarn.Render("no inference engines detected"),
 		dim("scanned localhost :11434 :30000 :8000 :8080 :1234 …"),
+	}
+	if m.paused {
+		// space pauses here too: without a badge the setup card stays frozen
+		// after an engine appears, with no hint that snapshots are dropped.
+		lines = append(lines, "", styleWarn.Render("‖ PAUSED"))
+	}
+	// In-session next actions first: ingest is already listening, and
+	// --agents may already be on. Restart commands come after, named as
+	// such, so first-timers do not type them into the dashboard.
+	if m.cfg.Agents {
+		lines = append(lines, "", dim("watching local agents; waiting for one to report tokens"))
+	}
+	if m.feedDown == "" && m.cfg.IngestAddr != "" {
+		if !m.cfg.Agents {
+			lines = append(lines, "")
+		}
+		lines = append(lines,
+			"POST agent events to the live ingest endpoint:",
+			styleInfo.Render("  http://"+core.SanitizeText(m.cfg.IngestAddr)+"/v1/events"),
+		)
+	}
+	lines = append(lines,
 		"",
+		dim("q quit, then re-run:"),
 		"attach anything openai-compatible:",
 		styleInfo.Render("  toktop --add http://127.0.0.1:9999"),
-		"or watch coding agents on this machine:",
-		styleInfo.Render("  toktop --agents"),
+	)
+	if !m.cfg.Agents {
+		lines = append(lines,
+			"or watch coding agents on this machine:",
+			styleInfo.Render("  toktop --agents"),
+		)
+	}
+	lines = append(lines,
 		"or preview the dashboard:",
 		styleInfo.Render("  toktop --demo"),
-	}
+	)
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(cBorder).
 		Padding(1, 3).
 		Render(strings.Join(lines, "\n"))
-	return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, card)
+	// Footer sits on the last row; Place into the remaining height so the
+	// centered card plus keys still fit the pane.
+	body := lipgloss.Place(m.w, max(m.h-2, 1), lipgloss.Center, lipgloss.Center, card)
+	return composeFrame(body, m.renderFooter(), m.w, m.h)
 }
 
 func (m Model) renderHelp() string {
@@ -1069,6 +1123,7 @@ func (m Model) renderHelp() string {
 		{"t", "toggle compressed timescale + grid"},
 		{"? / h", "toggle this help"},
 		{"", ""},
+		{"(flags)", "quit, then re-run with these"},
 		{"--demo", "simulated fleet, zero setup"},
 		{"--add URL", "attach an openai-compatible endpoint"},
 		{"ssh://host", "watch engines on another host"},
@@ -1104,22 +1159,26 @@ func (m Model) renderMinimal() string {
 		rates := agentRates(m.snap.Agents, m.clock)
 		if len(rates) == 0 {
 			b.WriteString(styleWarn.Render("no inference engines detected") + "\n")
-			b.WriteString(dim(clip("try toktop --demo or --add URL", m.w)) + "\n")
+			if m.cfg.Agents {
+				b.WriteString(dim(clip("watching local agents…", m.w)) + "\n")
+			} else {
+				b.WriteString(dim(clip("try toktop --demo or --add URL", m.w)) + "\n")
+			}
 		}
 		for _, r := range rates {
 			b.WriteString(clip(agentMiniLine(r), m.w) + "\n")
 		}
 	}
 	for _, p := range m.snap.Providers {
-		st := styleOK
+		dot := dotUp
 		if !p.OK {
-			st = styleBad
+			dot = dotBad
 		}
-		line := st.Render("●") + " " + core.SanitizeText(p.Label) + " " + fmtRate(p.OutTokPS) + " tok/s"
+		line := dot + " " + core.SanitizeText(p.Label) + " " + fmtRate(p.OutTokPS) + " tok/s"
 		if !p.OK {
-			// The dot's color alone must not carry engine state: name the
-			// failure in text and surface the reason the full view shows.
-			line += " " + st.Render("down")
+			// ✗ matches BACKENDS/probes so greyscale still reads, and "down"
+			// plus the error keep the reason the full view shows.
+			line += " " + styleBad.Render("down")
 			if msg := strings.TrimSpace(core.SanitizeText(p.Err)); msg != "" {
 				line += " " + dim(shorten(msg, 32))
 			}

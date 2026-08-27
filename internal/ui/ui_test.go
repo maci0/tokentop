@@ -204,6 +204,9 @@ func TestMinimalViewNamesDownEngines(t *testing.T) {
 	if !strings.Contains(out, "vllm") || !strings.Contains(out, "down") || !strings.Contains(out, "connection refused") {
 		t.Errorf("minimal view hides engine failure:\n%s", out)
 	}
+	if !strings.Contains(out, "✗") {
+		t.Errorf("minimal view marks down engines with color-only ●, not ✗:\n%s", out)
+	}
 }
 
 // The pre-ready frame must name itself, and its status marker comes from the
@@ -619,10 +622,65 @@ func TestStaticFrameEmptyState(t *testing.T) {
 		t.Error("empty state hint missing")
 	}
 	// Every recovery path is named: attaching an endpoint, agent watching,
-	// and the zero-setup demo.
-	for _, want := range []string{"--add", "--agents", "--demo"} {
+	// and the zero-setup demo. Flags are a re-run, so q must be visible.
+	for _, want := range []string{"--add", "--agents", "--demo", "q quit"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("empty state missing %q recovery hint", want)
+		}
+	}
+}
+
+// space still pauses on the setup card: without a badge, discovery later
+// finding an engine looks like the dashboard died.
+func TestEmptyStateShowsPaused(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.w, m.h, m.ready, m.paused = 90, 30, true, true
+	if out := strip(m.View()); !strings.Contains(out, "PAUSED") {
+		t.Errorf("paused empty state lacks PAUSED badge:\n%s", out)
+	}
+}
+
+// Empty-state copy must match how toktop was actually started: do not tell
+// someone already on --agents to pass it again, and name the ingest
+// endpoint that is already listening (the only next action that does not
+// need a restart).
+func TestEmptyStateGuidesByMode(t *testing.T) {
+	view := func(cfg Config) string {
+		m := New(cfg, nil)
+		m.w, m.h, m.ready = 90, 32, true
+		return strip(m.View())
+	}
+	on := view(Config{Version: "t", Agents: true})
+	if !strings.Contains(on, "watching local agents") {
+		t.Errorf("--agents on, but empty state does not say so:\n%s", on)
+	}
+	if strings.Contains(on, "toktop --agents") {
+		t.Errorf("empty state still tells an --agents run to pass --agents:\n%s", on)
+	}
+	ingest := view(Config{Version: "t", IngestAddr: "127.0.0.1:8420"})
+	if !strings.Contains(ingest, "http://127.0.0.1:8420/v1/events") {
+		t.Errorf("live ingest lost from empty state:\n%s", ingest)
+	}
+	m := New(Config{Version: "t", IngestAddr: "127.0.0.1:8420"}, nil)
+	m.w, m.h, m.ready, m.feedDown = 90, 32, true, "listener closed"
+	if out := strip(m.View()); strings.Contains(out, "127.0.0.1:8420") {
+		t.Errorf("dead ingest still advertised on empty state:\n%s", out)
+	}
+}
+
+func TestEmptyStateFitsPane(t *testing.T) {
+	cfg := Config{Version: "t", IngestAddr: "127.0.0.1:8420", Agents: true}
+	for _, sz := range [][2]int{{62, 30}, {90, 30}, {110, 36}} {
+		w, h := sz[0], sz[1]
+		out := StaticFrame(cfg, core.Snapshot{}, w, h)
+		if got := lipgloss.Height(out); got > h {
+			t.Errorf("%dx%d: empty frame is %d lines, overflows pane", w, h, got)
+		}
+		for i, ln := range strings.Split(out, "\n") {
+			if lw := lipgloss.Width(ln); lw > w {
+				t.Fatalf("%dx%d: line %d renders %d cells, want <= %d:\n%s",
+					w, h, i, lw, w, ln)
+			}
 		}
 	}
 }
@@ -848,6 +906,15 @@ func TestMinimalViewGuidesRecovery(t *testing.T) {
 			t.Errorf("empty minimal view missing %q:\n%s", want, out)
 		}
 	}
+	watching := New(Config{Version: "t", Agents: true}, nil)
+	watching.w, watching.h, watching.ready = 40, 12, true
+	out = strip(watching.View())
+	if !strings.Contains(out, "watching local agents") {
+		t.Errorf("minimal --agents empty view lost the wait hint:\n%s", out)
+	}
+	if strings.Contains(out, "--demo") {
+		t.Errorf("minimal --agents empty view still tells them to restart:\n%s", out)
+	}
 
 	now := time.Now()
 	agents := New(Config{Version: "t"}, nil)
@@ -1039,5 +1106,74 @@ func TestBackendsPanelMarksDownEnginesWithoutColor(t *testing.T) {
 	out := strip(m.View())
 	if !strings.Contains(out, "✗") || !strings.Contains(out, "connection refused") {
 		t.Errorf("down engine lacks shape marker or error text:\n%s", out)
+	}
+}
+
+// A failed probe must say so and keep the reason: the same row used to
+// print 0.0/s in the success shape, which hid the failure.
+func TestFailedProbeShowsError(t *testing.T) {
+	m := New(Config{Version: "t", Prober: proberFunc(func() {})}, nil)
+	nm, _ := m.Update(snapMsg(core.Snapshot{
+		Providers: []core.ProviderSnapshot{{Label: "ollama", OK: true}},
+		Probes:    []core.ProbeSample{{At: time.Now(), Model: "gone", OK: false, Err: "timeout"}},
+	}))
+	m = nm.(Model)
+	m.w, m.h, m.ready = 110, 36, true
+	out := strip(m.View())
+	for _, want := range []string{"failed", "timeout", "last failed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("failed probe missing %q:\n%s", want, out)
+		}
+	}
+	title, row := strip(m.probesTitle()), strip(m.probesBody(40, 8))
+	if strings.Contains(title, "tok/s") || strings.Contains(row, "tok/s") || strings.Contains(row, "/s") {
+		t.Errorf("failed probe still prints a rate: title %q row %q", title, row)
+	}
+}
+
+func TestSuccessfulProbeUsesTokPerSec(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.snap = core.Snapshot{
+		Providers: []core.ProviderSnapshot{{Label: "ollama", OK: true}},
+		Probes:    []core.ProbeSample{{At: time.Now(), Model: "llama3", OK: true, TokPS: 340, TTFTms: 97}},
+	}
+	if got := strip(m.probesTitle()); !strings.Contains(got, "tok/s") {
+		t.Errorf("probe title = %q, want tok/s like the rest of the dashboard", got)
+	}
+	if got := strip(m.probesBody(40, 8)); !strings.Contains(got, "tok/s") {
+		t.Errorf("probe row = %q, want tok/s", got)
+	}
+}
+
+// p and t only have a visible effect with engines (or agents, for t). The
+// compact strip already hides them; the full footer must match.
+func TestFooterOmitsDeadKeys(t *testing.T) {
+	empty := New(Config{Version: "t", Prober: proberFunc(func() {})}, nil)
+	if got := strip(empty.renderFooter()); strings.Contains(got, "probe") || strings.Contains(got, "timescale") {
+		t.Errorf("empty footer advertised keys with no effect: %q", got)
+	}
+	agents := New(Config{Version: "t", Prober: proberFunc(func() {})}, nil)
+	agents.snap = core.Snapshot{Agents: []core.AgentEvent{{Agent: "claude"}}}
+	got := strip(agents.renderFooter())
+	if strings.Contains(got, "probe") {
+		t.Errorf("agents-only footer advertised p: %q", got)
+	}
+	if !strings.Contains(got, "timescale") {
+		t.Errorf("agents-only footer lost t: %q", got)
+	}
+	full := New(Config{Version: "t", Prober: proberFunc(func() {})}, nil)
+	full.snap = core.Snapshot{Providers: []core.ProviderSnapshot{{Label: "x", OK: true}}}
+	got = strip(full.renderFooter())
+	if !strings.Contains(got, "probe") || !strings.Contains(got, "timescale") {
+		t.Errorf("engine footer lost live keys: %q", got)
+	}
+}
+
+func TestHelpSaysFlagsNeedRerun(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.help, m.w, m.h, m.ready = true, 110, 36, true
+	out := strip(m.View())
+	if !strings.Contains(out, "quit, then re-run") {
+		t.Errorf("help does not say flags need a restart:\n%s", out)
 	}
 }

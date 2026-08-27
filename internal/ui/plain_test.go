@@ -108,6 +108,17 @@ func TestPlainFrameEmptyState(t *testing.T) {
 			t.Errorf("empty plain frame missing %q in:\n%s", want, out)
 		}
 	}
+	on := PlainTextFrame(Config{Version: "t", Agents: true}, core.Snapshot{})
+	if !strings.Contains(on, "watching local agents") {
+		t.Errorf("--agents on, but plain empty does not say so:\n%s", on)
+	}
+	if strings.Contains(on, "--agents") {
+		t.Errorf("plain empty still tells an --agents run to pass --agents:\n%s", on)
+	}
+	ingest := PlainTextFrame(Config{Version: "t", IngestAddr: "127.0.0.1:8420"}, core.Snapshot{})
+	if !strings.Contains(ingest, "http://127.0.0.1:8420/v1/events") {
+		t.Errorf("plain empty lost the live ingest endpoint:\n%s", ingest)
+	}
 }
 
 // An empty feed must still say how to feed it, like the dashboard panel does.

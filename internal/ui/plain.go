@@ -35,8 +35,18 @@ func PlainTextFrame(cfg Config, s core.Snapshot) string {
 			return b.String()
 		}
 		b.WriteString("no inference engines detected\n")
-		b.WriteString("attach an engine with --add URL, watch agents with --agents,")
-		b.WriteString(" or preview with --demo\n")
+		b.WriteString("attach an engine with --add URL")
+		switch {
+		case cfg.Agents:
+			b.WriteString("; watching local agents")
+		default:
+			b.WriteString(", watch agents with --agents")
+		}
+		if cfg.IngestAddr != "" {
+			b.WriteString(fmt.Sprintf(", or POST events to http://%s/v1/events",
+				core.SanitizeText(cfg.IngestAddr)))
+		}
+		b.WriteString(", or preview with --demo\n")
 		return b.String()
 	}
 

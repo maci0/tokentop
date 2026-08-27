@@ -37,6 +37,9 @@ support channel (see SECURITY.md).
 
 ### Fixed
 
+- Empty dashboard names how to quit and re-run, shows when it is paused, and
+  does not suggest `--agents` when that watch is already on.
+- Failed probes show the error instead of a green zero rate.
 - Agent session directories on Windows (and default APFS) match the
   filesystem's case and separator rules, so transcripts are not dropped
   when an agent recorded `C:/Users/Foo` and toktop resolved `c:\users\foo`.
