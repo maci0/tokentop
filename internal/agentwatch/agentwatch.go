@@ -62,6 +62,8 @@ type Watcher struct {
 	engines       Engines
 	discoverEvery time.Duration
 	readEvery     time.Duration
+	// listAgents lists running agent processes. Nil means agentusage.Discover.
+	listAgents func() []agentusage.Process
 
 	mu      sync.Mutex
 	tracked map[int]*tracked
@@ -119,24 +121,55 @@ func (w *Watcher) Following(pid int) bool {
 	return ok
 }
 
+func (w *Watcher) runningAgents() []agentusage.Process {
+	if w.listAgents != nil {
+		return w.listAgents()
+	}
+	return agentusage.Discover()
+}
+
+// sameProcess reports whether found is the OS process already being followed
+// at that PID. Linux supplies a start time, which changes when the kernel
+// reuses the PID; when the platform does not (Darwin), tool and working
+// directory stand in.
+func sameProcess(tracked, found agentusage.Process) bool {
+	if tracked.PID != found.PID {
+		return false
+	}
+	if !tracked.Started.IsZero() && !found.Started.IsZero() {
+		return tracked.Started.Equal(found.Started)
+	}
+	return tracked.Tool == found.Tool && tracked.Dir == found.Dir
+}
+
 // discover starts following new agent processes and forgets exited ones.
 func (w *Watcher) discover(ctx context.Context) {
-	found := agentusage.Discover()
+	found := w.runningAgents()
 	live := make(map[int]bool, len(found))
 
 	w.mu.Lock()
 	var newProcs []agentusage.Process
+	var replaced, exited []*tracked
 	for _, p := range found {
 		live[p.PID] = true
-		if _, seen := w.tracked[p.PID]; !seen {
+		t, seen := w.tracked[p.PID]
+		switch {
+		case !seen:
+			newProcs = append(newProcs, p)
+		case sameProcess(t.proc, p):
+			// still the same OS process
+		default:
+			// PID reused by a different process. Drop the stale tracker
+			// now so the insert below does not treat it as still live.
+			delete(w.tracked, p.PID)
+			replaced = append(replaced, t)
 			newProcs = append(newProcs, p)
 		}
 	}
-	var gone []*tracked
 	for pid, t := range w.tracked {
 		if !live[pid] {
 			delete(w.tracked, pid)
-			gone = append(gone, t)
+			exited = append(exited, t)
 		}
 	}
 	w.mu.Unlock()
@@ -144,6 +177,12 @@ func (w *Watcher) discover(ctx context.Context) {
 	slices.SortFunc(newProcs, func(a, b agentusage.Process) int {
 		return cmp.Compare(a.PID, b.PID)
 	})
+
+	// Stop the reused-PID tracker before attaching its replacement: two
+	// watchers tailing the same transcripts would double-count growth.
+	for _, t := range replaced {
+		w.stopOne(t)
+	}
 
 	// Watch walks transcript stores; doing that under w.mu would stall
 	// report() for agents already being followed. cancel is set before
@@ -181,7 +220,7 @@ func (w *Watcher) discover(ctx context.Context) {
 			})
 		}(t, startCtx[i])
 	}
-	for _, t := range gone {
+	for _, t := range exited {
 		w.stopOne(t)
 	}
 

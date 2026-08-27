@@ -122,6 +122,125 @@ func TestWatchesARunningAgent(t *testing.T) {
 	}
 }
 
+func TestSameProcess(t *testing.T) {
+	t1 := time.Unix(100, 0)
+	t2 := time.Unix(200, 0)
+	a := agentusage.Process{PID: 1, Tool: "claude", Dir: "/a", Started: t1}
+	if !sameProcess(a, a) {
+		t.Fatal("identical process not the same")
+	}
+	reused := a
+	reused.Started = t2
+	if sameProcess(a, reused) {
+		t.Fatal("reused PID with a new start time treated as the same process")
+	}
+	otherPID := a
+	otherPID.PID = 2
+	if sameProcess(a, otherPID) {
+		t.Fatal("different PIDs treated as the same process")
+	}
+
+	// Platforms that do not report a start time (Darwin) compare tool and dir.
+	a.Started = time.Time{}
+	if !sameProcess(a, a) {
+		t.Fatal("zero start time rejected an identical process")
+	}
+	otherTool := a
+	otherTool.Tool = "codex"
+	if sameProcess(a, otherTool) {
+		t.Fatal("zero start time ignored a tool change")
+	}
+	otherDir := a
+	otherDir.Dir = "/b"
+	if sameProcess(a, otherDir) {
+		t.Fatal("zero start time ignored a directory change")
+	}
+}
+
+// A kernel-reused PID must not keep the previous process's tracker: events
+// would carry the old tool/dir, and two watchers would double-count.
+func TestPIDReuseRetargetsWatcher(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	work1 := t.TempDir()
+	work2 := t.TempDir()
+	pid := 4242
+	first := agentusage.Process{PID: pid, Tool: "claude", Dir: work1, Started: time.Unix(100, 0)}
+	next := agentusage.Process{PID: pid, Tool: "codex", Dir: work2, Started: time.Unix(200, 0)}
+	var mu sync.Mutex
+	cur := first
+
+	w := New(&recorder{}, nil)
+	w.readEvery = time.Hour
+	w.listAgents = func() []agentusage.Process {
+		mu.Lock()
+		defer mu.Unlock()
+		return []agentusage.Process{cur}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer w.stopAll()
+
+	w.discover(ctx)
+	if !w.Following(pid) {
+		t.Fatal("first process not followed")
+	}
+	w.mu.Lock()
+	old := w.tracked[pid]
+	w.mu.Unlock()
+	if old == nil {
+		t.Fatal("missing tracker")
+	}
+
+	mu.Lock()
+	cur = next
+	mu.Unlock()
+	w.discover(ctx)
+
+	select {
+	case <-old.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("old watcher still running after PID reuse")
+	}
+	w.mu.Lock()
+	got := w.tracked[pid]
+	w.mu.Unlock()
+	if got == nil {
+		t.Fatal("replacement process not followed")
+	}
+	if got == old {
+		t.Fatal("kept the stale tracker for a reused PID")
+	}
+	if got.proc.Tool != "codex" || got.proc.Dir != work2 {
+		t.Fatalf("still following the old process: %+v", got.proc)
+	}
+}
+
+func TestSamePIDKeepsTracker(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := agentusage.Process{PID: 7, Tool: "claude", Dir: t.TempDir(), Started: time.Unix(1, 0)}
+	w := New(&recorder{}, nil)
+	w.readEvery = time.Hour
+	w.listAgents = func() []agentusage.Process { return []agentusage.Process{p} }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer w.stopAll()
+
+	w.discover(ctx)
+	w.mu.Lock()
+	first := w.tracked[p.PID]
+	w.mu.Unlock()
+	if first == nil {
+		t.Fatal("not followed")
+	}
+	w.discover(ctx)
+	w.mu.Lock()
+	second := w.tracked[p.PID]
+	w.mu.Unlock()
+	if first != second {
+		t.Fatal("replaced tracker for the same process")
+	}
+}
+
 // TestForgetsExitedAgents keeps the tracking table from growing for the life
 // of the process.
 func TestForgetsExitedAgents(t *testing.T) {

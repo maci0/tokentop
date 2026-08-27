@@ -517,11 +517,12 @@ func (c *Collector) ProbeAll() {
 
 	for _, t := range live {
 		go func(t probe.Request) {
-			s := probe.Run(ctx, t)
-			c.probeMu.Lock()
-			delete(c.probeInflight, t.Base+"|"+t.Model)
-			c.probeMu.Unlock()
-			c.RecordProbe(s)
+			defer func() {
+				c.probeMu.Lock()
+				delete(c.probeInflight, t.Base+"|"+t.Model)
+				c.probeMu.Unlock()
+			}()
+			c.RecordProbe(probe.Run(ctx, t))
 		}(t)
 	}
 }
