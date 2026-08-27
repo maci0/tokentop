@@ -6,6 +6,7 @@ package agentusage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -339,11 +340,29 @@ func TestDefinedAgentIgnoresOtherDirectories(t *testing.T) {
 }
 
 func TestRegisterSpecValidates(t *testing.T) {
-	if err := RegisterSpec("", Spec{Roots: []string{"/tmp"}}); err == nil {
-		t.Error("a nameless spec should be rejected")
+	if err := RegisterSpec("", Spec{Roots: []string{"/tmp"}}); !errors.Is(err, ErrEmptyTool) {
+		t.Errorf("nameless spec = %v, want ErrEmptyTool", err)
 	}
-	if err := RegisterSpec("x", Spec{}); err == nil {
-		t.Error("a spec with no roots should be rejected")
+	if err := RegisterSpec("  ", Spec{Roots: []string{"/tmp"}}); !errors.Is(err, ErrEmptyTool) {
+		t.Errorf("whitespace name = %v, want ErrEmptyTool", err)
+	}
+	if err := RegisterSpec("x", Spec{}); !errors.Is(err, ErrNoRoots) {
+		t.Errorf("no roots = %v, want ErrNoRoots", err)
+	}
+	if err := RegisterSpec("x", Spec{Roots: []string{"", "  "}}); !errors.Is(err, ErrNoRoots) {
+		t.Errorf("blank roots = %v, want ErrNoRoots", err)
+	}
+}
+
+func TestSampleEmptyIncludesThinking(t *testing.T) {
+	if !(Sample{}).Empty() {
+		t.Fatal("zero sample must be empty")
+	}
+	if (Sample{Thinking: 12}).Empty() {
+		t.Fatal("thinking-only sample must not look empty")
+	}
+	if (Sample{Output: 1}).Empty() || (Sample{Input: 1}).Empty() || (Sample{Total: 1}).Empty() {
+		t.Fatal("any counter makes a sample non-empty")
 	}
 }
 
@@ -403,8 +422,12 @@ func TestClankerLogIsReadFromTheProjectItself(t *testing.T) {
 		`{"ts":1786923403,"provider":"x","model":"y","prompt_tokens":32027,"completion_tokens":1663,"total_tokens":33690,"ok":true}`,
 		`{"ts":1786923500,"provider":"x","model":"y","prompt_tokens":100,"completion_tokens":337,"total_tokens":437,"ok":true}`)
 	w.poll(nil)
-	if got := w.Sample().Output; got != 2000 {
-		t.Fatalf("output tokens %d, want 2000 (1663+337)", got)
+	s := w.Sample()
+	if s.Output != 2000 {
+		t.Fatalf("output tokens %d, want 2000 (1663+337)", s.Output)
+	}
+	if s.Input != 32127 {
+		t.Fatalf("input tokens %d, want 32127 (32027+100)", s.Input)
 	}
 }
 
@@ -445,8 +468,12 @@ func TestCopilotCliEventsAreRead(t *testing.T) {
 		`{"type":"assistant.message","id":"e1","data":{"messageId":"m1","usage":{"prompt_tokens":900,"completion_tokens":120,"total_tokens":1020}}}`,
 		`{"type":"assistant.message","id":"e2","data":{"messageId":"m2","usage":{"prompt_tokens":940,"completion_tokens":80,"total_tokens":1100}}}`)
 	w.poll(nil)
-	if got := w.Sample().Output; got != 200 {
-		t.Fatalf("output tokens %d, want 200 (120+80)", got)
+	s := w.Sample()
+	if s.Output != 200 {
+		t.Fatalf("output tokens %d, want 200 (120+80)", s.Output)
+	}
+	if s.Input != 1840 {
+		t.Fatalf("input tokens %d, want 1840 (900+940)", s.Input)
 	}
 }
 

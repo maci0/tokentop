@@ -4,6 +4,11 @@
 // Package agentusage reads live token counts out of the transcripts agent CLIs
 // already write to disk.
 //
+// Typical use: LoadDefinitions, Discover running agents, Watch each process's
+// working directory, then Poll or Run for Sample values. EnableOpenCodeDB
+// opts into opencode's machine-wide SQLite store; crush is read whenever the
+// sqlite build tag is on.
+//
 // Agents differ in what they print to stdout: some report token usage as they
 // stream, some only at exit, some never. They agree on something else, though,
 // which is that they keep a structured session transcript, and that transcript
@@ -42,27 +47,33 @@ import (
 	"time"
 )
 
-// Sample is cumulative usage observed since the watcher attached. Thinking is
-// the reasoning share of Output, which the agents report separately: it is what
-// the model spent before it wrote anything the user sees. Input is billed
-// prompt tokens, accrued per request the same way Output is. Total is the
-// largest per-request context size seen, not a sum: summing those would
-// count the same conversation once per turn.
+// Sample is cumulative usage observed since the watcher attached.
 type Sample struct {
-	Output   int
+	// Output is generated tokens observed since attach.
+	Output int
+	// Thinking is the reasoning share of Output, when the agent reports it
+	// separately: what the model spent before it wrote anything the user sees.
 	Thinking int
-	Total    int
-	Input    int
+	// Total is the largest per-request context size seen, not a sum: summing
+	// those would count the same conversation once per turn.
+	Total int
+	// Input is billed prompt tokens, accrued per request the same way Output is.
+	Input int
 	// At is when the reading was taken, so successive samples make a rate.
 	At time.Time
 }
 
-// Empty reports whether nothing has been observed yet.
-func (s Sample) Empty() bool { return s.Output == 0 && s.Total == 0 && s.Input == 0 }
+// Empty reports whether nothing has been observed yet. Thinking-only samples
+// count: an agent that reports reasoning without a billed output is still a
+// reading, and callers that skip Empty samples must not drop it.
+func (s Sample) Empty() bool {
+	return s.Output == 0 && s.Thinking == 0 && s.Total == 0 && s.Input == 0
+}
 
-// Rate returns tokens per second between two samples, and whether it could be
-// computed at all. It never extrapolates: without two readings and a positive
-// span there is no rate to report.
+// Rate returns output tokens per second between two samples, and whether it
+// could be computed at all. It never extrapolates: without two readings and a
+// positive span there is no rate to report. Prompt growth is Sample.Input;
+// compare that field the same way a dashboard splits in and out.
 func Rate(prev, cur Sample) (float64, bool) {
 	span := cur.At.Sub(prev.At).Seconds()
 	if span <= 0 || cur.Output <= prev.Output {
@@ -220,17 +231,33 @@ type Spec struct {
 	HeaderCwd bool `json:"header_cwd,omitempty"`
 }
 
-// RegisterSpec adds a transcript adapter for a defined agent.
+var (
+	// ErrEmptyTool is returned by RegisterSpec when the agent name is blank.
+	ErrEmptyTool = errors.New("usage spec needs an agent name")
+	// ErrNoRoots is returned by RegisterSpec when the spec names no transcript
+	// directories. errors.Is matches it through the formatted error that
+	// includes the agent name.
+	ErrNoRoots = errors.New("usage spec has no roots")
+)
+
+// RegisterSpec adds a transcript adapter for a defined agent. It returns
+// ErrEmptyTool or an error wrapping ErrNoRoots when the spec cannot be used.
 func RegisterSpec(tool string, spec Spec) error {
-	if tool == "" {
-		return errors.New("usage spec needs an agent name")
-	}
-	if len(spec.Roots) == 0 {
-		return fmt.Errorf("usage spec for %q has no roots", tool)
+	if strings.TrimSpace(tool) == "" {
+		return ErrEmptyTool
 	}
 	// {dir} lets a definition point at a store inside the reviewed project,
-	// the way clanker keeps its own.
-	patterns := append([]string(nil), spec.Roots...)
+	// the way clanker keeps its own. Blank roots are dropped rather than
+	// becoming empty WalkDir targets.
+	patterns := make([]string, 0, len(spec.Roots))
+	for _, r := range spec.Roots {
+		if strings.TrimSpace(r) != "" {
+			patterns = append(patterns, r)
+		}
+	}
+	if len(patterns) == 0 {
+		return fmt.Errorf("usage spec for %q has no roots: %w", tool, ErrNoRoots)
+	}
 	rootsFor := func(dir string) []string {
 		out := make([]string, 0, len(patterns))
 		for _, r := range patterns {
@@ -361,12 +388,12 @@ type Watcher struct {
 	baseInput map[string]int
 	seen      map[string]values // file -> this review's contribution
 	total     map[string]int
-	// sourceBase is per-session completion tokens at attach for a sessionSource
-	// (crush). completion_tokens is cumulative for the session's life, so
-	// without this a continued session would dump its history into this
-	// review the first time it was updated. nil means the source is not
-	// cumulative (opencode counts per message by timestamp).
-	sourceBase map[string]map[string]int64
+	// sourceBase is per-session counters at attach for a sessionSource
+	// (crush). completion_tokens and prompt_tokens are cumulative for the
+	// session's life, so without this a continued session would dump its
+	// history into this review the first time it was updated. nil means the
+	// source is not cumulative (opencode counts per message by timestamp).
+	sourceBase map[string]map[string]sessionCounts
 
 	// pollMu serializes reads: the ticker goroutine and a caller's final
 	// synchronous Poll both walk the same offsets and counters.
@@ -392,18 +419,23 @@ func (w *Watcher) Dir() string {
 	return w.dir
 }
 
-// Watch starts reading usage for one agent working in one directory. It
-// returns nil when that agent keeps no readable transcript, which callers
-// should treat as "no rate available" rather than an error. Files that
-// already exist are read from their current end, so a session resumed from
-// an earlier review contributes only what it adds from now on.
+// Watch starts reading usage for one agent working in one directory.
+//
+// tool is the agent name (claude, codex, crush, …). dir is the working
+// directory that attributes transcripts to this process. since bounds
+// database-backed agents (opencode, crush): only usage recorded after that
+// instant is counted. File transcripts are always tailed from their
+// attach-time end, so since does not rewind them; pass time.Now() at attach.
+//
+// It returns nil when that agent keeps no readable transcript, which callers
+// should treat as "no rate available" rather than an error.
 func Watch(tool, dir string, since time.Time) *Watcher {
 	if source, ok := sourceFor(tool); ok {
 		w := &Watcher{source: source, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
 		if ss, ok := source.(sessionSource); ok {
 			base, ok := ss.sessions(w.dirs, time.Time{})
 			if !ok {
-				base = map[string]map[string]int64{}
+				base = map[string]map[string]sessionCounts{}
 			}
 			w.sourceBase = base
 		}
@@ -570,22 +602,28 @@ func (w *Watcher) readSource() (values, bool) {
 		if !ok {
 			return values{}, false
 		}
-		var n int64
+		var outN, inN int64
 		for path, sess := range cur {
 			base := w.sourceBase[path]
 			for id, tokens := range sess {
-				d := tokens - base[id]
-				if d <= 0 {
-					continue
+				b := base[id]
+				if d := tokens.output - b.output; d > 0 {
+					if outN > int64(maxSaneTokens)-d {
+						return values{}, false
+					}
+					outN += d
 				}
-				if n > int64(maxSaneTokens)-d {
-					return values{}, false
+				if d := tokens.input - b.input; d > 0 {
+					if inN > int64(maxSaneTokens)-d {
+						return values{}, false
+					}
+					inN += d
 				}
-				n += d
 			}
 		}
-		out := counter64(n)
-		return values{output: out}, out > 0
+		out := counter64(outN)
+		in := counter64(inN)
+		return values{output: out, input: in}, out > 0 || in > 0
 	}
 	return w.source.read(w.dirs, w.since)
 }

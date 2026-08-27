@@ -43,6 +43,12 @@ var publicMethods = map[string][]string{
 	"Watcher": {"Dir", "Poll", "Run", "Sample", "Tool"},
 }
 
+var publicVars = []string{
+	"ErrEmptyTool",
+	"ErrInvalidDefinitions",
+	"ErrNoRoots",
+}
+
 func TestPublicAPI(t *testing.T) {
 	fset := token.NewFileSet()
 	filter := func(info os.FileInfo) bool {
@@ -60,10 +66,25 @@ func TestPublicAPI(t *testing.T) {
 	gotTypes := map[string][]string{}
 	gotFuncs := map[string]bool{}
 	gotMethods := map[string][]string{}
+	gotVars := map[string]bool{}
 	for _, f := range pkg.Files {
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
 			case *ast.GenDecl:
+				if d.Tok == token.VAR {
+					for _, spec := range d.Specs {
+						vs, ok := spec.(*ast.ValueSpec)
+						if !ok {
+							continue
+						}
+						for _, n := range vs.Names {
+							if n.IsExported() {
+								gotVars[n.Name] = true
+							}
+						}
+					}
+					continue
+				}
 				if d.Tok != token.TYPE {
 					continue
 				}
@@ -146,6 +167,17 @@ func TestPublicAPI(t *testing.T) {
 	for recv, want := range publicMethods {
 		if _, ok := gotMethods[recv]; !ok {
 			t.Errorf("public methods on %s %v are missing from the package", recv, want)
+		}
+	}
+
+	for name := range gotVars {
+		if !slices.Contains(publicVars, name) {
+			t.Errorf("exported var %s is not in the public API snapshot; add it (additive) or unexport it", name)
+		}
+	}
+	for _, name := range publicVars {
+		if !gotVars[name] {
+			t.Errorf("public var %s is missing from the package", name)
 		}
 	}
 }

@@ -4,6 +4,8 @@
 package agentusage
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -67,8 +69,16 @@ func TestLoadDefinitionsRejectsMalformedFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{oops"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := LoadDefinitions(path); err == nil {
+	err := LoadDefinitions(path)
+	if err == nil {
 		t.Fatal("malformed definitions accepted")
+	}
+	if !errors.Is(err, ErrInvalidDefinitions) {
+		t.Fatalf("malformed file = %v, want ErrInvalidDefinitions", err)
+	}
+	var syn *json.SyntaxError
+	if !errors.As(err, &syn) {
+		t.Fatalf("malformed file = %v, want wrapped json.SyntaxError", err)
 	}
 }
 

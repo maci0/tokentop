@@ -23,6 +23,8 @@ support channel (see SECURITY.md).
 - `agentusage.MatchingEndpoints` attributes many agent processes to engines
   in one connection-table pass.
 - windows/arm64 release binaries, matching the other ARM64 targets.
+- `agentusage.ErrEmptyTool`, `ErrNoRoots`, and `ErrInvalidDefinitions` so
+  `RegisterSpec` and `LoadDefinitions` failures are matchable with `errors.Is`.
 
 ### Changed
 
@@ -40,6 +42,9 @@ support channel (see SECURITY.md).
   when an agent recorded `C:/Users/Foo` and toktop resolved `c:\users\foo`.
 - `toktop ssh://host` on Windows uses `%USERNAME%` when `$USER` is unset, and
   strips a `DOMAIN\` prefix from the account name.
+- Crush session stores fill `Sample.Input` from `prompt_tokens`, matching the
+  other adapters.
+- `Sample.Empty` is false when only thinking tokens were observed.
 - Ingest type errors for `POST /v1/events` name the JSON field (for example
   `prompt_tokens must be an integer`) instead of the internal Go type.
 - `go install` binaries report the installed module version from `--version`

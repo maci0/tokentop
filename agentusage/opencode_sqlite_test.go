@@ -89,9 +89,9 @@ func TestOpenCodeDBCountsThisReviewOnly(t *testing.T) {
 	}
 
 	addMessage(t, path, "m1", "s-mine", start.Add(time.Second),
-		`{"role":"assistant","tokens":{"output":324,"reasoning":52,"total":131769}}`)
+		`{"role":"assistant","tokens":{"output":324,"reasoning":52,"total":131769,"input":900}}`)
 	addMessage(t, path, "m2", "s-mine", start.Add(2*time.Second),
-		`{"role":"assistant","tokens":{"output":120,"reasoning":8,"total":131900}}`)
+		`{"role":"assistant","tokens":{"output":120,"reasoning":8,"total":131900,"input":40}}`)
 	// A concurrent review in another directory, which must not be counted.
 	addMessage(t, path, "m3", "s-theirs", start.Add(time.Second),
 		`{"role":"assistant","tokens":{"output":7777,"total":900000}}`)
@@ -106,6 +106,9 @@ func TestOpenCodeDBCountsThisReviewOnly(t *testing.T) {
 	}
 	if s.Total != 131900 {
 		t.Fatalf("total %d, want the largest context reported, 131900", s.Total)
+	}
+	if s.Input != 940 {
+		t.Fatalf("input tokens %d, want 940 (900+40)", s.Input)
 	}
 }
 

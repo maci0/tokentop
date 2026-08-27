@@ -5,6 +5,8 @@ package agentusage
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -75,6 +77,11 @@ type definitionFile map[string]struct {
 	} `json:"usage,omitempty"`
 }
 
+// ErrInvalidDefinitions is returned by LoadDefinitions when the file exists
+// but is not valid JSON. The json.SyntaxError (or Decoder error) is wrapped,
+// so errors.As still recovers the parse position.
+var ErrInvalidDefinitions = errors.New("malformed agent definitions")
+
 // LoadDefinitions reads agent definitions from a JSON file, teaching this
 // package about agents it was not compiled to know, including where they keep
 // their transcripts:
@@ -93,7 +100,7 @@ func LoadDefinitions(path string) error {
 	}
 	var file definitionFile
 	if err := json.Unmarshal(data, &file); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrInvalidDefinitions, err)
 	}
 	for name, def := range file {
 		if def.Usage == nil || len(def.Usage.Roots) == 0 || strings.TrimSpace(name) == "" {

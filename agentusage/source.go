@@ -22,6 +22,13 @@ type usageSource interface {
 	read(dirs []string, since time.Time) (values, bool)
 }
 
+// sessionCounts is one session's cumulative counters, snapshotted at attach
+// so a continued session contributes only growth after that.
+type sessionCounts struct {
+	output int64
+	input  int64
+}
+
 // sessionSource reports per-session cumulative counters. Watch snapshots
 // them at attach so a continued session contributes only what it adds,
 // matching the file adapters. The outer key is the database path, so two
@@ -31,7 +38,7 @@ type usageSource interface {
 // since returns sessions written at or after that instant, which is enough
 // to compute growth: untouched sessions contribute a zero delta.
 type sessionSource interface {
-	sessions(dirs []string, since time.Time) (map[string]map[string]int64, bool)
+	sessions(dirs []string, since time.Time) (map[string]map[string]sessionCounts, bool)
 }
 
 var (
@@ -53,6 +60,8 @@ func sourceFor(tool string) (usageSource, bool) {
 // agent, and this switch decides whether a program that has it actually opens
 // the operator's session database. Neither gate implies the other.
 //
-// It reports whether this build can read it: false means the binary was
-// compiled without `-tags sqlite`, and nothing was enabled.
+// Call it before Watch or Supported for "opencode": a watcher built while
+// the store is off cannot be turned on later. It reports whether this build
+// can read it: false means the binary was compiled without `-tags sqlite`,
+// and nothing was enabled.
 func EnableOpenCodeDB(on bool) bool { return setOpenCodeDB(on) }

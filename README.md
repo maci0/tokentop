@@ -85,6 +85,45 @@ imports, so both tools report the same numbers. Agents defined in
 at startup rather than silently shrinking the watch to the built-in agents.
 Set `GAUNTLET_HOME` to read that file from somewhere else.
 
+### Using the Go package
+
+Import `github.com/maci0/toktop/agentusage` to discover agent processes and
+read the token counts they already write:
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/maci0/toktop/agentusage"
+)
+
+func main() {
+	if err := agentusage.LoadDefinitions(agentusage.DefinitionsPath()); err != nil {
+		fmt.Println(err) // malformed file; a missing one is not an error
+	}
+	agentusage.EnableOpenCodeDB(true) // no-op without -tags sqlite
+
+	for _, p := range agentusage.Discover() {
+		w := agentusage.Watch(p.Tool, p.Dir, time.Now())
+		if w == nil {
+			continue // this agent keeps no readable transcript
+		}
+		s := w.Poll()
+		if s.Empty() {
+			continue
+		}
+		fmt.Printf("%s pid %d: %d output, %d prompt\n", p.Tool, p.PID, s.Output, s.Input)
+	}
+}
+```
+
+`RegisterSpec` teaches the package about an agent it was not compiled to know.
+`errors.Is` matches `ErrEmptyTool` and `ErrNoRoots` on a rejected spec, and
+`ErrInvalidDefinitions` on a malformed definitions file.
+
 ## What it shows
 
 - **Backends** - every engine found locally or via ssh, with model, version,

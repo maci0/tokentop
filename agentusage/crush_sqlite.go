@@ -18,7 +18,7 @@ import (
 // root crush resolves (the git root, the way its own config discovery does).
 //
 //	sessions.completion_tokens  what the model generated, which is output here
-//	sessions.prompt_tokens      input, which this package never counts
+//	sessions.prompt_tokens      billed prompt, which is input here
 //	sessions.updated_at         when the row last changed, which bounds the review
 //
 // That last column carries two units. The schema comments call it
@@ -66,11 +66,14 @@ func crushDBPaths(dirs []string) []string {
 func (crushDBSource) read(dirs []string, since time.Time) (values, bool) {
 	var v values
 	for _, path := range crushDBPaths(dirs) {
-		if out, ok := readCrushDB(path, since); ok {
-			v.output = satAdd(v.output, out)
+		got, ok := readCrushDB(path, since)
+		if !ok {
+			continue
 		}
+		v.output = satAdd(v.output, got.output)
+		v.input = satAdd(v.input, got.input)
 	}
-	return v, v.output > 0
+	return v, v.output > 0 || v.input > 0
 }
 
 // crushDBPath finds the database crush would use for a directory, walking up
@@ -100,53 +103,53 @@ func crushDBPath(dir string) string {
 	return ""
 }
 
-// crushUsageQuery sums the generated tokens of every session written since a
-// point in time. Prompt tokens are input, which this package never reports.
+// crushUsageQuery sums generated and prompt tokens of every session written
+// since a point in time.
 const crushUsageQuery = `
-	SELECT COALESCE(SUM(completion_tokens), 0)
+	SELECT COALESCE(SUM(completion_tokens), 0), COALESCE(SUM(prompt_tokens), 0)
 	FROM sessions
 	WHERE (CASE WHEN updated_at > 100000000000 THEN updated_at ELSE updated_at * 1000 END) >= ?`
 
-func readCrushDB(path string, since time.Time) (int, bool) {
+func readCrushDB(path string, since time.Time) (values, bool) {
 	// mode=ro leaves the database alone; a missing or unreadable one is an
 	// answer ("nothing to report"), not an error worth surfacing.
 	db, err := openReadOnly(path)
 	if err != nil {
-		return 0, false
+		return values{}, false
 	}
 	defer db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), dbQueryTimeout)
 	defer cancel()
 
-	var out sql.NullInt64
-	if err := db.QueryRowContext(ctx, crushUsageQuery, since.UnixMilli()).Scan(&out); err != nil {
-		return 0, false
+	var out, in sql.NullInt64
+	if err := db.QueryRowContext(ctx, crushUsageQuery, since.UnixMilli()).Scan(&out, &in); err != nil {
+		return values{}, false
 	}
-	n := counter64(out.Int64)
-	if n <= 0 {
-		return 0, false
+	v := values{output: counter64(out.Int64), input: counter64(in.Int64)}
+	if v.output <= 0 && v.input <= 0 {
+		return values{}, false
 	}
-	return n, true
+	return v, true
 }
 
 const crushSessionsQuery = `
-	SELECT id, completion_tokens
+	SELECT id, completion_tokens, prompt_tokens
 	FROM sessions`
 
 const crushSessionsSinceQuery = crushSessionsQuery + `
 	WHERE (CASE WHEN updated_at > 100000000000 THEN updated_at ELSE updated_at * 1000 END) >= ?`
 
-// sessions returns each database's current per-session completion tokens.
-// Watch snapshots this at attach so a continued session contributes only
-// what it adds afterwards, matching the file adapters. A missing or
+// sessions returns each database's current per-session completion and prompt
+// tokens. Watch snapshots this at attach so a continued session contributes
+// only what it adds afterwards, matching the file adapters. A missing or
 // unreadable store is not an error: most trees have never run crush.
 //
 // A zero since reads every session (the attach baseline). After that, only
 // rows touched since the review started: idle history is not re-scanned
 // on every poll.
-func (crushDBSource) sessions(dirs []string, since time.Time) (map[string]map[string]int64, bool) {
-	out := map[string]map[string]int64{}
+func (crushDBSource) sessions(dirs []string, since time.Time) (map[string]map[string]sessionCounts, bool) {
+	out := map[string]map[string]sessionCounts{}
 	for _, path := range crushDBPaths(dirs) {
 		sess, ok := readCrushSessions(path, since)
 		if !ok {
@@ -157,7 +160,7 @@ func (crushDBSource) sessions(dirs []string, since time.Time) (map[string]map[st
 	return out, true
 }
 
-func readCrushSessions(path string, since time.Time) (map[string]int64, bool) {
+func readCrushSessions(path string, since time.Time) (map[string]sessionCounts, bool) {
 	db, err := openReadOnly(path)
 	if err != nil {
 		return nil, false
@@ -179,15 +182,16 @@ func readCrushSessions(path string, since time.Time) (map[string]int64, bool) {
 	}
 	defer rows.Close()
 
-	out := map[string]int64{}
+	out := map[string]sessionCounts{}
 	for rows.Next() {
 		var id string
-		var n sql.NullInt64
-		if err := rows.Scan(&id, &n); err != nil {
+		var n, in sql.NullInt64
+		if err := rows.Scan(&id, &n, &in); err != nil {
 			return nil, false
 		}
-		if v := counter64(n.Int64); v > 0 {
-			out[id] = int64(v)
+		c := sessionCounts{output: int64(counter64(n.Int64)), input: int64(counter64(in.Int64))}
+		if c.output > 0 || c.input > 0 {
+			out[id] = c
 		}
 	}
 	if err := rows.Err(); err != nil {
