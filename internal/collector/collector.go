@@ -59,9 +59,6 @@ type Collector struct {
 }
 
 func New(providers []provider.Provider, interval time.Duration) *Collector {
-	if interval <= 0 {
-		interval = time.Second
-	}
 	return &Collector{
 		providers:     providers,
 		interval:      interval,
@@ -146,9 +143,6 @@ func (c *Collector) sysSnapshot() *core.SysSample {
 // startProcPoller refreshes the process table in the background; emit never
 // blocks on it (Windows CIM enumeration takes seconds).
 func (c *Collector) startProcPoller(ctx context.Context) {
-	if c.procFn == nil {
-		return
-	}
 	go func() {
 		t := time.NewTicker(c.interval)
 		defer t.Stop()

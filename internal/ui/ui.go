@@ -403,13 +403,13 @@ func (m Model) renderCharts() string {
 	agg, grid := m.outSeries(w, cad)
 	out := panel(
 		m.throughputTitle(),
-		BrailleChart(agg, w, outH, ChartStyle{Heat: heatColor, FadeAge: true, Grid: grid}),
+		BrailleChart(agg, w, outH, ChartStyle{Heat: heatColor, Grid: grid}),
 		w, outH,
 	)
 	in := panel(
 		"PROMPT "+styleInfo.Render("▼ "+fmtRate(aggInAt(m.snap, m.clock))+" tok/s"),
 		BrailleChart(aggHist(m.snap, false, w, cad), w, 1,
-			ChartStyle{Heat: func(float64) lipgloss.Color { return cTeal }, FadeAge: true}),
+			ChartStyle{Heat: func(float64) lipgloss.Color { return cTeal }}),
 		w, 1,
 	)
 	return out + "\n" + in
@@ -429,7 +429,7 @@ func (m Model) outSeries(w int, cadence time.Duration) ([]float64, map[int]bool)
 	if !m.chartCompressed {
 		return aggHist(m.snap, true, w, cadence), nil
 	}
-	vals, bounds := compressSeries(timedSeries(m.snap, true, cadence), w, compressBlock)
+	vals, bounds := compressSeries(timedSeries(m.snap, cadence), w, compressBlock)
 	return vals, bounds
 }
 
@@ -461,20 +461,16 @@ type timedVal struct {
 // timedSeries flattens every provider's history onto absolute timestamps
 // spaced one cadence apart, tagging each sample with its engine: compressed
 // buckets must tell engines apart to average within one and sum across all.
-func timedSeries(s core.Snapshot, out bool, cadence time.Duration) []timedVal {
+func timedSeries(s core.Snapshot, cadence time.Duration) []timedVal {
 	var tv []timedVal
 	var end time.Time
 	for i := range s.Providers {
 		p := &s.Providers[i]
-		vals, t0 := p.OutHist, p.OutT0
-		if !out {
-			vals, t0 = p.InHist, p.InT0
-		}
-		if t0.IsZero() {
+		if p.OutT0.IsZero() {
 			continue
 		}
-		for j, v := range vals {
-			t := t0.Add(time.Duration(j) * cadence)
+		for j, v := range p.OutHist {
+			t := p.OutT0.Add(time.Duration(j) * cadence)
 			tv = append(tv, timedVal{t: t, v: v, s: i})
 			if t.After(end) {
 				end = t
@@ -486,7 +482,7 @@ func timedSeries(s core.Snapshot, out bool, cadence time.Duration) []timedVal {
 	}
 	if !end.IsZero() {
 		n := core.HistoryLen
-		hist := agentDenseHist(s.Agents, out, end, n, cadence)
+		hist := agentDenseHist(s.Agents, true, end, n, cadence)
 		src := len(s.Providers)
 		any := false
 		for _, v := range hist {
@@ -681,9 +677,6 @@ func (m Model) renderSystem() string {
 // All values can originate from another host (ssh vitals) or vendor tooling,
 // so they pass the terminal sanitizer.
 func hostSegments(sy *core.SysSample) []string {
-	if sy == nil {
-		return nil
-	}
 	var segs []string
 	if sy.CPUModel != "" {
 		segs = append(segs, dim(shorten(core.SanitizeText(sy.CPUModel), 22)))
@@ -901,7 +894,7 @@ func (m Model) probesBody(w, h int) string {
 	vals := probeSeries(m.snap, w, m.chartCadence())
 	chartH := clampi(h-3-len(m.snap.Providers), 2, 8)
 	var out strings.Builder
-	out.WriteString(BrailleChart(vals, w, chartH, ChartStyle{Heat: heatColor, FadeAge: true}) + "\n")
+	out.WriteString(BrailleChart(vals, w, chartH, ChartStyle{Heat: heatColor}) + "\n")
 	shown := 0
 	for i := len(m.snap.Probes) - 1; i >= 0 && shown < 2; i-- {
 		p := m.snap.Probes[i]

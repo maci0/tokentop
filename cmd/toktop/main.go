@@ -300,7 +300,7 @@ func main() {
 	}
 	if *agents && recorder != nil {
 		// engineAddrs is nil in demo mode, where nothing real is measured.
-		go agentwatch.New(recorder, engineAddrs, 0, 0).Run(ctx)
+		go agentwatch.New(recorder, engineAddrs).Run(ctx)
 	}
 
 	if !*noIngest && recorder != nil {
@@ -640,10 +640,8 @@ func warnIgnoredFrameEnv(once bool) {
 	}
 }
 
-// validateFlags rejects out-of-range values at startup instead of letting
-// them be coerced downstream (a non-positive interval silently became 1s
-// inside the collector): a running dashboard that ignores what it was asked
-// to do is a misconfiguration nobody can see.
+// validateFlags rejects out-of-range values at startup: a running dashboard
+// that ignores what it was asked to do is a misconfiguration nobody can see.
 func validateFlags(once bool, interval time.Duration, probeSecs, frames int) error {
 	if interval <= 0 {
 		return fmt.Errorf("--interval must be positive, got %s", interval)

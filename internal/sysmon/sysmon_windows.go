@@ -31,10 +31,7 @@ type memoryStatusEx struct {
 
 func init() {
 	platformMemory = sampleMemoryWindows
-	platformLoad = nil // no loadavg concept on Windows
-	platformTemps = func() []core.TempReading {
-		return nil // WMI thermal zones are rarely populated by vendors
-	}
+	// No loadavg; WMI thermal zones are rarely populated by vendors.
 	platformCPUModel = func() string { return os.Getenv("PROCESSOR_IDENTIFIER") }
 }
 

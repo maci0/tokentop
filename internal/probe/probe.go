@@ -19,33 +19,22 @@ import (
 
 var client = &http.Client{Timeout: 30 * time.Second}
 
-// defaultProbeTokens sizes a probe when the caller gives no bound: a few
-// dozen tokens are plenty to time first-token latency and decode rate.
-const defaultProbeTokens = 32
-
-// maxProbeTokens is the hard ceiling on one probe's generation. Request is
-// an exported struct, so the cap lives here at the spender: however a future
-// caller configures it, a benchmark can never turn into an unbounded run.
-const maxProbeTokens = 512
+// probeTokens sizes a probe: a few dozen tokens are plenty to time
+// first-token latency and decode rate without turning a benchmark into an
+// unbounded generation.
+const probeTokens = 32
 
 const promptText = "Count from one to twenty as words."
 
 type Request struct {
-	Kind      string // core.KindOllama | openai-compatible kinds
-	Base      string
-	Model     string
-	MaxTokens int
+	Kind  string // core.KindOllama | openai-compatible kinds
+	Base  string
+	Model string
 }
 
 // Run performs one probe and returns its sample (OK=false with Err set on failure).
 func Run(ctx context.Context, r Request) core.ProbeSample {
 	s := core.ProbeSample{At: time.Now(), Addr: r.Base, Model: r.Model}
-	switch {
-	case r.MaxTokens <= 0:
-		r.MaxTokens = defaultProbeTokens
-	case r.MaxTokens > maxProbeTokens:
-		r.MaxTokens = maxProbeTokens
-	}
 	start := time.Now()
 	var (
 		ttft    time.Duration
@@ -88,7 +77,7 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 		"prompt": promptText,
 		"stream": true,
 		"options": map[string]any{
-			"num_predict": r.MaxTokens,
+			"num_predict": probeTokens,
 			"temperature": 0.2,
 		},
 	})
@@ -149,7 +138,7 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 		"messages": []map[string]string{
 			{"role": "user", "content": promptText},
 		},
-		"max_tokens":     r.MaxTokens,
+		"max_tokens":     probeTokens,
 		"temperature":    0.2,
 		"stream":         true,
 		"stream_options": map[string]bool{"include_usage": true},

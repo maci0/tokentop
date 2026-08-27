@@ -40,9 +40,8 @@ var brailleBits = [4][2]byte{
 
 // ChartStyle tunes BrailleChart rendering.
 type ChartStyle struct {
-	Heat    func(float64) lipgloss.Color
-	FadeAge bool         // bloom: older columns melt into the background
-	Grid    map[int]bool // columns marked true get a faint vertical guide
+	Heat func(float64) lipgloss.Color
+	Grid map[int]bool // columns marked true get a faint vertical guide
 }
 
 // fadeColor blends a hex color toward black by factor f (0..1). Non-hex
@@ -93,16 +92,12 @@ func fadeClamped(c lipgloss.Color, f, min float64) lipgloss.Color {
 
 // BrailleChart renders an area chart as braille dot-matrix, btop-style: every
 // terminal cell is a 2x4 dot grid, so a w*h chart resolves w*2 by h*4 dots -
-// far finer than the block ramp. Values fill upward from the baseline. With
-// FadeAge, older columns fade toward black; Grid columns draw a faint dotted
-// baseline guide through empty cells (used to mark timescale boundaries).
+// far finer than the block ramp. Values fill upward from the baseline. Older
+// columns fade toward black; Grid columns draw a faint dotted baseline guide
+// through empty cells (used to mark timescale boundaries).
 func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 	if w <= 0 || h <= 0 {
 		return ""
-	}
-	heat := st.Heat
-	if heat == nil {
-		heat = func(float64) lipgloss.Color { return lipgloss.Color("") }
 	}
 	cols, peak := tailCols(vals, w)
 
@@ -112,7 +107,7 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 		pattern int
 	}
 	cache := map[cacheKey]string{}
-	// FadeAge recomputes a clamped WCAG blend per cell, and each blend can
+	// Age fade recomputes a clamped WCAG blend per cell, and each blend can
 	// bisect up to 16 times (hex parse + luminance per step). The blend
 	// depends only on the base color and the column, never on the row or the
 	// value's height, so results are memoized: w*h blends collapse to at
@@ -121,10 +116,7 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 		color string
 		cx    int
 	}
-	var fades map[fadeKey]lipgloss.Color
-	if st.FadeAge {
-		fades = make(map[fadeKey]lipgloss.Color)
-	}
+	fades := make(map[fadeKey]lipgloss.Color)
 	rows := make([]strings.Builder, h)
 	for cy := range h {
 		for cx := range w {
@@ -141,8 +133,8 @@ func BrailleChart(vals []float64, w, h int, st ChartStyle) string {
 			if pattern == 0 && cy == h-1 && st.Grid[cx] {
 				pattern = int(brailleBits[3][0])
 			}
-			col := heat(frac)
-			if frac > 0.02 && fades != nil {
+			col := st.Heat(frac)
+			if frac > 0.02 {
 				k := fadeKey{color: string(col), cx: cx}
 				if fc, ok := fades[k]; ok {
 					col = fc

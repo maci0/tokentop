@@ -13,7 +13,7 @@ import (
 func init() {
 	platformMemory = sampleMemoryDarwin
 	platformLoad = sampleLoadDarwin
-	platformTemps = func() []core.TempReading { return nil } // needs root powermetrics
+	// Temps need root powermetrics.
 	platformCPUModel = func() string { s, _ := unix.Sysctl("machdep.cpu.brand_string"); return s }
 }
 

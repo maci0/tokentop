@@ -657,7 +657,7 @@ func TestTimedSeriesHonorsCadence(t *testing.T) {
 	s := core.Snapshot{Providers: []core.ProviderSnapshot{
 		{OutT0: t0, OutHist: []float64{1, 2}},
 	}}
-	tv := timedSeries(s, true, 2*time.Second)
+	tv := timedSeries(s, 2*time.Second)
 	if len(tv) != 2 {
 		t.Fatalf("len = %d, want 2", len(tv))
 	}

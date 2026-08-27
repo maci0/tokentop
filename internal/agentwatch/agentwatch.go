@@ -73,18 +73,12 @@ type tracked struct {
 	viaEngine string
 }
 
-// New returns a watcher feeding rec. Zero intervals take the defaults, and a
-// nil engines function means nothing is being measured elsewhere.
-func New(rec Recorder, engines Engines, discoverEvery, readEvery time.Duration) *Watcher {
-	if discoverEvery <= 0 {
-		discoverEvery = defaultDiscoverEvery
-	}
-	if readEvery <= 0 {
-		readEvery = defaultReadEvery
-	}
+// New returns a watcher feeding rec. A nil engines function means nothing is
+// being measured elsewhere.
+func New(rec Recorder, engines Engines) *Watcher {
 	return &Watcher{
 		rec: rec, engines: engines,
-		discoverEvery: discoverEvery, readEvery: readEvery,
+		discoverEvery: defaultDiscoverEvery, readEvery: defaultReadEvery,
 		tracked: map[int]*tracked{},
 	}
 }

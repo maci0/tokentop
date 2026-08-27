@@ -73,7 +73,8 @@ func TestWatchesARunningAgent(t *testing.T) {
 	}()
 
 	rec := &recorder{}
-	w := New(rec, nil, 200*time.Millisecond, 100*time.Millisecond)
+	w := New(rec, nil)
+	w.discoverEvery, w.readEvery = 200*time.Millisecond, 100*time.Millisecond
 	ctx := t.Context()
 	go w.Run(ctx)
 
@@ -117,7 +118,8 @@ func TestForgetsExitedAgents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := New(&recorder{}, nil, 100*time.Millisecond, time.Hour)
+	w := New(&recorder{}, nil)
+	w.discoverEvery, w.readEvery = 100*time.Millisecond, time.Hour
 	ctx := t.Context()
 	go w.Run(ctx)
 
@@ -152,7 +154,8 @@ func TestSilentAgentProducesNoEvents(t *testing.T) {
 	}()
 
 	rec := &recorder{}
-	w := New(rec, nil, 100*time.Millisecond, 50*time.Millisecond)
+	w := New(rec, nil)
+	w.discoverEvery, w.readEvery = 100*time.Millisecond, 50*time.Millisecond
 	ctx := t.Context()
 	go w.Run(ctx)
 
@@ -267,8 +270,8 @@ func TestEngineTakesPrecedence(t *testing.T) {
 	}()
 
 	rec := &recorder{}
-	w := New(rec, func() []string { return []string{engine} },
-		150*time.Millisecond, 100*time.Millisecond)
+	w := New(rec, func() []string { return []string{engine} })
+	w.discoverEvery, w.readEvery = 150*time.Millisecond, 100*time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go w.Run(ctx)
@@ -318,7 +321,7 @@ func TestAttributedAgentKeepsReporting(t *testing.T) {
 	}
 
 	rec := &recorder{}
-	w := New(rec, nil, time.Hour, time.Hour)
+	w := New(rec, nil)
 	tr := &tracked{
 		proc:  agentusage.Process{PID: 1, Tool: "claude", Dir: work},
 		watch: agentusage.Watch("claude", work, time.Now()),
@@ -374,7 +377,7 @@ func TestReportsPromptAndThinking(t *testing.T) {
 	}
 
 	rec := &recorder{}
-	w := New(rec, nil, time.Hour, time.Hour)
+	w := New(rec, nil)
 	tr := &tracked{
 		proc:  agentusage.Process{PID: 1, Tool: "claude", Dir: work},
 		watch: agentusage.Watch("claude", work, time.Now()),

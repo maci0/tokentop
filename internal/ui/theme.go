@@ -120,10 +120,7 @@ func kindBadge(kind string) string {
 }
 
 func fmtKind(k string) string {
-	for len(k) < 9 {
-		k += " "
-	}
-	return k[:9]
+	return fmt.Sprintf("%-9.9s", k)
 }
 
 // heatColor maps 0..1 intensity onto a cold->hot ramp. The quiet end floors

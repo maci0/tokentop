@@ -216,19 +216,16 @@ func TestRunOpenAINullErrorIsNotFailure(t *testing.T) {
 	}
 }
 
-// MaxTokens is an exported request field, but the generation cap must hold
-// at the spender: an absurd caller value is clamped before it reaches the
-// engine, so no configuration can turn a benchmark into an unbounded run.
-func TestRunClampsMaxTokens(t *testing.T) {
+func TestRunRequestsBoundedGeneration(t *testing.T) {
 	var gotOpenAI map[string]any
 	openai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&gotOpenAI)
 		w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer openai.Close()
-	Run(context.Background(), Request{Kind: core.KindVLLM, Base: openai.URL, Model: "m", MaxTokens: 1 << 20})
-	if n := gotOpenAI["max_tokens"]; n != float64(maxProbeTokens) {
-		t.Errorf("openai max_tokens = %v, want clamped %d", n, maxProbeTokens)
+	Run(context.Background(), Request{Kind: core.KindVLLM, Base: openai.URL, Model: "m"})
+	if n := gotOpenAI["max_tokens"]; n != float64(probeTokens) {
+		t.Errorf("openai max_tokens = %v, want %d", n, probeTokens)
 	}
 
 	var gotOllama map[string]any
@@ -237,9 +234,9 @@ func TestRunClampsMaxTokens(t *testing.T) {
 		w.Write([]byte(`{"response":"","done":true}` + "\n"))
 	}))
 	defer ollama.Close()
-	Run(context.Background(), Request{Kind: core.KindOllama, Base: ollama.URL, Model: "m", MaxTokens: -7})
+	Run(context.Background(), Request{Kind: core.KindOllama, Base: ollama.URL, Model: "m"})
 	opts := gotOllama["options"].(map[string]any)
-	if n := opts["num_predict"]; n != float64(defaultProbeTokens) {
-		t.Errorf("ollama num_predict = %v, want default %d", n, defaultProbeTokens)
+	if n := opts["num_predict"]; n != float64(probeTokens) {
+		t.Errorf("ollama num_predict = %v, want %d", n, probeTokens)
 	}
 }
