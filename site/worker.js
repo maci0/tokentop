@@ -108,7 +108,7 @@ AGENTS  <span class="dim">read from their own session logs</span>
   opencode    <span class="up">▲ 612 tok/s</span>    41k tok    <span class="up">● live</span></code></pre>
 
   <h2>Install</h2>
-<pre tabindex="0"><code>go install github.com/maci0/toktop/cmd/toktop@latest
+<pre tabindex="0"><code>go install -tags sqlite github.com/maci0/toktop/cmd/toktop@latest
 <span class="dim"># or grab a binary: linux / macos / windows, amd64 + arm64</span></code></pre>
 
   <h2>Run</h2>

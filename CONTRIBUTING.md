@@ -43,7 +43,7 @@ build automatically (hot reload); pass `--no-hot-reload` to disable.
 and rendered by `scripts/screenshot.py`:
 
 ```
-make build VERSION=0.4.5
+make build VERSION=0.5.0
 tmux new-session -d -x 180 -y 50 -s shot './toktop --demo --seed 7 --no-hot-reload'
 sleep 60 && tmux send-keys -t shot p          # let the charts fill, then probe
 tmux capture-pane -e -p -t shot > .scratch/capture.txt
@@ -115,11 +115,23 @@ cleanly, on the author's OS.
 
 ## Releases
 
-Push a tag `v*`: GitHub Actions tests, cross-compiles every platform,
-generates checksums and a CycloneDX SBOM, and attaches binaries to the
-release. Locally, `make release VERSION=x.y.z` reproduces the same artifacts
-in `dist/`. The checksums tarball is built deterministically: members are
-sorted, timestamps come from `SOURCE_DATE_EPOCH` (defaulting to the commit
-time), ownership is normalized, and gzip's name/mtime header is stripped, so
-two builds of one source produce byte-identical archives. This needs GNU tar;
-where the system tar is bsdtar (macOS), install GNU tar as `gtar`.
+Versions are 0.x: the CLI flags, the ingest `/v1/events` body, and the
+`agentusage` Go API may change without a major bump. Move the Unreleased
+section in [CHANGELOG.md](CHANGELOG.md) under the new version before tagging.
+
+The source stamp is empty. `make build` writes `dev` via `-ldflags
+-X main.version=...`; a release tag writes the version with the `v` prefix
+stripped. `go install` without ldflags reads the module version Go embeds, so
+`--version` and `toktop update` see the tag that was installed, not `dev` and
+not a leftover `0.1.0`.
+
+Push a tag `v*`: GitHub Actions tests (both halves of the sqlite tag gate),
+cross-compiles every platform, generates checksums and a CycloneDX SBOM, and
+attaches binaries to the release. The host-platform artifact is smoke-tested
+for `--version` and for the sqlite driver actually being linked. Locally,
+`make release VERSION=x.y.z` reproduces the same artifacts in `dist/`. The
+checksums tarball is built deterministically: members are sorted, timestamps
+come from `SOURCE_DATE_EPOCH` (defaulting to the commit time), ownership is
+normalized, and gzip's name/mtime header is stripped, so two builds of one
+source produce byte-identical archives. This needs GNU tar; where the system
+tar is bsdtar (macOS), install GNU tar as `gtar`.

@@ -27,7 +27,10 @@ jobs:
         run: make vet-cross
 
       - name: test before shipping
-        run: go test -race -shuffle=on ./...
+        # make test covers both halves of the sqlite tag gate; the artifacts
+        # below are built with TAGS=sqlite, so shipping without that half would
+        # leave the linked driver untested in this job.
+        run: make test
 
       - name: build all platforms
         id: build
@@ -38,10 +41,25 @@ jobs:
           # metadata live in the Makefile so local and CI releases cannot
           # drift apart.
           make release VERSION="$VERSION"
-          # smoke test the host-platform artifact: proves the binary runs and
-          # carries the release version, not the default stamp
+          # smoke test the host-platform artifact: proves the binary runs,
+          # carries the release version (not the unstamped fallback), and
+          # actually linked the sqlite driver the Makefile ships.
           echo "smoke test: toktop_${VERSION}_linux_amd64"
-          test "$("./dist/toktop_${VERSION}_linux_amd64" --version)" = "toktop $VERSION"
+          bin="./dist/toktop_${VERSION}_linux_amd64"
+          test "$("$bin" --version)" = "toktop $VERSION"
+          set +e
+          smoke="$("$bin" --agents --opencode-db --once --demo --frames 1 --no-hot-reload 2>&1)"
+          status=$?
+          set -e
+          if printf '%s\n' "$smoke" | grep -F -q 'needs a build with -tags sqlite'; then
+            echo "release binary is missing the sqlite tag" >&2
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            printf '%s\n' "$smoke" >&2
+            echo "smoke run of $bin failed" >&2
+            exit 1
+          fi
 
       - name: generate dependency sbom
         run: make sbom VERSION="${GITHUB_REF_NAME#v}"

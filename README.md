@@ -17,10 +17,12 @@ toktop ssh://maci@box    # watch engines on another host
 ## Install
 
 ```
-go install github.com/maci0/toktop/cmd/toktop@latest
+go install -tags sqlite github.com/maci0/toktop/cmd/toktop@latest
 ```
 
-Or download a binary for linux/macos/windows (amd64 + arm64) from the
+`-tags sqlite` matches the GitHub binaries and `make build`: crush and
+opencode session databases cannot be read without it. Or download a binary
+for linux/macos/windows (amd64 + arm64) from the
 [releases](https://github.com/maci0/toktop/releases). An installed binary
 updates itself in place:
 
@@ -340,5 +342,8 @@ attack surface, what toktop trusts, and the mitigations already in place.
 
 Releases: push a tag `v*` and GitHub Actions attaches binaries for
 linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, plus a
-CycloneDX SBOM of every dependency (`make sbom`). CI runs `govulncheck` on
-every push; Dependabot keeps go modules and workflow actions current.
+CycloneDX SBOM of every dependency (`make sbom`). Versions are 0.x: the CLI,
+the ingest `/v1/events` body, and the `agentusage` Go API may change without a
+major bump. Consumer-facing notes live in [CHANGELOG.md](CHANGELOG.md). CI
+runs `govulncheck` on every push; Dependabot keeps go modules and workflow
+actions current.

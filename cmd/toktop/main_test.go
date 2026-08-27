@@ -16,6 +16,33 @@ import (
 	"github.com/maci0/toktop/internal/core"
 )
 
+func TestResolveVersion(t *testing.T) {
+	tests := []struct {
+		stamped, module, want string
+	}{
+		{stamped: "0.5.0", module: "v9.9.9", want: "0.5.0"}, // release ldflags
+		{stamped: "v0.5.0", module: "", want: "0.5.0"},      // tag spelling
+		{stamped: "dev", module: "v0.5.0", want: "dev"},     // make build
+		{stamped: "dev", module: "(devel)", want: "dev"},
+		{stamped: "", module: "v0.5.0", want: "0.5.0"}, // go install @v0.5.0
+		{stamped: "", module: "(devel)", want: "dev"},  // go build, no vcs version
+		{stamped: "", module: "", want: "dev"},
+	}
+	for _, tt := range tests {
+		if got := resolveVersion(tt.stamped, tt.module); got != tt.want {
+			t.Errorf("resolveVersion(%q, %q) = %q, want %q", tt.stamped, tt.module, got, tt.want)
+		}
+	}
+}
+
+// Unstamped binaries used to report 0.1.0, which is a real tag. go test of
+// this tree must not impersonate that release.
+func TestVersionIsNotTheFirstReleaseTag(t *testing.T) {
+	if version == "0.1.0" {
+		t.Fatalf("version = %q; unstamped builds must not report the v0.1.0 tag", version)
+	}
+}
+
 func TestValidateFlags(t *testing.T) {
 	tests := []struct {
 		name      string
