@@ -46,11 +46,11 @@ func sampleMemoryLinux(s *core.SysSample) {
 	}
 }
 
-// hostStaticInfo gathers everything that cannot change while the process
-// runs: distro name, kernel release, driver versions and the NPU inventory.
-// Without the cache each poll would re-read three files and re-walk the
-// accel class for identical answers; all of it is resolved once and copied
-// into each fresh sample.
+// hostStatic is identity that is usually fixed for the process lifetime:
+// distro name, kernel release, driver versions and the NPU inventory.
+// Filled fields are kept; empty optional ones (driver not loaded yet, NPU
+// sysfs not mounted at start) are retried on hostStaticRetry so the first
+// sample cannot blank them for the whole session.
 type hostStatic struct {
 	osName    string
 	kernel    string
@@ -60,7 +60,54 @@ type hostStatic struct {
 	npus      []string
 }
 
-var hostStaticInfo = sync.OnceValue(func() hostStatic {
+const hostStaticRetry = 30 * time.Second
+
+var (
+	hostStaticMu  sync.Mutex
+	hostStaticVal hostStatic
+	hostStaticAt  time.Time
+)
+
+func hostStaticInfo() hostStatic {
+	hostStaticMu.Lock()
+	defer hostStaticMu.Unlock()
+	if hostStaticAt.IsZero() || (!hostStaticFilled(hostStaticVal) && time.Since(hostStaticAt) >= hostStaticRetry) {
+		hostStaticVal = mergeHostStatic(hostStaticVal, loadHostStatic())
+		hostStaticAt = time.Now()
+	}
+	return hostStaticVal
+}
+
+func hostStaticFilled(h hostStatic) bool {
+	return h.osName != "" && h.kernel != "" && h.nvidiaDrv != "" && h.cuda != "" && h.amdgpu != "" && len(h.npus) > 0
+}
+
+func mergeHostStatic(prev, fresh hostStatic) hostStatic {
+	if prev.osName == "" {
+		prev.osName = fresh.osName
+	}
+	if prev.kernel == "" {
+		prev.kernel = fresh.kernel
+	}
+	if prev.nvidiaDrv == "" {
+		prev.nvidiaDrv = fresh.nvidiaDrv
+	}
+	if prev.cuda == "" {
+		prev.cuda = fresh.cuda
+	}
+	if prev.amdgpu == "" {
+		prev.amdgpu = fresh.amdgpu
+	}
+	if len(prev.npus) == 0 {
+		prev.npus = fresh.npus
+	}
+	return prev
+}
+
+// loadHostStatic is the probe used by hostStaticInfo; tests swap it.
+var loadHostStatic = readHostStatic
+
+func readHostStatic() hostStatic {
 	var h hostStatic
 	h.osName = prettyOSName()
 	var un unix.Utsname
@@ -76,7 +123,7 @@ var hostStaticInfo = sync.OnceValue(func() hostStatic {
 	h.amdgpu = sysModuleVersion("amdgpu")
 	h.npus = scanAccelDrivers("/sys/class/accel")
 	return h
-})
+}
 
 func hostInfoLinux(s *core.SysSample) {
 	h := hostStaticInfo()

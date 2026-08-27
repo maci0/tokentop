@@ -3,8 +3,9 @@
 // NVIDIA/AMD/Intel are read through their vendor CLIs (nvidia-smi,
 // rocm-smi, xpu-smi). We shell out deliberately: NVML and Level Zero have
 // no stable in-process Go API without cgo-linking driver libraries, and the
-// vendor CLIs are their documented interfaces. Tool presence is cached for
-// the process lifetime.
+// vendor CLIs are their documented interfaces. A found tool is remembered
+// for the process lifetime; a miss is retried so a driver that appears after
+// start is not blank for the whole session.
 package gpu
 
 import (
@@ -39,17 +40,31 @@ var platformExtras func(ctx context.Context) []core.GPUDevice
 type toolInfo struct {
 	path string
 	ok   bool
+	at   time.Time // when a miss was recorded; hits are immortal
 }
 
-var tools sync.Map // tool name -> toolInfo
+var tools sync.Map // tool name -> *toolInfo
+
+// toolRetry spaces out LookPath of a missing vendor CLI. A miss cached
+// forever would blank the GPU row for a session that started before the
+// driver module (or its bin dir) was on PATH; a hit is still kept.
+const toolRetry = 30 * time.Second
+
+// lookPath is exec.LookPath, swapped in tests.
+var lookPath = exec.LookPath
 
 func lookup(name string) (string, bool) {
 	if v, ok := tools.Load(name); ok {
 		ti := v.(*toolInfo)
-		return ti.path, ti.ok
+		if ti.ok || time.Since(ti.at) < toolRetry {
+			return ti.path, ti.ok
+		}
 	}
-	p, err := exec.LookPath(name)
+	p, err := lookPath(name)
 	ti := &toolInfo{path: p, ok: err == nil}
+	if !ti.ok {
+		ti.at = time.Now()
+	}
 	tools.Store(name, ti)
 	return ti.path, ti.ok
 }

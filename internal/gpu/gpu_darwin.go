@@ -133,14 +133,19 @@ func applyIOAccelStats(devs []core.GPUDevice) {
 	// run() caps the spawn so a hung ioreg cannot pin ioAccelMu and stall
 	// every later Sample.
 	out, ok := run(context.Background(), "ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator")
-	if !ok {
-		ioAccelMemUsed, ioAccelUtil = 0, 0
-	} else {
+	noteIOAccel(ok, out)
+	devs[0].MemUsed = ioAccelMemUsed
+	devs[0].UtilPct = ioAccelUtil
+}
+
+// noteIOAccel stores a successful ioreg parse. A failure keeps the last
+// good numbers rather than flashing zeros for the refresh window as if the
+// GPU had gone idle.
+func noteIOAccel(ok bool, out []byte) {
+	if ok {
 		ioAccelMemUsed, ioAccelUtil = parseIOAccelerator(string(out))
 	}
 	ioAccelAt = time.Now()
-	devs[0].MemUsed = ioAccelMemUsed
-	devs[0].UtilPct = ioAccelUtil
 }
 
 // parseIOAccelerator sums "In use GPU memory" across accelerators and takes

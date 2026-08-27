@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // buildTree materializes files under a fresh temp root.
@@ -126,6 +127,72 @@ func TestParseNvidiaVersion(t *testing.T) {
 	}
 	if drv, cuda := parseNvidiaVersion("no version data here"); drv != "" || cuda != "" {
 		t.Errorf("unrelated text parsed as %q/%q", drv, cuda)
+	}
+}
+
+func TestMergeHostStaticFillsGapsOnly(t *testing.T) {
+	prev := hostStatic{osName: "Debian", nvidiaDrv: "550.54.14"}
+	fresh := hostStatic{
+		osName:    "other",
+		kernel:    "6.1.0",
+		nvidiaDrv: "560.0",
+		cuda:      "12.4",
+		amdgpu:    "6.7.0",
+		npus:      []string{"Intel NPU"},
+	}
+	got := mergeHostStatic(prev, fresh)
+	if got.osName != "Debian" || got.nvidiaDrv != "550.54.14" {
+		t.Fatalf("filled fields were overwritten: %+v", got)
+	}
+	if got.kernel != "6.1.0" || got.cuda != "12.4" || got.amdgpu != "6.7.0" || len(got.npus) != 1 {
+		t.Fatalf("empty fields were not filled: %+v", got)
+	}
+}
+
+func TestHostStaticInfoRetriesEmptyDrivers(t *testing.T) {
+	reset := func() {
+		hostStaticMu.Lock()
+		hostStaticVal = hostStatic{}
+		hostStaticAt = time.Time{}
+		hostStaticMu.Unlock()
+	}
+	reset()
+	orig := loadHostStatic
+	t.Cleanup(func() {
+		loadHostStatic = orig
+		reset()
+	})
+
+	var n int
+	loadHostStatic = func() hostStatic {
+		n++
+		if n == 1 {
+			return hostStatic{osName: "Debian", kernel: "6.1"}
+		}
+		return hostStatic{osName: "Debian", kernel: "6.1", nvidiaDrv: "550.54.14", cuda: "12.4"}
+	}
+
+	first := hostStaticInfo()
+	if first.nvidiaDrv != "" || first.osName != "Debian" {
+		t.Fatalf("first sample = %+v", first)
+	}
+	if n != 1 {
+		t.Fatalf("probe ran %d times on first sample, want 1", n)
+	}
+	second := hostStaticInfo()
+	if n != 1 || second.nvidiaDrv != "" {
+		t.Fatalf("retried inside the window: calls=%d sample=%+v", n, second)
+	}
+
+	hostStaticMu.Lock()
+	hostStaticAt = time.Now().Add(-hostStaticRetry - time.Second)
+	hostStaticMu.Unlock()
+	third := hostStaticInfo()
+	if third.nvidiaDrv != "550.54.14" || third.cuda != "12.4" || third.osName != "Debian" {
+		t.Fatalf("expired empty driver cache was not filled: %+v", third)
+	}
+	if n != 2 {
+		t.Fatalf("probe ran %d times, want 2", n)
 	}
 }
 

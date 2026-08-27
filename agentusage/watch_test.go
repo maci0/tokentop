@@ -467,6 +467,32 @@ func TestHeaderlessFilePastScanCapIsRefusedDurably(t *testing.T) {
 	}
 }
 
+// A session file that shrinks and is rewritten belongs to whoever its new
+// header names: the owner verdict from the previous contents must not stick.
+func TestTruncatedSessionRechecksOwner(t *testing.T) {
+	store := withStore(t, "copilot")
+	work, other := t.TempDir(), t.TempDir()
+	path := copilotSession(t, store, "reused", other)
+
+	w := Watch("copilot", work, time.Now())
+	append_(t, path, `{"type":"assistant.message","data":{"usage":{"completion_tokens":5000}}}`)
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("output tokens %d, want 0: another project's session leaked in", got)
+	}
+
+	if err := os.WriteFile(path, []byte(
+		`{"type":"session.start","id":"e0","data":{"sessionId":"s","context":{"cwd":`+jsonPath(work)+`}}}`+"\n"+
+			`{"type":"assistant.message","data":{"usage":{"completion_tokens":70}}}`+"\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 70 {
+		t.Fatalf("output tokens %d, want 70: a rewritten file kept the previous owner", got)
+	}
+}
+
 // copilotSession starts one session directory with its session.start header
 // and returns the events file to append to.
 func copilotSession(t *testing.T, store, name, cwd string) string {
@@ -578,5 +604,36 @@ func TestGrowthIsReadWhenTheMtimeStandsStill(t *testing.T) {
 	w.poll(nil)
 	if got := w.Sample().Output; got != 42 {
 		t.Fatalf("output tokens %d, want 42: growth under an unchanged mtime was skipped", got)
+	}
+}
+
+// A failed open must not mark the current size as processed: restoring
+// access and polling again has to see the records that were already there.
+func TestReadErrorIsNotCachedAsProcessed(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	path := filepath.Join(store, "session.jsonl")
+
+	w := Watch("claude", work, time.Now())
+	append_(t, path, claudeLine(work, 100))
+	if err := os.Chmod(path, 0); err != nil {
+		t.Skip("chmod not supported")
+	}
+	f, err := os.Open(path)
+	if err == nil {
+		f.Close()
+		_ = os.Chmod(path, 0o644)
+		t.Skip("process can read mode-0 files")
+	}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("output tokens %d, want 0: an unreadable file counted", got)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output tokens %d, want 100: a failed read was cached as processed", got)
 	}
 }

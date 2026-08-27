@@ -72,7 +72,7 @@ func (s *Sampler) Snapshot() []Info {
 	}
 	list, err := platformList()
 	if err != nil {
-		return nil
+		return s.cached // last good snapshot; a transient listing error is not "no processes"
 	}
 	dt := now.Sub(s.last).Seconds() // elapsed time (monotonic) since previous successful poll
 	s.last = now

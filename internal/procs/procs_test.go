@@ -1,6 +1,7 @@
 package procs
 
 import (
+	"errors"
 	"os"
 	"testing"
 )
@@ -65,6 +66,26 @@ func TestSelfIsSkipped(t *testing.T) {
 		if p.PID == os.Getpid() && p.Name == baseName(os.Args[0]) {
 			t.Errorf("toktop's own test process leaked in: %+v", p)
 		}
+	}
+}
+
+func TestSnapshotKeepsLastGoodOnError(t *testing.T) {
+	orig := platformList
+	t.Cleanup(func() { platformList = orig })
+
+	platformList = func() ([]raw, error) {
+		return []raw{{pid: 1, name: "ollama", args: []string{"ollama", "serve"}}}, nil
+	}
+	s := NewSampler()
+	first := s.Snapshot()
+	if len(first) != 1 || first[0].Name != "ollama" {
+		t.Fatalf("warm snapshot = %+v", first)
+	}
+
+	platformList = func() ([]raw, error) { return nil, errors.New("cim timeout") }
+	second := s.Snapshot()
+	if len(second) != 1 || second[0].Name != "ollama" {
+		t.Fatalf("listing error dropped the last good snapshot: %+v", second)
 	}
 }
 

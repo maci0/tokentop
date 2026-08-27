@@ -2,7 +2,9 @@ package gpu
 
 import (
 	"math"
+	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/maci0/toktop/internal/core"
 )
@@ -146,4 +148,52 @@ func TestVendorOrdering(t *testing.T) {
 		t.Fatal("vendor sort order drifted")
 	}
 	var _ core.GPUDevice // keep import honest
+}
+
+func TestLookupRetriesExpiredMisses(t *testing.T) {
+	name := "toktop-missing-gpu-tool"
+	tools.Delete(name)
+	orig := lookPath
+	t.Cleanup(func() {
+		lookPath = orig
+		tools.Delete(name)
+	})
+
+	var n int
+	lookPath = func(string) (string, error) {
+		n++
+		if n == 1 {
+			return "", exec.ErrNotFound
+		}
+		return "/opt/bin/" + name, nil
+	}
+
+	if _, ok := lookup(name); ok {
+		t.Fatal("first lookup of a missing tool must miss")
+	}
+	if _, ok := lookup(name); ok {
+		t.Fatal("a fresh miss must still be served from cache")
+	}
+	if n != 1 {
+		t.Fatalf("LookPath called %d times before expiry, want 1", n)
+	}
+
+	v, ok := tools.Load(name)
+	if !ok {
+		t.Fatal("miss was not stored")
+	}
+	v.(*toolInfo).at = time.Now().Add(-toolRetry - time.Second)
+
+	path, ok := lookup(name)
+	if !ok || path != "/opt/bin/"+name {
+		t.Fatalf("expired miss = %q, %v; want the tool that appeared later", path, ok)
+	}
+	if n != 2 {
+		t.Fatalf("LookPath called %d times, want 2 (retry after expiry)", n)
+	}
+
+	path, ok = lookup(name)
+	if !ok || path != "/opt/bin/"+name || n != 2 {
+		t.Fatalf("hit was re-probed: path=%q ok=%v calls=%d", path, ok, n)
+	}
 }

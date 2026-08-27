@@ -702,34 +702,35 @@ func (w *Watcher) readNew(path string) {
 	}
 	stamp := fileStamp{mtimeNanos: fi.ModTime().UnixNano(), size: fi.Size()}
 	if w.stamps[path] == stamp {
-		return // untouched since the last read
+		return // untouched since the last completed read
 	}
-	w.stamps[path] = stamp
+	// A shrink is a rotation or rewrite: the header (and so the owner
+	// verdict) may belong to a different session than the one we cached.
+	if fi.Size() < w.offsets[path] {
+		w.offsets[path] = 0
+		delete(w.owner, path)
+	}
 	mine, decided := w.owns(path)
 	if !decided {
-		// No verdict yet: commit no offset. A file created after this review
-		// started belongs to it in full once its header appears, and skipping
-		// now would discard exactly those bytes; a pre-existing file's prefix
-		// predates the review, so advancing past it stays safe.
-		if w.preexisting[path] {
-			w.offsets[path] = fi.Size()
-		}
+		// No verdict yet, and no stamp: a transient open failure must not
+		// look processed, and a header that has not been flushed yet is
+		// retried until it appears. Watch already recorded the attach-time
+		// offset for pre-existing files, so there is nothing to skip here.
 		return
 	}
 	if !mine {
 		w.offsets[path] = fi.Size() // keep skipping it cheaply
+		w.stamps[path] = stamp
 		return
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return
+		return // unstamped: the next poll retries instead of treating this as done
 	}
 	defer f.Close()
 	off := w.offsets[path]
-	if fi.Size() < off {
-		off = 0 // truncated or rotated: start over
-	}
 	if fi.Size() == off {
+		w.stamps[path] = stamp
 		return
 	}
 	if _, err := f.Seek(off, 0); err != nil {
@@ -791,12 +792,13 @@ func (w *Watcher) readNew(path string) {
 			}
 			break
 		}
-		return // read failed: nothing counted, offset unchanged, retried next poll
+		return // read failed: nothing counted, offset and stamp unchanged, retried next poll
 	}
 	for _, v := range recs {
 		w.applyRecord(path, v)
 	}
 	w.offsets[path] = complete
+	w.stamps[path] = stamp
 }
 
 // maxLineBytes bounds one transcript record: a single JSONL line larger than
