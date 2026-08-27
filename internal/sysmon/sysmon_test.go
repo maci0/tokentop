@@ -1,7 +1,9 @@
 package sysmon
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	"github.com/maci0/toktop/internal/core"
 )
@@ -81,5 +83,50 @@ func TestParseLoadavg(t *testing.T) {
 	}
 	if a, b, c := ParseLoadavg(""); a != 0 || b != 0 || c != 0 {
 		t.Error("empty loadavg must zero")
+	}
+}
+
+func TestParseLoadavgRejectsNonFinite(t *testing.T) {
+	if a, b, c := ParseLoadavg("+Inf 0.5 nan"); a != 0 || b != 0.5 || c != 0 {
+		t.Errorf("non-finite loadavg = %v %v %v", a, b, c)
+	}
+	if a, b, c := ParseLoadavg("-1 2.0 Infinity"); a != 0 || b != 2.0 || c != 0 {
+		t.Errorf("negative/Inf loadavg = %v %v %v", a, b, c)
+	}
+}
+
+func TestParseUptimeSecs(t *testing.T) {
+	if got := ParseUptimeSecs("183729.42"); got != time.Duration(183729.42*float64(time.Second)) {
+		t.Errorf("uptime = %v", got)
+	}
+	if ParseUptimeSecs("nan") != 0 || ParseUptimeSecs("+Inf") != 0 || ParseUptimeSecs("-1") != 0 {
+		t.Error("non-finite or negative uptime must be zero")
+	}
+	// 1e12 seconds is ~31700 years: the float*ns product overflows
+	// time.Duration. Saturate rather than convert out of range.
+	if got := ParseUptimeSecs("1000000000000"); got != time.Duration(math.MaxInt64) {
+		t.Errorf("huge uptime = %v, want saturation", got)
+	}
+}
+
+func TestSplitSizeTokenSaturates(t *testing.T) {
+	if got := splitSizeToken("512.00M"); got != 512<<20 {
+		t.Errorf("512M = %d", got)
+	}
+	if got := splitSizeToken("2G"); got != 2<<30 {
+		t.Errorf("2G = %d", got)
+	}
+	if splitSizeToken("infG") != 0 || splitSizeToken("nanM") != 0 {
+		t.Error("non-finite size tokens must be zero")
+	}
+	if got := splitSizeToken("1e300G"); got != math.MaxUint64 {
+		t.Errorf("1e300G = %d, want saturation", got)
+	}
+}
+
+func TestParseSwapUsage(t *testing.T) {
+	total, used := parseSwapUsage("total = 2048.00M used = 512.00M free = 1536.00M")
+	if total != 2048<<20 || used != 512<<20 {
+		t.Errorf("swap = %d/%d", used, total)
 	}
 }

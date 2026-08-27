@@ -204,17 +204,12 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 		ev.Model = clampField(core.SanitizeText(ev.Model), 128)
 		ev.Note = clampField(core.SanitizeText(ev.Note), 512) // free-form fields are capped so one giant event cannot dominate the retained feed
-		// Token counts are unsigned quantities; negative values are junk
-		// from a misbehaving sender and must not enter the retained feed.
-		if ev.PromptTokens < 0 {
-			ev.PromptTokens = 0
-		}
-		if ev.OutputTokens < 0 {
-			ev.OutputTokens = 0
-		}
-		if ev.ThinkingTokens < 0 {
-			ev.ThinkingTokens = 0
-		}
+		// Token counts are unsigned quantities; negative or absurd values
+		// are junk from a misbehaving sender and must not enter the
+		// retained feed (summing MaxInt64 across events wraps the totals).
+		ev.PromptTokens = clampTokens(ev.PromptTokens)
+		ev.OutputTokens = clampTokens(ev.OutputTokens)
+		ev.ThinkingTokens = clampTokens(ev.ThinkingTokens)
 		switch ev.Kind {
 		case "turn", "tool", "error", "note":
 		default:
@@ -295,6 +290,18 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintln(w, `{"hint":"POST /v1/events with {id,ts,agent,kind,model,prompt_tokens,output_tokens,thinking_tokens,note}"}`)
+}
+
+// maxEventTokens bounds a token count on one event. Real usage never
+// approaches it; a sender claiming more is lying or broken, and summing
+// MaxInt64 values across the retained feed would wrap the agent totals.
+const maxEventTokens = 1 << 40
+
+func clampTokens(n int64) int64 {
+	if n < 0 || n > maxEventTokens {
+		return 0
+	}
+	return n
 }
 
 // clampField caps a free-form event field at n user-perceived characters

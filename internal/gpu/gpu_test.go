@@ -101,12 +101,40 @@ func TestParseXpuDiscoveryAndMetrics(t *testing.T) {
 func TestFlexF(t *testing.T) {
 	cases := map[string]float64{
 		"[N/A]": 0, "[Not Supported]": 0, "42.5": 42.5, "-1": 0, " 12 ": 12,
-		"NaN": 0, "nan": 0,
+		"NaN": 0, "nan": 0, "inf": 0, "+Inf": 0, "-Inf": 0, "Infinity": 0,
 	}
 	for in, want := range cases {
 		if got := flexF(in); got != want {
 			t.Errorf("flexF(%q) = %v, want %v", in, got, want)
 		}
+	}
+}
+
+func TestFlexAnyRejectsNonFinite(t *testing.T) {
+	if got := flexAny(math.Inf(1)); got != 0 {
+		t.Errorf("flexAny(+Inf) = %v, want 0", got)
+	}
+	if got := flexAny(math.NaN()); got != 0 {
+		t.Errorf("flexAny(NaN) = %v, want 0", got)
+	}
+	if got := flexAny(-3.0); got != 0 {
+		t.Errorf("flexAny(-3) = %v, want 0", got)
+	}
+	if got := flexAny(87.0); got != 87 {
+		t.Errorf("flexAny(87) = %v, want 87", got)
+	}
+}
+
+func TestParseNvidiaSMIInfUtilIsZero(t *testing.T) {
+	devs := ParseNvidiaSMI([]byte("0, GPU, 55, 100, 200, inf, inf, 550.54.14\n"))
+	if len(devs) != 1 {
+		t.Fatalf("devices = %d", len(devs))
+	}
+	if devs[0].UtilPct != 0 || devs[0].PowerW != 0 {
+		t.Errorf("inf util/power leaked: %+v", devs[0])
+	}
+	if devs[0].MilliC != 55000 {
+		t.Errorf("sane temp disturbed: %+v", devs[0])
 	}
 }
 

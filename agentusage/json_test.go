@@ -168,6 +168,7 @@ func TestAbsurdCountersReportNothing(t *testing.T) {
 		`{"usage":{"output_tokens":1e30}}`,
 		`{"usage":{"input_tokens":-5}}`,
 		`{"usage":{"total_tokens":9223372036854775807}}`,
+		`{"usage":{"output_tokens":1e15}}`,
 	} {
 		ev, ok := parseJSON([]byte(line))
 		if !ok {
@@ -181,6 +182,16 @@ func TestAbsurdCountersReportNothing(t *testing.T) {
 	ev, ok := parseJSON([]byte(`{"usage":{"output_tokens":1e6}}`))
 	if !ok || ev.Usage.Output != 1000000 {
 		t.Fatalf("large counter lost: ok=%v usage=%+v", ok, ev.Usage)
+	}
+}
+
+func TestParseGenericDropsAbsurdCounters(t *testing.T) {
+	if _, _, ok := parseGeneric([]byte(`{"usage":{"output_tokens":1e15}}`)); ok {
+		t.Fatal("1e15 tokens must not count")
+	}
+	v, _, ok := parseGeneric([]byte(`{"cwd":"/tmp/x","usage":{"output_tokens":42}}`))
+	if !ok || v.output != 42 {
+		t.Fatalf("sane generic usage lost: ok=%v %+v", ok, v)
 	}
 }
 

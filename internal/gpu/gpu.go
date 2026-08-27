@@ -193,15 +193,22 @@ func ParseNvidiaSMI(b []byte) []core.GPUDevice {
 }
 
 // flexF parses vendor-CSV numbers, tolerating "[N/A]" / "[Not Supported]".
-// Non-positive results, including text like "nan" that ParseFloat accepts,
-// collapse to zero so no sensor can inject NaN into temps, percentages or
-// watts downstream.
+// Non-finite and non-positive results, including text like "nan" and "inf"
+// that ParseFloat accepts, collapse to zero so no sensor can inject NaN or
+// ±Inf into temps, percentages or watts downstream.
 func flexF(s string) float64 {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "[")
 	s = strings.TrimSuffix(s, "]")
 	v, _ := strconv.ParseFloat(s, 64)
-	if !(v > 0) { // also catches NaN: every comparison with it is false
+	return posFinite(v)
+}
+
+// posFinite returns v when it is a usable positive measurement. NaN fails
+// every comparison, +Inf compares greater than zero, and either would
+// poison util/power readouts and every later format of them.
+func posFinite(v float64) float64 {
+	if !(v > 0) || math.IsInf(v, 0) {
 		return 0
 	}
 	return v
@@ -326,11 +333,13 @@ func flatten(v any) any {
 	return v
 }
 
-// flexAny coerces JSON scalars to float64, ignoring junk.
+// flexAny coerces JSON scalars to float64, ignoring junk. max(NaN, 0) is
+// NaN in Go, and max(+Inf, 0) is +Inf, so the float64 arm uses the same
+// filter as flexF rather than a clamp that would let either through.
 func flexAny(v any) float64 {
 	switch t := v.(type) {
 	case float64:
-		return max(t, 0)
+		return posFinite(t)
 	case string:
 		return flexF(t)
 	}

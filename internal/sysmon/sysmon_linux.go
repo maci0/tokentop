@@ -167,11 +167,7 @@ func linuxUptime() time.Duration {
 	if len(f) == 0 {
 		return 0
 	}
-	secs, err := strconv.ParseFloat(f[0], 64)
-	if err != nil {
-		return 0
-	}
-	return time.Duration(secs * float64(time.Second))
+	return ParseUptimeSecs(f[0])
 }
 
 // parseNvidiaVersion extracts "Driver Version: 550.54.14" and the trailing

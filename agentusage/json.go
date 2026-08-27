@@ -154,8 +154,9 @@ func asInt(v any) (int, bool) {
 	case float64:
 		// The conversion below is only defined within the range of int, and
 		// out-of-range results differ by platform (amd64 gives the minimum,
-		// arm64 saturates to the maximum). A counter outside it is not a
-		// measurement: report nothing rather than a platform-dependent lie.
+		// arm64 saturates to the maximum). A counter outside int, or past
+		// maxSaneTokens, is not a measurement: report nothing rather than
+		// a platform-dependent lie or a total that later wraps.
 		if !(n >= 1) || n > float64(maxSaneTokens) {
 			return 0, false
 		}

@@ -328,6 +328,24 @@ func TestIngestClampsNegativeTokenCounts(t *testing.T) {
 	}
 }
 
+// A sender claiming MaxInt64 tokens would wrap the agent totals when two
+// such events are summed. Anything past maxEventTokens is junk, same as
+// a negative.
+func TestIngestDropsAbsurdTokenCounts(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"buggy","prompt_tokens":1099511627777,"output_tokens":9223372036854775807,"thinking_tokens":1}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 1)
+	if rec.evs[0].PromptTokens != 0 || rec.evs[0].OutputTokens != 0 || rec.evs[0].ThinkingTokens != 1 {
+		t.Errorf("absurd token counts retained: %+v", rec.evs[0])
+	}
+}
+
 // A claimed event timestamp far ahead of arrival is a wrong clock or a
 // forgery; it must not enter the retained feed as a future instant, where
 // it would pin the UI's "live" marker and render a future wall-clock time.

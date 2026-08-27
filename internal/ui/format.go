@@ -5,6 +5,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -22,6 +23,9 @@ func norm(v, maxV float64) float64 {
 }
 
 func fmtRate(v float64) string {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return "0.0"
+	}
 	switch {
 	case v >= 10000:
 		return fmt.Sprintf("%.0fk", v/1000)
@@ -46,7 +50,7 @@ func fmtCount(n int64) string {
 }
 
 func fmtMs(ms float64) string {
-	if ms <= 0 {
+	if !(ms > 0) || math.IsInf(ms, 0) {
 		return "-"
 	}
 	if ms >= 1000 {

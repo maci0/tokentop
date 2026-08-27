@@ -48,7 +48,7 @@ func sampleMemoryWindows(s *core.SysSample) {
 		return
 	}
 	s.MemTotal = ms.TotalPhys
-	s.MemUsed = ms.TotalPhys - ms.AvailPhys
+	s.MemUsed = satSub(ms.TotalPhys, ms.AvailPhys)
 	s.SwapTotal = ms.TotalPageFile
-	s.SwapUsed = ms.TotalPageFile - ms.AvailPageFile
+	s.SwapUsed = satSub(ms.TotalPageFile, ms.AvailPageFile)
 }

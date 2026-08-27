@@ -56,7 +56,7 @@ func (crushDBSource) read(dirs []string, since time.Time) (values, bool) {
 		}
 		seen[path] = true
 		if out, ok := readCrushDB(path, since); ok {
-			v.output += out
+			v.output = satAdd(v.output, out)
 		}
 	}
 	return v, v.output > 0

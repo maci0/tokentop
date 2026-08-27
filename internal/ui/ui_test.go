@@ -286,6 +286,12 @@ func TestFmtRateAndCount(t *testing.T) {
 	if fmtMs(210.4) != "210ms" || fmtMs(1400) != "1.40s" || fmtMs(0) != "-" {
 		t.Error("fmtMs drift")
 	}
+	if fmtRate(math.NaN()) != "0.0" || fmtRate(math.Inf(1)) != "0.0" {
+		t.Error("fmtRate must not print NaN/Inf")
+	}
+	if fmtMs(math.NaN()) != "-" || fmtMs(math.Inf(1)) != "-" {
+		t.Error("fmtMs must not print NaN/Inf")
+	}
 }
 
 func TestAggHistTimeAligned(t *testing.T) {

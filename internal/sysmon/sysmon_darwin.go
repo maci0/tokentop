@@ -4,8 +4,6 @@ package sysmon
 
 import (
 	"encoding/binary"
-	"strconv"
-	"strings"
 
 	"golang.org/x/sys/unix"
 
@@ -79,56 +77,4 @@ func swapUsage() (total, used uint64, ok bool) {
 	}
 	total, used = parseSwapUsage(raw)
 	return total, used, total > 0
-}
-
-// parseSwapUsage decodes a vm.swapusage string into bytes:
-// "total = 2048.00M used = 512.00M free = 1536.00M".
-func parseSwapUsage(s string) (total, used uint64) {
-	last := ""
-	for _, tok := range strings.Fields(strings.ReplaceAll(s, "=", " ")) {
-		switch strings.ToLower(tok) {
-		case "total":
-			last = "total"
-			continue
-		case "used":
-			last = "used"
-			continue
-		case "free":
-			last = ""
-			continue
-		}
-		v := splitSizeToken(tok)
-		if v == 0 {
-			continue
-		}
-		switch last {
-		case "total":
-			total = v
-		case "used":
-			used = v
-		}
-	}
-	return total, used
-}
-
-// splitSizeToken splits "512.00M" into bytes.
-func splitSizeToken(tok string) uint64 {
-	if len(tok) < 2 {
-		return 0
-	}
-	unit := strings.ToUpper(string(tok[len(tok)-1]))
-	num, err := strconv.ParseFloat(tok[:len(tok)-1], 64)
-	if err != nil {
-		return 0
-	}
-	switch unit {
-	case "G":
-		return uint64(num * 1024 * 1024 * 1024)
-	case "M":
-		return uint64(num * 1024 * 1024)
-	case "K":
-		return uint64(num * 1024)
-	default:
-		return 0
-	}
 }

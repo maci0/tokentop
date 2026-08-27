@@ -5,6 +5,7 @@ package sysmon
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -113,14 +114,106 @@ func cutMeminfoLine(line string) (string, uint64, bool) {
 }
 
 // ParseLoadavg reads "1.5 0.7 0.3 extra..." into three load averages.
+// The remote vitals path feeds this parser text from another host, so
+// NaN, ±Inf and negatives (ParseFloat accepts all of them) collapse to
+// zero rather than reaching the load readout.
 func ParseLoadavg(s string) (l1, l5, l15 float64) {
 	f := strings.Fields(s)
 	at := func(i int) float64 {
 		if i >= len(f) {
 			return 0
 		}
-		v, _ := strconv.ParseFloat(f[i], 64)
+		v, err := strconv.ParseFloat(f[i], 64)
+		if err != nil || !(v >= 0) || math.IsInf(v, 0) {
+			return 0
+		}
 		return v
 	}
 	return at(0), at(1), at(2)
+}
+
+// ParseUptimeSecs converts a /proc/uptime first field (seconds, possibly
+// fractional) into a duration. The remote vitals path feeds this parser
+// text from another host: a non-finite or out-of-range value must not
+// convert to a wrapped or negative Duration (time.Duration(+Inf) is
+// implementation-defined, often MinInt64 on amd64).
+func ParseUptimeSecs(s string) time.Duration {
+	secs, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0
+	}
+	return durationFromSecs(secs)
+}
+
+func durationFromSecs(secs float64) time.Duration {
+	if !(secs > 0) || math.IsInf(secs, 0) {
+		return 0
+	}
+	const maxSecs = float64(math.MaxInt64 / int64(time.Second))
+	if secs >= maxSecs {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(secs * float64(time.Second))
+}
+
+// parseSwapUsage decodes a vm.swapusage string into bytes:
+// "total = 2048.00M used = 512.00M free = 1536.00M".
+func parseSwapUsage(s string) (total, used uint64) {
+	last := ""
+	for _, tok := range strings.Fields(strings.ReplaceAll(s, "=", " ")) {
+		switch strings.ToLower(tok) {
+		case "total":
+			last = "total"
+			continue
+		case "used":
+			last = "used"
+			continue
+		case "free":
+			last = ""
+			continue
+		}
+		v := splitSizeToken(tok)
+		if v == 0 {
+			continue
+		}
+		switch last {
+		case "total":
+			total = v
+		case "used":
+			used = v
+		}
+	}
+	return total, used
+}
+
+// splitSizeToken splits "512.00M" into bytes. Darwin vm.swapusage is
+// kernel-produced, but the same parser is reachable from tests and must
+// saturate on absurd magnitudes the way kibBytes does for meminfo: a
+// float product that overflows to +Inf converts to a platform-defined
+// integer, often zero, which would read as "no swap" instead of "full".
+func splitSizeToken(tok string) uint64 {
+	if len(tok) < 2 {
+		return 0
+	}
+	unit := strings.ToUpper(string(tok[len(tok)-1]))
+	num, err := strconv.ParseFloat(tok[:len(tok)-1], 64)
+	if err != nil || !(num > 0) || math.IsInf(num, 0) {
+		return 0
+	}
+	var mult float64
+	switch unit {
+	case "G":
+		mult = 1 << 30
+	case "M":
+		mult = 1 << 20
+	case "K":
+		mult = 1 << 10
+	default:
+		return 0
+	}
+	scaled := num * mult
+	if math.IsInf(scaled, 0) || scaled >= float64(math.MaxUint64) {
+		return math.MaxUint64
+	}
+	return uint64(scaled)
 }

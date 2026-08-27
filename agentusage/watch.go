@@ -274,9 +274,9 @@ func parseGeneric(line []byte) (values, string, bool) {
 		return values{}, "", false
 	}
 	return values{
-		output:   ev.Usage.Output,
-		thinking: ev.Usage.Thinking,
-		total:    ev.Usage.Total,
+		output:   counter(ev.Usage.Output),
+		thinking: counter(ev.Usage.Thinking),
+		total:    counter(ev.Usage.Total),
 	}, ev.Cwd, true
 }
 
@@ -825,8 +825,8 @@ func (w *Watcher) applyRecord(path string, v values) {
 	switch w.ad.kind {
 	case perMessage:
 		cur := w.seen[path]
-		cur.output += v.output
-		cur.thinking += v.thinking
+		cur.output = satAdd(cur.output, v.output)
+		cur.thinking = satAdd(cur.thinking, v.thinking)
 		w.seen[path] = cur
 		// Output accrues per message; a "total" on a per-message record is
 		// the context size at that point, so summing it would be

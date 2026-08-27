@@ -41,3 +41,28 @@ func TestScanAmdSysfs(t *testing.T) {
 		t.Errorf("hwmon extras: %+v", d)
 	}
 }
+
+func TestScanAmdSysfsRejectsNonFiniteUtil(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("card0/device/mem_info_vram_used", "1024")
+	write("card0/device/mem_info_vram_total", "2048")
+	write("card0/device/gpu_busy_percent", "inf")
+	write("card0/device/hwmon/hwmon1/power1_average", "nan")
+
+	devs := scanAmdSysfs(root)
+	if len(devs) != 1 {
+		t.Fatalf("devices = %d: %+v", len(devs), devs)
+	}
+	if devs[0].UtilPct != 0 || devs[0].PowerW != 0 {
+		t.Errorf("non-finite util/power leaked: %+v", devs[0])
+	}
+}

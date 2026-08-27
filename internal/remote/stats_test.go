@@ -74,6 +74,24 @@ func TestParseVitals(t *testing.T) {
 	}
 }
 
+func TestParseVitalsInfLoadAndHugeUptime(t *testing.T) {
+	var s core.SysSample
+	if parseVitals(vitalsDumpFrom("+Inf nan 0", "", "1000000000000", "", "", "", ""), &s) {
+		t.Fatal("Inf loadavg reported usable")
+	}
+	if s.Load1 != 0 || s.Load5 != 0 || s.Load15 != 0 {
+		t.Errorf("Inf loadavg leaked: %v %v %v", s.Load1, s.Load5, s.Load15)
+	}
+	if s.HostUptime != time.Duration(1<<63-1) {
+		t.Errorf("huge uptime = %v, want saturation", s.HostUptime)
+	}
+	s = core.SysSample{}
+	parseVitals(vitalsDumpFrom("1.0 1.0 1.0", "", "+Inf", "", "", "", ""), &s)
+	if s.HostUptime != 0 {
+		t.Errorf("Inf uptime = %v, want 0", s.HostUptime)
+	}
+}
+
 func TestParseVitalsPartial(t *testing.T) {
 	var s core.SysSample
 	s.CPUModel = "keep me"

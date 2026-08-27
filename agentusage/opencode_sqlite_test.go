@@ -108,6 +108,25 @@ func TestOpenCodeDBCountsThisReviewOnly(t *testing.T) {
 	}
 }
 
+// A SUM past maxSaneTokens is a misread, not a measurement.
+func TestOpenCodeDBDropsAbsurdCounts(t *testing.T) {
+	path := opencodeDB(t)
+	work := t.TempDir()
+	addSession(t, path, "s1", work)
+	start := time.Now()
+	addMessage(t, path, "m1", "s1", start.Add(time.Second),
+		`{"role":"assistant","tokens":{"output":1099511627777,"reasoning":1099511627777,"total":1099511627777}}`)
+	withOpenCodeDB(t, path)
+	w := Watch("opencode", work, start)
+	if w == nil {
+		t.Fatal("opencode should be readable once the database is enabled")
+	}
+	w.poll(nil)
+	if got := w.Sample(); !got.Empty() {
+		t.Fatalf("absurd counts reported as usage: %+v", got)
+	}
+}
+
 // A missing database is an ordinary state (no opencode on this machine), not
 // an error, and must never invent a number.
 func TestOpenCodeDBWithoutAStoreReportsNothing(t *testing.T) {

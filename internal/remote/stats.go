@@ -2,7 +2,6 @@ package remote
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -168,9 +167,7 @@ func parseVitals(out string, s *core.SysSample) (loadsOK bool) {
 	}
 	if up := firstLine(section(2)); up != "" {
 		if f := strings.Fields(up); len(f) > 0 {
-			if secs, err := strconv.ParseFloat(f[0], 64); err == nil && secs > 0 {
-				s.HostUptime = time.Duration(secs * float64(time.Second))
-			}
+			s.HostUptime = sysmon.ParseUptimeSecs(f[0])
 		}
 	}
 	if cpu := strings.TrimSpace(section(3)); cpu != "" {

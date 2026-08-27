@@ -44,7 +44,7 @@ func scanAmdSysfs(drmRoot string) []core.GPUDevice {
 			d.MemTotal = t
 		}
 		if b, err := os.ReadFile(filepath.Join(dev, "gpu_busy_percent")); err == nil {
-			d.UtilPct, _ = strconv.ParseFloat(strings.TrimSpace(string(b)), 64)
+			d.UtilPct = flexF(string(b))
 		}
 		scanAmdHwmon(filepath.Join(dev, "hwmon"), &d)
 		devs = append(devs, d)
@@ -61,7 +61,7 @@ func scanAmdHwmon(hwmonDir string, d *core.GPUDevice) {
 			d.MilliC = v
 		}
 		if b, err := os.ReadFile(filepath.Join(h, "power1_average")); err == nil {
-			if uw, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64); err == nil && uw > 0 {
+			if uw := flexF(string(b)); uw > 0 {
 				d.PowerW = uw / 1e6 // microwatts -> watts
 			}
 		}
