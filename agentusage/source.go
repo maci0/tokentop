@@ -31,8 +31,9 @@ type sessionCounts struct {
 
 // sessionSource reports per-session cumulative counters. Watch snapshots
 // them at attach so a continued session contributes only what it adds,
-// matching the file adapters. The outer key is the database path, so two
-// projects cannot collide on a session id.
+// matching the file adapters. A snapshot that fails is retried on the next
+// poll rather than treated as "no sessions". The outer key is the database
+// path, so two projects cannot collide on a session id.
 //
 // A zero since returns every session (the attach baseline). A non-zero
 // since returns sessions written at or after that instant, which is enough

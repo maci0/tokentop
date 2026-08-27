@@ -153,13 +153,19 @@ func Connect(ctx context.Context, t Target) (*Client, error) {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
 	hc := &handshakeConn{Conn: nc}
-	hc.SetDeadline(time.Now().Add(bannerTimeout))
+	if err := hc.SetDeadline(time.Now().Add(bannerTimeout)); err != nil {
+		nc.Close()
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
+	}
 	cc, chans, reqs, err := ssh.NewClientConn(hc, addr, cfg)
 	if err != nil {
 		nc.Close()
 		return nil, fmt.Errorf("ssh %s: %w", t.userHost(), authHint(err))
 	}
-	hc.SetDeadline(time.Time{}) // belt and braces: the conn outlives the handshake
+	if err := hc.SetDeadline(time.Time{}); err != nil {
+		cc.Close()
+		return nil, fmt.Errorf("ssh %s: %w", t.userHost(), err)
+	}
 	c := &Client{Target: t, conn: ssh.NewClient(cc, chans, reqs), closed: make(chan struct{}),
 		keepaliveDone: make(chan struct{})}
 	go c.watchClose()

@@ -213,6 +213,39 @@ func TestCrushWatchRetriesFailedAttachSnapshot(t *testing.T) {
 	}
 }
 
+// An unreadable store at attach must not become an empty baseline. Replacing
+// the file with a real database that already has tokens would otherwise
+// dump that history into this review the first time it could be read.
+func TestCrushWatchDoesNotCountHistoryWhenAttachBaselineFails(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, ".crush", "crush.db")
+	if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(db, []byte("not a database"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := Watch("crush", dir, time.Now())
+	if w == nil {
+		t.Fatal("crush is readable in this build, so Watch must return a watcher")
+	}
+	if err := os.Remove(db); err != nil {
+		t.Fatal(err)
+	}
+	crushDB(t, dir, map[string][2]int64{
+		"s": {5000, time.Now().Add(-time.Hour).UnixMilli()},
+	})
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("counted tokens from before a successful attach: %d", got)
+	}
+	putCrushSession(t, dir, "s", 5100, time.Now().Add(time.Second).UnixMilli())
+	w.poll(nil)
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output %d, want the 100 generated after the baseline landed", got)
+	}
+}
+
 // A review's directory is watched under every spelling it can be recorded
 // under, and on macOS that always includes a symlinked one. All of them
 // address a single database, whose sessions must be summed once.

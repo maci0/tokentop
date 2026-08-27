@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/maci0/toktop/internal/bearer"
 	"github.com/maci0/toktop/internal/core"
@@ -429,6 +431,36 @@ func TestHTTPErrorCarriesEngineBody(t *testing.T) {
 	_, err = getText(context.Background(), httpClient, srv.URL+"/metrics")
 	if err == nil || !strings.Contains(err.Error(), "CUDA out of memory") {
 		t.Fatalf("getText err = %v, want status plus body snippet", err)
+	}
+}
+
+// Client.Do returns the last response along with a redirect error; that body
+// must be closed or the connection stays checked out of the pool.
+func TestGetJSONClosesBodyOnRedirectError(t *testing.T) {
+	var live atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Path, http.StatusFound)
+	}))
+	srv.Config.SetKeepAlivesEnabled(false)
+	srv.Config.ConnState = func(_ net.Conn, st http.ConnState) {
+		switch st {
+		case http.StateNew:
+			live.Add(1)
+		case http.StateClosed, http.StateHijacked:
+			live.Add(-1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	if err := getJSON(context.Background(), srv.URL+"/", &struct{}{}); err == nil {
+		t.Fatal("redirect loop must fail")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for live.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := live.Load(); n > 0 {
+		t.Fatalf("redirect error left %d connection(s) open", n)
 	}
 }
 

@@ -436,6 +436,9 @@ func Watch(tool, dir string, since time.Time) *Watcher {
 	if source, ok := sourceFor(tool); ok {
 		w := &Watcher{source: source, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
 		if ss, ok := source.(sessionSource); ok {
+			// A failed snapshot must not become an empty baseline: that
+			// would credit every pre-attach token the first time the store
+			// becomes readable. Leave sourceBase unset and retry on poll.
 			if base, ok := ss.sessions(w.dirs, time.Time{}); ok {
 				w.sourceBase = base
 				w.hasSessionBase = true
@@ -595,10 +598,17 @@ func (w *Watcher) Run(ctx context.Context, every time.Duration, onChange func(Sa
 // failed), so only growth since then is counted. Other sources (opencode)
 // report this review's usage in full each time via a timestamp filter.
 func (w *Watcher) readSource() (values, bool) {
-	ss, ok := w.source.(sessionSource)
-	if !ok {
-		return w.source.read(w.dirs, w.since)
+	if ss, ok := w.source.(sessionSource); ok {
+		return w.readSessionSource(ss)
 	}
+	return w.source.read(w.dirs, w.since)
+}
+
+// readSessionSource counts growth against the attach snapshot. If that
+// snapshot has not landed yet, this call is the retry: a success becomes
+// the baseline and reports nothing, so pre-attach tokens are never the
+// first "growth".
+func (w *Watcher) readSessionSource(ss sessionSource) (values, bool) {
 	if !w.hasSessionBase {
 		base, ok := ss.sessions(w.dirs, time.Time{})
 		if !ok {

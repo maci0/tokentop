@@ -285,6 +285,9 @@ func postJSON(ctx context.Context, url string, body []byte) (*http.Response, err
 	bearer.Apply(req)
 	resp, err := client.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, fmt.Errorf("%s: %w", url, err)
 	}
 	if resp.StatusCode != http.StatusOK {

@@ -210,7 +210,10 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 		wg.Add(1)
 		go func(i int, p provider.Provider) {
 			defer wg.Done()
-			pctx, cancel := context.WithTimeout(context.Background(), provider.PollTimeout)
+			// Bound by PollTimeout and by the Run context so shutdown does
+			// not wait out a stalled scrape the way ProbeAll already
+			// cancels in-flight generations.
+			pctx, cancel := context.WithTimeout(ctx, provider.PollTimeout)
 			defer cancel()
 			m, err := p.Poll(pctx)
 			results[i] = result{m, err}

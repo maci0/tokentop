@@ -503,6 +503,44 @@ func TestEmitSurvivesFirstPollError(t *testing.T) {
 	<-done
 }
 
+// emit's per-provider timeout must be a child of the Run context: a stalled
+// scrape must not hold shutdown for PollTimeout after cancel.
+func TestEmitCancelsPollsOnContext(t *testing.T) {
+	started := make(chan struct{})
+	fp := &blockingProvider{started: started}
+	ch := make(chan core.Snapshot, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	c := New([]provider.Provider{fp}, time.Hour)
+	done := make(chan struct{})
+	go func() { defer close(done); c.emit(ctx, ch) }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("poll never started")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("emit did not return after ctx cancel")
+	}
+}
+
+type blockingProvider struct {
+	started chan struct{}
+}
+
+func (b *blockingProvider) Label() string { return "block" }
+func (b *blockingProvider) Addr() string  { return "fake://block" }
+func (b *blockingProvider) Kind() string  { return core.KindOllama }
+func (b *blockingProvider) Poll(ctx context.Context) (*provider.Metrics, error) {
+	close(b.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+var _ provider.Provider = (*blockingProvider)(nil)
+
 // The ingest handlers, the UI prober and the emit loop all touch the
 // collector's shared maps concurrently in production; hammer them together so
 // -race can prove the locking holds.

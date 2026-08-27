@@ -30,7 +30,7 @@ func init() {
 		idents []core.GPUDevice
 		next   time.Time // earliest retry after an unresolved probe
 	)
-	platformExtras = func(context.Context) []core.GPUDevice {
+	platformExtras = func(ctx context.Context) []core.GPUDevice {
 		mu.Lock()
 		defer mu.Unlock()
 		// A failed or timed-out probe must not read as "no Apple GPU"
@@ -40,7 +40,7 @@ func init() {
 		// gated by identityRetry so a persistently failing host pays at
 		// most one spawn per window.
 		if idents == nil && !next.After(time.Now()) {
-			idents = appleGPUs()
+			idents = appleGPUs(ctx)
 			if len(idents) == 0 {
 				next = time.Now().Add(identityRetry)
 			}
@@ -52,7 +52,7 @@ func init() {
 		// later Sample overlaying live ioreg numbers onto the shared identity
 		// slice would data-race with a render of an earlier snapshot.
 		devs := append([]core.GPUDevice(nil), idents...)
-		applyIOAccelStats(devs)
+		applyIOAccelStats(ctx, devs)
 		return devs
 	}
 }
@@ -66,8 +66,8 @@ const identityRetry = 30 * time.Second
 // with no GPU row until the next retry window opens.
 const identityTimeout = 10 * time.Second
 
-func appleGPUs() []core.GPUDevice {
-	ctx, cancel := context.WithTimeout(context.Background(), identityTimeout)
+func appleGPUs(ctx context.Context) []core.GPUDevice {
+	ctx, cancel := context.WithTimeout(ctx, identityTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "system_profiler", "SPDisplaysDataType", "-json")
 	cmd.WaitDelay = pipeGrace // a hung profiler must not hold the caller past its deadline
@@ -122,7 +122,7 @@ const ioAccelRefresh = 2 * time.Second
 // aggregate accelerator numbers are exact on single-GPU Macs, which dominate;
 // multi-GPU Mac Pros would need device matching that ioreg output does not
 // expose portably, so they keep zeros rather than wrong ones.
-func applyIOAccelStats(devs []core.GPUDevice) {
+func applyIOAccelStats(ctx context.Context, devs []core.GPUDevice) {
 	ioAccelMu.Lock()
 	defer ioAccelMu.Unlock()
 	if time.Since(ioAccelAt) < ioAccelRefresh {
@@ -131,8 +131,9 @@ func applyIOAccelStats(devs []core.GPUDevice) {
 		return
 	}
 	// run() caps the spawn so a hung ioreg cannot pin ioAccelMu and stall
-	// every later Sample.
-	out, ok := run(context.Background(), "ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator")
+	// every later Sample. The caller's budget (sysmon gpuBudget) is the
+	// parent, so a cancelled Sample does not wait out runTimeout.
+	out, ok := run(ctx, "ioreg", "-r", "-d", "1", "-w", "0", "-c", "IOAccelerator")
 	noteIOAccel(ok, out)
 	devs[0].MemUsed = ioAccelMemUsed
 	devs[0].UtilPct = ioAccelUtil

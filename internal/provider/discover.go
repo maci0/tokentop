@@ -72,6 +72,9 @@ func scanGet(ctx context.Context, url string) (*http.Response, error) {
 	bearer.Apply(req)
 	resp, err := scanClient.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -289,6 +292,9 @@ func isOmniRoute(ctx context.Context, base string) bool {
 	bearer.Apply(req)
 	resp, err := scanClient.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return false
 	}
 	resp.Body.Close()

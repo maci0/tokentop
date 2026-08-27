@@ -186,6 +186,9 @@ func Check(ctx context.Context, repo string) (*Release, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -194,7 +197,7 @@ func Check(ctx context.Context, repo string) (*Release, error) {
 	}
 	var rel Release
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&rel); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cannot parse github release from %s: %w", latest, err)
 	}
 	if rel.TagName == "" {
 		return nil, errors.New("release has no tag")
@@ -315,7 +318,9 @@ func install(tmpName, self string) error {
 	}
 	if err := os.Rename(tmpName, self); err != nil {
 		// Put the running binary back rather than leaving nothing installed.
-		_ = os.Rename(displaced, self)
+		if rerr := os.Rename(displaced, self); rerr != nil {
+			return fmt.Errorf("%w (could not restore original: %w)", err, rerr)
+		}
 		return err
 	}
 	return nil
@@ -328,6 +333,9 @@ func fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -360,6 +368,9 @@ func download(ctx context.Context, url string, w io.Writer) (string, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return "", err
 	}
 	defer resp.Body.Close()

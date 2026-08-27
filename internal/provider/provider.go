@@ -66,6 +66,9 @@ func getJSON(ctx context.Context, url string, out any) error {
 	bearer.Apply(req)
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return fmt.Errorf("%s: %w", url, err)
 	}
 	defer resp.Body.Close()
@@ -88,6 +91,9 @@ func getText(ctx context.Context, c *http.Client, url string) (string, error) {
 	bearer.Apply(req)
 	resp, err := c.Do(req)
 	if err != nil {
+		if resp != nil {
+			resp.Body.Close()
+		}
 		return "", fmt.Errorf("%s: %w", url, err)
 	}
 	defer resp.Body.Close()

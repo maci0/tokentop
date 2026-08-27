@@ -52,7 +52,9 @@ support channel (see SECURITY.md).
 - `--agents` no longer re-walks every transcript store on each tick, and
   engine attribution reads the kernel connection tables once per pass.
 - Crush session databases are summed once per attach; a continued session
-  contributes only growth after attach.
+  contributes only growth after attach. A store that cannot be read at
+  attach is retried rather than treated as empty, so pre-attach tokens are
+  not dumped into the review once it becomes readable.
 - Transcripts that grew under one mtime stamp are still read.
 - Probes hang up after the requested token budget if an engine keeps
   streaming, and ignore engine-reported usage figures far past that budget.
