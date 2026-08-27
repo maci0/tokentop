@@ -273,6 +273,8 @@ technology:
 ```
 toktop update     subcommand: install the latest release (--check to only
                   report it, --repo owner/name for a fork)
+toktop help       same as --help; `toktop help update` for the subcommand
+toktop version    same as --version
 --demo            simulated fleet, zero setup
 --add URL         attach an openai-compatible endpoint (repeatable)
 ssh://user@host   positional; monitor remote hosts (repeatable)

@@ -211,9 +211,12 @@ func TestUsage(t *testing.T) {
 		"toktop -",             // what the tool is
 		"Usage:",               // invocation line
 		"[ssh://user@host ...", // positional targets documented
+		"toktop help",          // git-style help command
+		"toktop version",       // git-style version command
 		"Examples:",            // worked examples section
 		"-demo",                // generated flag docs survive
 		"OMNIROUTE_API_KEY",    // env fallbacks named
+		"--add",                // http(s) leftovers hint at --add
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("usage() missing %q", want)
@@ -240,7 +243,7 @@ func TestRunUpdateHelp(t *testing.T) {
 			if got != "" {
 				t.Fatalf("runUpdate(%q) leaked %q to stderr", arg, got)
 			}
-			for _, want := range []string{"Usage:", "--check", "--repo"} {
+			for _, want := range []string{"Usage:", "--check", "--repo", "--version", "GITHUB_TOKEN"} {
 				if !strings.Contains(out.String(), want) {
 					t.Errorf("update help missing %q", want)
 				}
@@ -284,6 +287,7 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		demo    bool
 		once    bool
 		agents  bool
+		nRemote int
 		wantSub string // empty means silence expected
 	}{
 		{name: "seed outside demo warns", set: map[string]bool{"seed": true}, wantSub: "--seed"},
@@ -298,10 +302,22 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		{name: "opencode-db with agents silent", set: map[string]bool{"opencode-db": true}, agents: true},
 		{name: "plain outside once warns", set: map[string]bool{"plain": true}, wantSub: "--plain"},
 		{name: "plain inside once silent", set: map[string]bool{"plain": true}, once: true},
+		{name: "hot-reload with once warns", set: map[string]bool{"no-hot-reload": true}, once: true,
+			wantSub: "--no-hot-reload"},
+		{name: "hot-reload without once silent", set: map[string]bool{"no-hot-reload": true}},
+		{name: "add with demo warns", set: map[string]bool{"add": true}, demo: true, wantSub: "--add"},
+		{name: "add without demo silent", set: map[string]bool{"add": true}},
+		{name: "bearer with demo warns", set: map[string]bool{"bearer": true}, demo: true, wantSub: "--bearer"},
+		{name: "ssh-key with demo warns", set: map[string]bool{"ssh-key": true}, demo: true, nRemote: 1,
+			wantSub: "--ssh-key"},
+		{name: "ssh-key without target warns", set: map[string]bool{"ssh-key": true}, wantSub: "--ssh-key"},
+		{name: "ssh-key with target silent", set: map[string]bool{"ssh-key": true}, nRemote: 1},
+		{name: "ssh target with demo warns", demo: true, nRemote: 1, wantSub: "ssh://"},
+		{name: "ssh target without demo silent", nRemote: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents) })
+			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents, tt.nRemote) })
 			if tt.wantSub == "" {
 				if got != "" {
 					t.Fatalf("warnIgnoredFlags() printed %q, want silence", got)
@@ -381,6 +397,183 @@ func TestWarnIgnoredFrameEnv(t *testing.T) {
 				t.Fatalf("warnIgnoredFrameEnv() printed %q, want mention of %q", got, tt.wantSub)
 			}
 		})
+	}
+}
+
+func TestRunUpdateVersion(t *testing.T) {
+	var out bytes.Buffer
+	var code int
+	got := captureStderr(t, func() {
+		code = runUpdate(context.Background(), &out, []string{"--version"})
+	})
+	if code != 0 {
+		t.Fatalf("runUpdate(--version) = %d, want 0", code)
+	}
+	if got != "" {
+		t.Fatalf("runUpdate(--version) leaked %q to stderr", got)
+	}
+	if !strings.Contains(out.String(), "toktop "+version) {
+		t.Fatalf("stdout = %q, want toktop %s", out.String(), version)
+	}
+}
+
+func TestRunUpdateInterrupted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var code int
+	got := captureStderr(t, func() {
+		code = runUpdate(ctx, io.Discard, nil)
+	})
+	if code != 130 {
+		t.Fatalf("runUpdate(canceled) = %d, want 130", code)
+	}
+	if !strings.Contains(got, "interrupted") {
+		t.Fatalf("stderr = %q, want interrupted", got)
+	}
+}
+
+func TestRunHelp(t *testing.T) {
+	t.Run("no topic prints top-level help", func(t *testing.T) {
+		var out bytes.Buffer
+		var code int
+		got := captureStderr(t, func() { code = runHelp(&out, nil) })
+		if code != 0 {
+			t.Fatalf("runHelp() = %d, want 0", code)
+		}
+		if got != "" {
+			t.Fatalf("runHelp() leaked %q to stderr", got)
+		}
+		if !strings.Contains(out.String(), "Usage:") || !strings.Contains(out.String(), "-demo") {
+			t.Fatalf("runHelp() stdout missing top-level usage: %q", out.String())
+		}
+	})
+	t.Run("update topic prints update help", func(t *testing.T) {
+		var out bytes.Buffer
+		var code int
+		got := captureStderr(t, func() { code = runHelp(&out, []string{"update"}) })
+		if code != 0 {
+			t.Fatalf("runHelp(update) = %d, want 0", code)
+		}
+		if got != "" {
+			t.Fatalf("runHelp(update) leaked %q to stderr", got)
+		}
+		if !strings.Contains(out.String(), "--check") || strings.Contains(out.String(), "-demo") {
+			t.Fatalf("runHelp(update) stdout = %q, want update help", out.String())
+		}
+	})
+	t.Run("unknown topic is a usage error", func(t *testing.T) {
+		var code int
+		got := captureStderr(t, func() { code = runHelp(io.Discard, []string{"bogus"}) })
+		if code != 2 {
+			t.Fatalf("runHelp(bogus) = %d, want 2", code)
+		}
+		if !strings.Contains(got, "bogus") || !strings.Contains(got, "toktop --help") {
+			t.Fatalf("stderr = %q, want topic name and --help", got)
+		}
+	})
+}
+
+func TestRunVersion(t *testing.T) {
+	t.Run("prints version on stdout", func(t *testing.T) {
+		var out bytes.Buffer
+		var code int
+		got := captureStderr(t, func() { code = runVersion(&out, nil) })
+		if code != 0 {
+			t.Fatalf("runVersion() = %d, want 0", code)
+		}
+		if got != "" {
+			t.Fatalf("runVersion() leaked %q to stderr", got)
+		}
+		if !strings.Contains(out.String(), "toktop "+version) {
+			t.Fatalf("stdout = %q, want toktop %s", out.String(), version)
+		}
+	})
+	t.Run("extra argument is a usage error", func(t *testing.T) {
+		var code int
+		got := captureStderr(t, func() { code = runVersion(io.Discard, []string{"extra"}) })
+		if code != 2 {
+			t.Fatalf("runVersion(extra) = %d, want 2", code)
+		}
+		if !strings.Contains(got, "extra") {
+			t.Fatalf("stderr = %q, want mention of extra", got)
+		}
+	})
+	t.Run("--help prints top-level help", func(t *testing.T) {
+		var out bytes.Buffer
+		var code int
+		got := captureStderr(t, func() { code = runVersion(&out, []string{"--help"}) })
+		if code != 0 {
+			t.Fatalf("runVersion(--help) = %d, want 0", code)
+		}
+		if got != "" {
+			t.Fatalf("runVersion(--help) leaked %q to stderr", got)
+		}
+		if !strings.Contains(out.String(), "Usage:") {
+			t.Fatalf("stdout missing usage: %q", out.String())
+		}
+	})
+}
+
+func TestInterpretArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantCmd string
+		wantN   int
+		wantErr string
+	}{
+		{name: "empty"},
+		{name: "help", args: []string{"help"}, wantCmd: "help"},
+		{name: "help update", args: []string{"help", "update"}, wantCmd: "help", wantN: 1},
+		{name: "version", args: []string{"version"}, wantCmd: "version"},
+		{name: "version extra", args: []string{"version", "x"}, wantErr: "toktop version:"},
+		{name: "one ssh", args: []string{"ssh://maci@box"}, wantN: 1},
+		{name: "two ssh", args: []string{"ssh://a", "ssh://b"}, wantN: 2},
+		{name: "http url hints --add", args: []string{"http://127.0.0.1:8000"}, wantErr: "--add"},
+		{name: "https url hints --add", args: []string{"https://example:8000"}, wantErr: "--add"},
+		{name: "bare word points at --help", args: []string{"helpme"}, wantErr: "toktop --help"},
+		{name: "update not first", args: []string{"update"}, wantErr: "toktop update"},
+		{name: "ssh then junk", args: []string{"ssh://a", "nope"}, wantErr: "toktop --help"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, remotes, err := interpretArgs(tt.args)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("interpretArgs(%v) = %q, %v, %v; want error mentioning %q",
+						tt.args, cmd, remotes, err, tt.wantErr)
+				}
+				if !strings.Contains(tt.wantErr, "--add") && strings.Contains(err.Error(), "--add") {
+					t.Fatalf("interpretArgs(%v) error %q must not suggest --add", tt.args, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("interpretArgs(%v) = %v, want nil", tt.args, err)
+			}
+			if cmd != tt.wantCmd {
+				t.Fatalf("cmd = %q, want %q", cmd, tt.wantCmd)
+			}
+			if len(remotes) != tt.wantN {
+				t.Fatalf("remotes = %v, want %d", remotes, tt.wantN)
+			}
+		})
+	}
+}
+
+func TestFlagAddListRejectsEmpty(t *testing.T) {
+	var a flagAddList
+	if err := a.Set(""); err == nil {
+		t.Fatal("empty --add must be rejected")
+	}
+	if err := a.Set("   "); err == nil {
+		t.Fatal("whitespace --add must be rejected")
+	}
+	if err := a.Set("http://127.0.0.1:8000"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.String(); got != "http://127.0.0.1:8000" {
+		t.Fatalf("String() = %q", got)
 	}
 }
 

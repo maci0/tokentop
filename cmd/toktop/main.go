@@ -71,10 +71,21 @@ func resolveVersion(stamped, moduleVersion string) string {
 }
 
 func main() {
-	// One subcommand, taken before flag parsing: everything else about this
-	// CLI is flags and ssh:// targets.
-	if len(os.Args) > 1 && os.Args[1] == "update" {
-		os.Exit(runUpdate(context.Background(), os.Stdout, os.Args[2:]))
+	// Subcommands taken before flag parsing so their own flags
+	// (`update --check`) are not rejected by the top-level FlagSet, and so
+	// `toktop help --anything` never dies as an unknown flag.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "update":
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			code := runUpdate(ctx, os.Stdout, os.Args[2:])
+			stop()
+			os.Exit(code)
+		case "help":
+			os.Exit(runHelp(os.Stdout, os.Args[2:]))
+		case "version":
+			os.Exit(runVersion(os.Stdout, os.Args[2:]))
+		}
 	}
 	var (
 		demoMode  = flag.Bool("demo", false, "run against a simulated fleet instead of real backends")
@@ -92,11 +103,11 @@ func main() {
 		seed      = flag.Int64("seed", 42, "demo RNG seed")
 		sshKey    = flag.String("ssh-key", "", "private key for ssh:// targets (overrides ~/.ssh/config)")
 		bearerArg = flag.String("bearer", "", "bearer token sent to engines (OmniRoute etc.)")
-		showVer   = flag.Bool("version", false, "print version")
+		showVer   = flag.Bool("version", false, "print version and exit")
 		showHelp  bool
 	)
 	flag.BoolVar(&showHelp, "help", false, "show help and exit")
-	flag.BoolVar(&showHelp, "h", false, "shorthand for --help")
+	flag.BoolVar(&showHelp, "h", false, "show help and exit")
 	flag.Var(&adds, "add", "attach an openai-compatible backend URL (repeatable)")
 	// Error paths (unknown flag, bad value) print this usage on stderr and
 	// exit 2; -h/--help is handled below so it lands on stdout with exit 0.
@@ -122,21 +133,35 @@ func main() {
 			fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
 			os.Exit(2)
 		}
-	} else if !term.IsTerminal(int(os.Stdout.Fd())) {
+	}
+
+	// Leftover args before the TTY check: a piped `toktop help` or
+	// `toktop http://host` must name that mistake, not "stdout is not a terminal".
+	cmd, remoteTargets, err := interpretArgs(flag.Args())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	switch cmd {
+	case "help":
+		os.Exit(runHelp(os.Stdout, remoteTargets))
+	case "version":
+		os.Exit(runVersion(os.Stdout, nil))
+	}
+
+	explicit := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	warnUnknownEnv()
+	warnIgnoredFlags(explicit, *demoMode, *once, *agents, len(remoteTargets))
+	warnIgnoredFrameEnv(*once)
+
+	if !*once && !term.IsTerminal(int(os.Stdout.Fd())) {
 		// The live dashboard paints with alt-screen sequences; piped or
 		// redirected they are garbage bytes in the capture, and --once is
 		// the supported way to get output without a terminal.
 		fmt.Fprintln(os.Stderr, "toktop: stdout is not a terminal; the live dashboard needs one (use --once for static output)")
 		os.Exit(2)
 	}
-	warnUnknownEnv()
-
-	// Flags the user passed explicitly, for warnings about no-op combos.
-	explicit := map[string]bool{}
-	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	warnIgnoredFlags(explicit, *demoMode, *once, *agents)
-	// Same reasoning for the frame-size variables, which only --once reads.
-	warnIgnoredFrameEnv(*once)
 
 	// Only when --ingest was given explicitly should an unusable listen
 	// address abort the run; the default-enabled endpoint degrades gracefully.
@@ -151,17 +176,6 @@ func main() {
 		bearer.Set(os.Getenv("OMNIROUTE_API_KEY"))
 	case os.Getenv("TOKTOP_BEARER") != "":
 		bearer.Set(os.Getenv("TOKTOP_BEARER"))
-	}
-
-	// positional ssh:// targets
-	var remoteTargets []string
-	for _, arg := range flag.Args() {
-		if strings.HasPrefix(arg, "ssh://") {
-			remoteTargets = append(remoteTargets, arg)
-		} else {
-			fmt.Fprintf(os.Stderr, "toktop: unexpected argument %q (did you mean --add %s?)\n", arg, arg)
-			os.Exit(2)
-		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -461,8 +475,14 @@ func runOnce(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, n int,
 
 type flagAddList []string
 
-func (a *flagAddList) String() string     { return strings.Join(*a, ",") }
-func (a *flagAddList) Set(v string) error { *a = append(*a, v); return nil }
+func (a *flagAddList) String() string { return strings.Join(*a, ",") }
+func (a *flagAddList) Set(v string) error {
+	if strings.TrimSpace(v) == "" {
+		return errors.New("empty URL")
+	}
+	*a = append(*a, v)
+	return nil
+}
 
 // usage prints the full help screen: what toktop is, how to invoke it,
 // worked examples, generated flag docs and where the env fallbacks live.
@@ -477,6 +497,8 @@ func usage(w io.Writer) {
 Usage:
   toktop [flags] [ssh://user@host ...]
   toktop update [--check] [--repo owner/name]   install the latest release
+  toktop help [update]
+  toktop version
 
 Examples:
   toktop --demo                simulated fleet, works instantly
@@ -492,16 +514,85 @@ Flags:
 `)
 	flag.PrintDefaults()
 	fmt.Fprint(w, `
-Positional arguments are ssh:// targets and may repeat; anything else is
-rejected with a hint. Bearer tokens fall back to $OMNIROUTE_API_KEY then
-$TOKTOP_BEARER (--bearer wins); ssh passwords come from the terminal prompt
-or $TOKTOP_SSH_PASSWORD. See README.md for all environment variables.
+Positional arguments are ssh:// targets and may repeat; help and version
+are also accepted as commands. http(s) URLs are rejected with an --add hint;
+anything else points at --help. Bearer tokens fall back to $OMNIROUTE_API_KEY
+then $TOKTOP_BEARER (--bearer wins); ssh passwords come from the terminal
+prompt or $TOKTOP_SSH_PASSWORD. See README.md for all environment variables.
 `)
+}
+
+// runHelp implements `toktop help [topic]`. Unknown topics are a usage error
+// so a typo does not dump the top-level screen and look like success.
+func runHelp(out io.Writer, args []string) int {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		usage(out)
+		return 0
+	}
+	if args[0] == "update" {
+		return runUpdate(context.Background(), out, []string{"--help"})
+	}
+	fmt.Fprintf(os.Stderr, "toktop: no help topic for %q (see 'toktop --help')\n", args[0])
+	return 2
+}
+
+// runVersion implements `toktop version`. --help prints top-level usage;
+// any other extra argument is a usage error.
+func runVersion(out io.Writer, args []string) int {
+	if len(args) > 0 {
+		if args[0] == "-h" || args[0] == "--help" {
+			usage(out)
+			return 0
+		}
+		fmt.Fprintf(os.Stderr, "toktop version: unexpected argument %q (see 'toktop --help')\n", args[0])
+		return 2
+	}
+	fmt.Fprintln(out, "toktop", version)
+	return 0
+}
+
+// interpretArgs classifies leftovers after flag.Parse. help/version cover
+// `toktop --once help` (the first-arg dispatch already handled `toktop help`);
+// everything else is an ssh:// target or a usage error.
+func interpretArgs(args []string) (cmd string, remotes []string, err error) {
+	if len(args) == 0 {
+		return "", nil, nil
+	}
+	switch args[0] {
+	case "help":
+		return "help", args[1:], nil
+	case "version":
+		if len(args) > 1 {
+			return "", nil, fmt.Errorf("toktop version: unexpected argument %q (see 'toktop --help')", args[1])
+		}
+		return "version", nil, nil
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "ssh://") {
+			remotes = append(remotes, arg)
+			continue
+		}
+		return "", nil, unexpectedArg(arg)
+	}
+	return "", remotes, nil
+}
+
+// unexpectedArg names the leftover and how to fix it. Only http(s) URLs
+// suggest --add; bare words point at --help.
+func unexpectedArg(arg string) error {
+	switch {
+	case arg == "update":
+		return fmt.Errorf("toktop: unexpected argument %q (the update subcommand must be first: toktop update)", arg)
+	case strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://"):
+		return fmt.Errorf("toktop: unexpected argument %q (did you mean --add %s?)", arg, arg)
+	default:
+		return fmt.Errorf("toktop: unexpected argument %q (see 'toktop --help')", arg)
+	}
 }
 
 // warnIgnoredFlags names flags passed explicitly but with no effect in the
 // chosen mode: a silently dropped knob looks like a broken feature.
-func warnIgnoredFlags(set map[string]bool, demo, once, agents bool) {
+func warnIgnoredFlags(set map[string]bool, demo, once, agents bool, nRemote int) {
 	if set["opencode-db"] && !agents {
 		fmt.Fprintln(os.Stderr, "toktop: --opencode-db has no effect without --agents")
 	}
@@ -513,6 +604,24 @@ func warnIgnoredFlags(set map[string]bool, demo, once, agents bool) {
 	}
 	if set["plain"] && !once {
 		fmt.Fprintln(os.Stderr, "toktop: --plain has no effect without --once")
+	}
+	if set["no-hot-reload"] && once {
+		fmt.Fprintln(os.Stderr, "toktop: --no-hot-reload has no effect with --once")
+	}
+	if demo && set["add"] {
+		fmt.Fprintln(os.Stderr, "toktop: --add has no effect with --demo")
+	}
+	if demo && set["bearer"] {
+		fmt.Fprintln(os.Stderr, "toktop: --bearer has no effect with --demo")
+	}
+	if demo && set["ssh-key"] {
+		fmt.Fprintln(os.Stderr, "toktop: --ssh-key has no effect with --demo")
+	}
+	if demo && nRemote > 0 {
+		fmt.Fprintln(os.Stderr, "toktop: ssh:// targets have no effect with --demo")
+	}
+	if set["ssh-key"] && !demo && nRemote == 0 {
+		fmt.Fprintln(os.Stderr, "toktop: --ssh-key has no effect without an ssh:// target")
 	}
 }
 
