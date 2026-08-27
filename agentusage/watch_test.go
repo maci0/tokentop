@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,7 @@ func jsonPath(p string) string {
 func claudeLine(cwd string, out int) string {
 	return `{"type":"assistant","cwd":` + jsonPath(cwd) + `,"timestamp":"2026-08-25T00:00:00.000Z",` +
 		`"message":{"role":"assistant","usage":{"input_tokens":2,"cache_creation_input_tokens":100,` +
-		`"cache_read_input_tokens":0,"output_tokens":` + itoa(out) + `}}}`
+		`"cache_read_input_tokens":0,"output_tokens":` + strconv.Itoa(out) + `}}}`
 }
 
 func codexMeta(cwd string) string {
@@ -40,19 +41,7 @@ func codexMeta(cwd string) string {
 
 func codexTokens(out, total int) string {
 	return `{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":` +
-		`{"input_tokens":10,"output_tokens":` + itoa(out) + `,"total_tokens":` + itoa(total) + `}}}}`
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
+		`{"input_tokens":10,"output_tokens":` + strconv.Itoa(out) + `,"total_tokens":` + strconv.Itoa(total) + `}}}}`
 }
 
 // withStore points an adapter at a temporary transcript directory.

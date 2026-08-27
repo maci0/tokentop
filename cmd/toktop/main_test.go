@@ -255,7 +255,6 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		demo    bool
 		once    bool
 		agents  bool
-		plain   bool
 		wantSub string // empty means silence expected
 	}{
 		{name: "seed outside demo warns", set: map[string]bool{"seed": true}, wantSub: "--seed"},
@@ -273,7 +272,7 @@ func TestWarnIgnoredFlags(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents, tt.plain) })
+			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents) })
 			if tt.wantSub == "" {
 				if got != "" {
 					t.Fatalf("warnIgnoredFlags() printed %q, want silence", got)

@@ -5,7 +5,11 @@
 
 package agentusage
 
-import "golang.org/x/text/unicode/norm"
+import (
+	"slices"
+
+	"golang.org/x/text/unicode/norm"
+)
 
 // macOS file systems (HFS+, APFS) look names up normalization-insensitively
 // while storing whichever form was created: "café" spelled NFC and NFD address
@@ -20,14 +24,7 @@ import "golang.org/x/text/unicode/norm"
 func dirVariants(p string) []string {
 	out := []string{p}
 	for _, v := range []string{norm.NFC.String(p), norm.NFD.String(p)} {
-		known := false
-		for _, have := range out {
-			if have == v {
-				known = true
-				break
-			}
-		}
-		if !known {
+		if !slices.Contains(out, v) {
 			out = append(out, v)
 		}
 	}

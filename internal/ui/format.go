@@ -136,8 +136,8 @@ func clip(s string, w int) string {
 func strip(s string) string { return core.SanitizeText(s) }
 
 func padTo(s string, w int) string {
-	for lipgloss.Width(s) < w {
-		s += " "
+	if gap := w - lipgloss.Width(s); gap > 0 {
+		return s + strings.Repeat(" ", gap)
 	}
 	return s
 }
@@ -167,11 +167,12 @@ func joinSpreadLeft(segs []string, w int) string {
 		if i == 0 {
 			seg = s
 		}
-		if used+lipgloss.Width(seg) > w {
+		sw := lipgloss.Width(seg)
+		if used+sw > w {
 			break
 		}
 		b.WriteString(seg)
-		used += lipgloss.Width(seg)
+		used += sw
 	}
 	return b.String()
 }

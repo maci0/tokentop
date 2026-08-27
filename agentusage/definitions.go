@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -29,7 +30,7 @@ func Agents() []string {
 	defsMu.RLock()
 	extra := make([]string, 0, len(defs))
 	for name := range defs {
-		if !isKnown(name) {
+		if !slices.Contains(knownAgents, name) {
 			extra = append(extra, name)
 		}
 	}
@@ -38,15 +39,6 @@ func Agents() []string {
 	out := append(append([]string(nil), knownAgents...), extra...)
 	sort.Strings(out)
 	return out
-}
-
-func isKnown(name string) bool {
-	for _, a := range knownAgents {
-		if a == name {
-			return true
-		}
-	}
-	return false
 }
 
 var (

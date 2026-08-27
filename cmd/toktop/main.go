@@ -105,7 +105,7 @@ func main() {
 	// Flags the user passed explicitly, for warnings about no-op combos.
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-	warnIgnoredFlags(explicit, *demoMode, *once, *agents, *plain)
+	warnIgnoredFlags(explicit, *demoMode, *once, *agents)
 	// Same reasoning for the frame-size variables, which only --once reads.
 	warnIgnoredFrameEnv(*once)
 
@@ -472,7 +472,7 @@ or $TOKTOP_SSH_PASSWORD. See README.md for all environment variables.
 
 // warnIgnoredFlags names flags passed explicitly but with no effect in the
 // chosen mode: a silently dropped knob looks like a broken feature.
-func warnIgnoredFlags(set map[string]bool, demo, once, agents, plain bool) {
+func warnIgnoredFlags(set map[string]bool, demo, once, agents bool) {
 	if set["opencode-db"] && !agents {
 		fmt.Fprintln(os.Stderr, "toktop: --opencode-db has no effect without --agents")
 	}
