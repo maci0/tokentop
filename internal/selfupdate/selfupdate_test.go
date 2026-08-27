@@ -99,6 +99,18 @@ func TestGitHubAssetURL(t *testing.T) {
 	}
 }
 
+func TestChecksumForRejectsNonHex(t *testing.T) {
+	name := "toktop_1.2.3_linux_amd64"
+	okHex := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	if sum, ok := ChecksumFor(okHex+"  "+name+"\n", name); !ok || sum != okHex {
+		t.Fatalf("valid hex rejected: %q %v", sum, ok)
+	}
+	junk := "e3b0c44298fc1c149afbf4c8996fb9\x7f\x00\x00\x00a\xee41e4649b934ca495991b7852b855"
+	if sum, ok := ChecksumFor(junk+" *"+name+"\n", name); ok {
+		t.Fatalf("non-hex 64-byte field accepted: %q", sum)
+	}
+}
+
 func TestCheckRejectsBadRepoWithoutNetwork(t *testing.T) {
 	_, err := Check(context.Background(), "maci0/toktop/../../../users/octocat")
 	if err == nil {

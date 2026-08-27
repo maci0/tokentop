@@ -426,9 +426,13 @@ func ChecksumFor(listing, name string) (string, bool) {
 			continue
 		}
 		sum, file := fields[0], strings.TrimPrefix(fields[1], "*")
-		if filepath.Base(file) == name && len(sum) == 64 {
-			return strings.ToLower(sum), true
+		if filepath.Base(file) != name || len(sum) != 64 {
+			continue
 		}
+		if _, err := hex.DecodeString(sum); err != nil {
+			continue
+		}
+		return strings.ToLower(sum), true
 	}
 	return "", false
 }

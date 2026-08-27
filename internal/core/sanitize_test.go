@@ -75,6 +75,27 @@ func TestSanitizeTextPreservesUTF8(t *testing.T) {
 	}
 }
 
+func TestSanitizeTextStripsRawC1Byte(t *testing.T) {
+	got := SanitizeText("a\x9bb")
+	if i := strings.IndexByte(got, 0x9b); i >= 0 {
+		t.Fatalf("raw C1 CSI byte survived at %d: %q", i, got)
+	}
+	if got != "ab" {
+		t.Fatalf("SanitizeText(%q) = %q, want %q", "a\x9bb", got, "ab")
+	}
+}
+
+func TestSanitizeTextDropsIllFormedUTF8(t *testing.T) {
+	// A lead byte plus a later continuation must not reassemble into U+00AD
+	// (soft hyphen) on a second pass.
+	if got := SanitizeText("\xc2\v\xad"); got != "" {
+		t.Fatalf("ill-formed UTF-8 survived: %q", got)
+	}
+	if got := SanitizeText("\xc2\xad"); got != "" {
+		t.Fatalf("UTF-8 soft hyphen survived: %q", got)
+	}
+}
+
 func TestSanitizeTextNewlineTabSurvive(t *testing.T) {
 	if got := SanitizeText("a\nb\tc\rd"); got != "a\nb\tcd" {
 		t.Errorf("newline/tab handling changed: %q", got)
