@@ -186,11 +186,13 @@ SSH mode is built in (pure Go, no ssh binary needed) and the remote only
 needs a POSIX shell - no agent is installed. Discovery reads the remote
 `/proc` directly: listening sockets from `/proc/net/tcp(+6)` (with an active
 port probe as fallback) plus engine processes with their `--port` flags, so
-engines on custom ports are found just like locally. Engine traffic flows
-through direct TCP channels on one persistent connection - no local port
-forwards, nothing to race or leak. Host vitals stream the same way: load,
-memory, uptime, CPU model, OS, kernel and GPU rows (`nvidia-smi`, or
-`rocm-smi` on AMD boxes).
+engines on custom ports are found just like locally. Engine traffic rides
+ssh direct-tcpip channels on that same connection. Each remote engine port is
+reached through a loopback listener bound to `127.0.0.1` with an ephemeral
+port, so local clients attach the same way they would to a local engine;
+those listeners are reachable by any process on this host. Host vitals
+stream the same way: load, memory, uptime, CPU model, OS, kernel and GPU
+rows (`nvidia-smi`, or `rocm-smi` on AMD boxes).
 
 Auth tries, in order: `--ssh-key PATH`, keys from `~/.ssh/config`
 (`HostName`, `User`, `Port`, `IdentityFile` are honored), your default
