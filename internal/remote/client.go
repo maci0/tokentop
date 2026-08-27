@@ -16,8 +16,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/maci0/toktop/internal/core"
 )
 
 // runTimeout bounds one remote command (discovery or vitals poll). Var so
@@ -317,8 +320,18 @@ func stderrTail(s string) string {
 	if s == "" {
 		return ""
 	}
+	s = core.SanitizeText(s)
+	if s == "" {
+		return ""
+	}
 	if len(s) > 300 {
 		s = s[len(s)-300:]
+		for len(s) > 0 && !utf8.RuneStart(s[0]) {
+			s = s[1:]
+		}
+	}
+	if s == "" {
+		return ""
 	}
 	return ": " + s
 }

@@ -37,6 +37,9 @@ func FuzzHandlePost(f *testing.F) {
 		[]byte(`{"kind":"\u001b]0;pwned\u0007weird"}`),
 		[]byte(`{"agent":"esc\u001b[2Jclear","model":"\u009bhidden"}`),
 		[]byte(`{"agent":"clau\u200bde\u202eedualc"}`),
+		[]byte(`{"id":"cafe\u0301","agent":"cafe\u0301"}`),
+		[]byte(`{"agent":"clau\ufe00de"}`),
+		[]byte(`{"agent":"foo\u2028bar"}`),
 		[]byte(`{"agent":"` + strings.Repeat("a", 300) + `"}`),
 		[]byte(`{"agent":"` + strings.Repeat("é", 300) + `"}`),
 		[]byte(`{"prompt_tokens":-500,"output_tokens":-99999999999}`),
@@ -124,6 +127,9 @@ func FuzzHandlePost(f *testing.F) {
 // DEL, or C1 control runes.
 func assertRenderSafe(t *testing.T, i int, field, s string) {
 	t.Helper()
+	if !utf8.ValidString(s) {
+		t.Fatalf("event %d: %s is not valid UTF-8: %q", i, field, s)
+	}
 	for j := 0; j < len(s); j++ {
 		c := s[j]
 		if c == 0x1b || c == 0x7f || (c < 0x20 && c != '\n' && c != '\t') {
@@ -134,7 +140,8 @@ func assertRenderSafe(t *testing.T, i int, field, s string) {
 		if r >= 0x80 && r <= 0x9f {
 			t.Fatalf("event %d: %s retains C1 control %U: %q", i, field, r, s)
 		}
-		if unicode.Is(unicode.Bidi_Control, r) || r == '\u200b' || r == '\ufeff' || r == '\u00ad' {
+		if unicode.Is(unicode.Bidi_Control, r) || r == '\u200b' || r == '\ufeff' || r == '\u00ad' ||
+			r == '\u2028' || r == '\u2029' || (r >= 0xFE00 && r <= 0xFE0F) {
 			t.Fatalf("event %d: %s retains format/bidi %U: %q", i, field, r, s)
 		}
 	}

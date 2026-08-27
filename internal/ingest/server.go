@@ -19,6 +19,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/maci0/toktop/internal/core"
 )
 
@@ -523,10 +525,13 @@ func clampTokens(n int64) int64 {
 
 // clampField caps a free-form event field at n user-perceived characters
 // (grapheme clusters), cutting between characters so a retained emoji or
-// accented name never ends mid-character. Events are retained (count-capped)
-// for the process lifetime, so unbounded strings would let a single oversized
-// event pin memory until count-evicted.
+// accented name never ends mid-character. The field is composed to NFC
+// first: "café" spelled NFD (e + combining acute) and NFC (precomposed)
+// would otherwise be two agents and two event IDs. Events are retained
+// (count-capped) for the process lifetime, so unbounded strings would let
+// a single oversized event pin memory until count-evicted.
 func clampField(s string, n int) string {
+	s = norm.NFC.String(s)
 	if len(s) <= n { // fast path: ASCII within cap, no scan
 		return s
 	}

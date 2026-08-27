@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSnippetBoundedAndOneLine(t *testing.T) {
@@ -76,5 +77,15 @@ func TestSnippetStripsTerminalInjection(t *testing.T) {
 	}
 	if !strings.Contains(got, "ok") || !strings.Contains(got, "tail") {
 		t.Errorf("snippet lost visible text: %q", got)
+	}
+}
+
+func TestSnippetReplacesInvalidUTF8(t *testing.T) {
+	got := Snippet([]byte("caf\xff\xfe"))
+	if !utf8.ValidString(got) {
+		t.Errorf("snippet is not valid UTF-8: %q", got)
+	}
+	if got != "caf\uFFFD\uFFFD" {
+		t.Errorf("snippet = %q, want caf plus two replacement characters", got)
 	}
 }

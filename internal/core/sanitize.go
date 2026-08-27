@@ -17,7 +17,8 @@ import (
 // and tabs survive so layout text is unaffected. Bidi overrides, isolates,
 // and zero-width format characters that spoof identity-bearing fields
 // (agent names, host labels) are removed too. ZWJ (U+200D) stays so emoji
-// sequences remain whole. Other multi-byte runes are preserved.
+// sequences remain whole. Ill-formed UTF-8 is replaced with U+FFFD so the
+// result is always valid UTF-8. Other multi-byte runes are preserved.
 func SanitizeText(s string) string {
 	if !needsSanitize(s) {
 		return s
@@ -39,6 +40,11 @@ func SanitizeText(s string) string {
 			i++
 		default:
 			r, size := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError && size == 1 {
+				b.WriteRune(utf8.RuneError)
+				i++
+				continue
+			}
 			if unsafeRune(r) {
 				i += size
 				continue
@@ -53,7 +59,9 @@ func SanitizeText(s string) string {
 // unsafeRune reports a code point that must not reach a terminal or an
 // identity field: C1 controls, bidi overrides/isolates, and the zero-width
 // format characters used to spoof or hide names. U+200D (ZWJ) is kept so
-// 👩‍💻-style emoji survive as one cluster.
+// 👩‍💻-style emoji survive as one cluster. Variation selectors are stripped
+// so "claude" and "claude" + VS1 stay one name; emoji remain as their base
+// characters. Line and paragraph separators would split a single-line field.
 func unsafeRune(r rune) bool {
 	if r >= 0x80 && r <= 0x9f {
 		return true
@@ -64,13 +72,23 @@ func unsafeRune(r rune) bool {
 	switch r {
 	case 0x00AD, // soft hyphen
 		0x034F,                         // combining grapheme joiner
-		0x180E,                         // mongolian vowel separator
-		0x200B,                         // zero-width space
-		0x200C,                         // zero-width non-joiner
+		0x180B, 0x180C, 0x180D, 0x180F, // mongolian free variation selectors
+		0x180E,         // mongolian vowel separator
+		0x200B,         // zero-width space
+		0x200C,         // zero-width non-joiner
+		0x2028, 0x2029, // line/paragraph separators
 		0x2060,                         // word joiner
 		0x2061, 0x2062, 0x2063, 0x2064, // invisible math operators
+		0x206A, 0x206B, 0x206C, 0x206D, 0x206E, 0x206F, // deprecated format
+		0xFFF9, 0xFFFA, 0xFFFB, // interlinear annotation
 		0xFEFF: // BOM / ZWNBSP
 		return true
+	}
+	if r >= 0xFE00 && r <= 0xFE0F {
+		return true // variation selectors 1-16
+	}
+	if r >= 0xE0100 && r <= 0xE01EF {
+		return true // variation selectors supplement
 	}
 	return false
 }

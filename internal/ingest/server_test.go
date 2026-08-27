@@ -715,6 +715,26 @@ func TestIdleKeepAliveConnsReaped(t *testing.T) {
 
 // kind is attacker-shaped text like every other event field: escape
 // sequences must be stripped before the value enters the retained feed.
+func TestIngestNormalizesAgentToNFC(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	// NFD "café" (e + combining acute) and NFC "café" must land as one
+	// identity: otherwise a macOS-typed name and a JSON-NFC name split
+	// the agent list and duplicate-id check.
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"id":"cafe\u0301","agent":"cafe\u0301","note":"cafe\u0301"}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 1)
+	want := "caf\u00e9"
+	ev := rec.evs[0]
+	if ev.ID != want || ev.Agent != want || ev.Note != want {
+		t.Errorf("id/agent/note = %q %q %q, want NFC %q", ev.ID, ev.Agent, ev.Note, want)
+	}
+}
+
 func TestIngestStripsBidiFromAgent(t *testing.T) {
 	rec := &memRecorder{}
 	s := startIngest(t, rec)

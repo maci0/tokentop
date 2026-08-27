@@ -3,6 +3,7 @@ package core
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSanitizeTextPassthrough(t *testing.T) {
@@ -15,8 +16,12 @@ func TestSanitizeTextPassthrough(t *testing.T) {
 		"line one\nline two\ttabbed",
 	}
 	for _, in := range cases {
-		if got := SanitizeText(in); got != in {
+		got := SanitizeText(in)
+		if got != in {
 			t.Errorf("SanitizeText(%q) = %q, want unchanged", in, got)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("SanitizeText(%q) returned invalid UTF-8", in)
 		}
 	}
 }
@@ -85,10 +90,31 @@ func TestSanitizeTextStripsBidiAndZeroWidth(t *testing.T) {
 		{"BOM prefix", "\ufeffclaude", "claude"},
 		{"soft hyphen", "cla\u00adude", "claude"},
 		{"ZWJ emoji stays one sequence", "👩\u200d💻", "👩\u200d💻"},
+		{"VS1 cannot spoof a name", "clau\ufe00de", "claude"},
+		{"emoji VS16 stripped, base stays", "\u2764\ufe0f", "\u2764"},
+		{"line separator cannot split a row", "foo\u2028bar", "foobar"},
+		{"paragraph separator", "foo\u2029bar", "foobar"},
 	}
 	for _, tc := range cases {
 		if got := SanitizeText(tc.in); got != tc.want {
 			t.Errorf("%s: SanitizeText(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestSanitizeTextReplacesInvalidUTF8(t *testing.T) {
+	// A truncated 2-byte sequence and a lone 0xFF are not UTF-8; leaving
+	// them in an identity field or a terminal line is the same class of
+	// defect as slicing a character in half.
+	got := SanitizeText("caf\xff\xfe")
+	if !utf8.ValidString(got) {
+		t.Errorf("SanitizeText returned invalid UTF-8: %q", got)
+	}
+	if got != "caf\uFFFD\uFFFD" {
+		t.Errorf("SanitizeText(%q) = %q, want caf plus two replacement characters", "caf\xff\xfe", got)
+	}
+	// A real U+FFFD (3-byte UTF-8) is already valid and stays.
+	if got := SanitizeText("ok\uFFFD"); got != "ok\uFFFD" {
+		t.Errorf("literal replacement character was altered: %q", got)
 	}
 }

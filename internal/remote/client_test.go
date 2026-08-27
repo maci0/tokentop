@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -735,5 +736,32 @@ func TestStderrTailTruncatesToTail(t *testing.T) {
 	want := ": " + strings.Repeat("x", 300)
 	if got != want {
 		t.Errorf("tail length = %d, want %d (300-byte cap)", len(got), len(want))
+	}
+}
+
+func TestStderrTailCutsOnUTF8Boundary(t *testing.T) {
+	// "é" is two bytes. A 301-byte string whose first byte is the lead of
+	// that é would, sliced at len-300, start on the continuation byte and
+	// yield invalid UTF-8 in the error line.
+	in := "é" + strings.Repeat("x", 299)
+	got := stderrTail(in)
+	if !utf8.ValidString(got) {
+		t.Errorf("stderrTail produced invalid UTF-8: %q", got)
+	}
+	if !strings.HasPrefix(got, ": ") {
+		t.Errorf("stderrTail = %q, want ': ' prefix", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Errorf("stderrTail left a replacement character from a split é: %q", got)
+	}
+}
+
+func TestStderrTailStripsTerminalInjection(t *testing.T) {
+	got := stderrTail("ok\x1b]52;c;QUJD\x07tail")
+	if strings.ContainsRune(got, 0x1b) || strings.ContainsRune(got, 0x07) {
+		t.Errorf("stderrTail retained escape bytes: %q", got)
+	}
+	if got != ": oktail" {
+		t.Errorf("stderrTail = %q, want visible text kept", got)
 	}
 }
