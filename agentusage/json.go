@@ -68,6 +68,15 @@ var (
 		"cwd": true, "working_directory": true, "workingdirectory": true,
 		"workdir": true, "project_dir": true, "projectdir": true,
 	}
+	// Payload keys hold user, model, or tool text. Counters live beside
+	// these fields, not inside them; descending would inspect prompts.
+	payloadKeys = map[string]bool{
+		"content": true, "parts": true, "delta": true,
+		"tool_result": true, "toolresult": true,
+		"tool_use": true, "tooluse": true,
+		"tool_calls": true, "toolcalls": true,
+		"arguments": true,
+	}
 )
 
 // parseJSON reads one line of an agent's transcript. ok is false when the line
@@ -116,6 +125,9 @@ func walk(node any, ev *jsonEvent, depth int) {
 			}
 			if isNumberKey(lower) {
 				assign(ev, lower, child)
+				continue
+			}
+			if payloadKeys[lower] {
 				continue
 			}
 			walk(child, ev, depth+1)

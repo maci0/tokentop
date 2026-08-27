@@ -90,6 +90,20 @@ func TestAbsurdCounterIsAbsent(t *testing.T) {
 	}
 }
 
+func TestWalkDoesNotInspectPayloads(t *testing.T) {
+	// Counters planted inside content/parts/delta are prompt or tool text,
+	// not usage. The outer usage object is what counts.
+	line := `{"content":{"usage":{"output_tokens":99999},"parts":[{"usage":{"output_tokens":888}}]},` +
+		`"delta":{"usage":{"output_tokens":777}},"usage":{"output_tokens":7}}`
+	ev, ok := parseJSON([]byte(line))
+	if !ok {
+		t.Fatal("valid JSON was rejected")
+	}
+	if ev.Usage.Output != 7 {
+		t.Fatalf("payload usage leaked or outer usage lost: %+v", ev.Usage)
+	}
+}
+
 func TestDeeplyNestedPayloadDoesNotRunAway(t *testing.T) {
 	// A tool result can nest arbitrarily; the walk must stop and stay quiet.
 	line := `{"type":"tool_result","content":` + strings.Repeat(`{"a":`, 40) + `"deep"` + strings.Repeat(`}`, 40) + `}`

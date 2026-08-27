@@ -927,6 +927,9 @@ func TestIngestLogsPostOutcome(t *testing.T) {
 	if strings.Contains(got, "secret-note-value") || strings.Contains(got, "coder") {
 		t.Errorf("log leaked event body: %s", got)
 	}
+	if strings.Contains(got, "127.0.0.1") || strings.Contains(got, "::1") {
+		t.Errorf("log leaked loopback IP: %s", got)
+	}
 
 	buf.Reset()
 	code, _ := postBody(t, "http://"+s.Addr()+"/v1/events", `{not json`)
@@ -947,6 +950,39 @@ func TestIngestLogsPostOutcome(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("failure log missing %q: %s", want, got)
 		}
+	}
+}
+
+func TestIngestLogRedactsPeerAddress(t *testing.T) {
+	lg, buf := captureLogger()
+	s := &Server{rec: &memRecorder{}, log: lg}
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/events",
+		strings.NewReader(`{"agent":"x"}`))
+	r.RemoteAddr = "203.0.113.9:54321"
+	w := httptest.NewRecorder()
+	s.handlePost(w, r)
+
+	got := buf.String()
+	if strings.Contains(got, "203.0.113.9") {
+		t.Errorf("logged peer IP: %s", got)
+	}
+	if !strings.Contains(got, "remote=remote") {
+		t.Errorf("want redacted remote, got %s", got)
+	}
+
+	buf.Reset()
+	r = httptest.NewRequest(http.MethodPost, "/v1/events",
+		strings.NewReader(`{"agent":"x"}`))
+	r.RemoteAddr = "127.0.0.1:9999"
+	w = httptest.NewRecorder()
+	s.handlePost(w, r)
+	got = buf.String()
+	if strings.Contains(got, "127.0.0.1") {
+		t.Errorf("logged loopback IP: %s", got)
+	}
+	if !strings.Contains(got, "remote=loopback:9999") {
+		t.Errorf("want loopback port, got %s", got)
 	}
 }
 

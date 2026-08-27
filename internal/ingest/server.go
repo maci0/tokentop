@@ -137,13 +137,28 @@ func logField(s string, n int) string {
 	return clampField(strings.Join(strings.Fields(core.SanitizeText(s)), " "), n)
 }
 
+// logRemote prepares a peer address for the ingest audit line. Loopback
+// keeps the port so a local sender can be told apart; any other IP is
+// dropped. The address is personal data when --ingest is bound off loopback.
+func logRemote(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "unknown"
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() {
+		return net.JoinHostPort("loopback", port)
+	}
+	return "remote"
+}
+
 func (s *Server) logPost(r *http.Request, reqID string, status, accepted int, d time.Duration, errMsg string) {
 	if s.log == nil {
 		return
 	}
 	attrs := []any{
 		"req", reqID,
-		"remote", r.RemoteAddr,
+		"remote", logRemote(r.RemoteAddr),
 		"status", status,
 		"accepted", accepted,
 		"duration", d.Round(time.Microsecond),

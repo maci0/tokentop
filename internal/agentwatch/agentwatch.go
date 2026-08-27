@@ -20,7 +20,10 @@ import (
 	"context"
 	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -310,11 +313,47 @@ func note(p agentusage.Process, thinking int, via string) string {
 }
 
 // shortDir keeps the last two path components, which is what identifies a
-// checkout without filling the row.
+// checkout without filling the row. A path under the operator's home is
+// rewritten with ~ first so a username sitting in those last two components
+// (home itself, or a project directly in it) never becomes the note.
 func shortDir(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if stripped, ok := stripHome(dir); ok {
+		dir = stripped
+	}
+	return lastTwoComponents(dir)
+}
+
+func stripHome(dir string) (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", false
+	}
+	cleanDir, cleanHome := resolvePath(dir), resolvePath(home)
+	rel, err := filepath.Rel(cleanHome, cleanDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	if rel == "." {
+		return "~", true
+	}
+	return "~/" + filepath.ToSlash(rel), true
+}
+
+func resolvePath(p string) string {
+	p = filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
+}
+
+func lastTwoComponents(dir string) string {
 	cut := 0
 	for i := len(dir) - 1; i >= 0; i-- {
-		if dir[i] == '/' {
+		if dir[i] == '/' || dir[i] == '\\' {
 			cut++
 			if cut == 2 {
 				return dir[i+1:]

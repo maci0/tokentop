@@ -170,16 +170,47 @@ func TestSilentAgentProducesNoEvents(t *testing.T) {
 }
 
 func TestShortDirKeepsTheIdentifyingPart(t *testing.T) {
+	// Pin home away from the fixture paths so this is the last-two-components
+	// rule alone, not the home-stripping one.
+	elsewhere := t.TempDir()
+	t.Setenv("HOME", elsewhere)
+	t.Setenv("USERPROFILE", elsewhere)
 	cases := map[string]string{
 		"/home/dev/src/project": "src/project",
 		"/home/dev/project":     "dev/project",
 		"project":               "project",
 		"/":                     "/",
+		`C:\Users\dev\src\app`:  `src\app`,
 	}
 	for in, want := range cases {
 		if got := shortDir(in); got != want {
 			t.Errorf("shortDir(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestShortDirHidesHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	if got := shortDir(home); got != "~" {
+		t.Errorf("home itself = %q, want ~", got)
+	}
+	if got := shortDir(""); got != "" {
+		t.Errorf("empty = %q, want empty", got)
+	}
+	one := filepath.Join(home, "toktop")
+	if got := shortDir(one); got != "~/toktop" {
+		t.Errorf("project in home = %q, want ~/toktop", got)
+	}
+	two := filepath.Join(home, "src", "toktop")
+	if got := shortDir(two); got != "src/toktop" {
+		t.Errorf("nested under home = %q, want src/toktop", got)
+	}
+	outside := filepath.Join(filepath.Dir(home), "other", "proj")
+	if got := shortDir(outside); strings.Contains(got, filepath.Base(home)) {
+		t.Errorf("path outside home still names home: %q", got)
 	}
 }
 
