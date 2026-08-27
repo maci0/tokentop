@@ -20,6 +20,7 @@ import (
 type fakeProvider struct {
 	label string
 	addr  string // defaults to "fake://<label>"
+	kind  string // defaults to core.KindOllama
 	m     *provider.Metrics
 	err   error
 }
@@ -31,9 +32,17 @@ func (f *fakeProvider) Addr() string {
 	}
 	return "fake://" + f.label
 }
+func (f *fakeProvider) Kind() string {
+	if f.kind != "" {
+		return f.kind
+	}
+	return core.KindOllama
+}
 func (f *fakeProvider) Poll(context.Context) (*provider.Metrics, error) {
 	return f.m, f.err
 }
+
+var _ provider.Provider = (*fakeProvider)(nil)
 
 func TestRatesDeriveAndSmooth(t *testing.T) {
 	c := New(nil, time.Second)
@@ -150,6 +159,26 @@ func TestHistoryRingRetimesAfterGap(t *testing.T) {
 	want := base.Add(9 * time.Second).Add(-5 * time.Second)
 	if !r.t0.Equal(want) {
 		t.Fatalf("t0 after gap = %v, want %v", r.t0, want)
+	}
+}
+
+func TestEmitCopiesProviderKind(t *testing.T) {
+	fp := &fakeProvider{label: "v", kind: core.KindVLLM, m: &provider.Metrics{}}
+	ch := make(chan core.Snapshot, 1)
+	c := New([]provider.Provider{fp}, time.Hour)
+	c.sysFn = func() core.SysSample { return core.SysSample{} }
+	go c.emit(context.Background(), ch)
+
+	select {
+	case snap := <-ch:
+		if len(snap.Providers) != 1 {
+			t.Fatalf("providers = %d, want 1", len(snap.Providers))
+		}
+		if snap.Providers[0].Kind != core.KindVLLM {
+			t.Fatalf("Kind = %q, want %q", snap.Providers[0].Kind, core.KindVLLM)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("emit did not produce a snapshot")
 	}
 }
 

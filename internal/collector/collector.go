@@ -234,7 +234,7 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 		p := c.providers[i]
 		ps := core.ProviderSnapshot{
 			Label: p.Label(),
-			Kind:  kindOf(p),
+			Kind:  p.Kind(),
 			Addr:  p.Addr(),
 		}
 		// Per-provider state is keyed by endpoint, not display label (see
@@ -463,7 +463,7 @@ func (c *Collector) ProbeAll() {
 	var targets []probe.Request
 	for _, p := range c.providers {
 		if model := c.lastModel[providerKey(p)]; model != "" {
-			targets = append(targets, probe.Request{Kind: kindOf(p), Base: p.Addr(), Model: model})
+			targets = append(targets, probe.Request{Kind: p.Kind(), Base: p.Addr(), Model: model})
 		}
 	}
 	ctx := c.baseCtx
@@ -499,14 +499,6 @@ func (c *Collector) ProbeAll() {
 			c.RecordProbe(s)
 		}(t)
 	}
-}
-
-// kindOf reports a provider's engine kind; providers without one are ollama.
-func kindOf(p provider.Provider) string {
-	if k, ok := p.(interface{ Kind() string }); ok {
-		return k.Kind()
-	}
-	return core.KindOllama
 }
 
 // urlPort extracts the TCP port from a backend URL.

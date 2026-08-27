@@ -43,11 +43,18 @@ type Metrics struct {
 	Version     string  // engine software version, best effort
 }
 
+// Provider is one inference backend the collector can poll.
 type Provider interface {
 	Label() string
 	Addr() string
+	Kind() string
 	Poll(ctx context.Context) (*Metrics, error)
 }
+
+var (
+	_ Provider = (*Ollama)(nil)
+	_ Provider = (*OpenAICompat)(nil)
+)
 
 var httpClient = &http.Client{Timeout: PollTimeout}
 

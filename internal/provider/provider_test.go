@@ -236,6 +236,15 @@ func TestPollCarriesBearerAndContextLength(t *testing.T) {
 	}
 }
 
+func TestProviderKind(t *testing.T) {
+	if k := NewOllama("http://127.0.0.1:11434").Kind(); k != core.KindOllama {
+		t.Errorf("Ollama.Kind() = %q, want %q", k, core.KindOllama)
+	}
+	if k := NewOpenAICompat("http://127.0.0.1:8000", "vllm", core.KindVLLM).Kind(); k != core.KindVLLM {
+		t.Errorf("OpenAICompat.Kind() = %q, want %q", k, core.KindVLLM)
+	}
+}
+
 func TestCandidatePortsIncludeOmniRoute(t *testing.T) {
 	if slices.Contains(CandidatePorts(), 20128) {
 		return
@@ -261,8 +270,8 @@ func TestPollOllamaModels(t *testing.T) {
 	defer srv.Close()
 
 	p := NewOllama(srv.URL)
-	if p.Addr() != srv.URL || p.Label() != "ollama" {
-		t.Fatalf("identity = %s/%s", p.Label(), p.Addr())
+	if p.Addr() != srv.URL || p.Label() != "ollama" || p.Kind() != core.KindOllama {
+		t.Fatalf("identity = %s/%s/%s", p.Label(), p.Addr(), p.Kind())
 	}
 	m, err := p.Poll(context.Background())
 	if err != nil {

@@ -1,7 +1,8 @@
-// Shared formatting and small layout helpers used by the renderers in
-// ui.go: number/duration/byte formatting plus visible-width text cutting.
-// Rendering primitives live in spark.go, styles in theme.go.
 package ui
+
+// Formatting and small layout helpers used by the renderers in ui.go:
+// number/duration/byte formatting plus visible-width text cutting.
+// Rendering primitives live in spark.go, styles in theme.go.
 
 import (
 	"fmt"

@@ -21,6 +21,7 @@ func NewOllama(base string) *Ollama {
 
 func (o *Ollama) Label() string { return "ollama" }
 func (o *Ollama) Addr() string  { return o.base }
+func (o *Ollama) Kind() string  { return core.KindOllama }
 
 func (o *Ollama) Poll(ctx context.Context) (*Metrics, error) {
 	m := &Metrics{}

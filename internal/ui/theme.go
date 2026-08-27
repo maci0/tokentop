@@ -1,4 +1,3 @@
-// Package ui renders the toktop dashboard.
 package ui
 
 import (
