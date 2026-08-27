@@ -180,10 +180,9 @@ func (c *Collector) Run(ctx context.Context, out chan<- core.Snapshot) {
 	c.baseCtx = ctx
 	c.mu.Unlock()
 	c.startProcPoller(ctx)
-	// Warm the vitals cache before the first emit. sysSnapshot's cold
-	// fallback samples inline, and emit holds c.mu across it: a cold sample
-	// there would stall RecordAgent (ingest handlers) and ProbeAll for the
-	// whole sweep, which on GPU hosts includes multi-second vendor CLIs.
+	// Warm the vitals cache before the first emit so that frame is a cache
+	// hit. GPU vendor CLIs can take seconds; sampling them inside emit
+	// would delay it. RecordAgent is not pinned: sysSnapshot runs outside c.mu.
 	c.sampleSys(false)
 	c.startSysPoller(ctx)
 	t := time.NewTicker(c.interval)
@@ -223,12 +222,16 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 
 	now := time.Now()
 	snap := core.Snapshot{At: now, Uptime: now.Sub(c.started)}
+	// Vitals and the process table are independent of c.mu. Sampling them
+	// inside the critical section would stall RecordAgent/ProbeAll for the
+	// whole vendor-CLI sweep on a cold cache.
+	sys := c.sysSnapshot()
+	byPort := procsByPort(c.procSnapshot())
 
 	c.mu.Lock()
 	snap.Agents = append([]core.AgentEvent(nil), c.agents...)
 	snap.Probes = append([]core.ProbeSample(nil), c.probes...)
-	snap.Sys = c.sysSnapshot()
-	byPort := procsByPort(c.procSnapshot())
+	snap.Sys = sys
 	for i, r := range results {
 		p := c.providers[i]
 		ps := core.ProviderSnapshot{

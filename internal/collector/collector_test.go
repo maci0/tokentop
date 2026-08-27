@@ -655,6 +655,39 @@ func TestEmitBlockedSendDoesNotPinMu(t *testing.T) {
 	}
 }
 
+// A cold vitals sample (GPU vendor CLIs) must not hold c.mu. Regression for
+// sampling inside emit's critical section.
+func TestEmitSysSampleDoesNotPinMu(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	col := New(nil, time.Hour)
+	col.SetSysFn(func() core.SysSample {
+		close(started)
+		<-release
+		return core.SysSample{MemTotal: 1}
+	})
+	ch := make(chan core.Snapshot, 1)
+	go col.emit(context.Background(), ch)
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("sysFn never started")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		col.RecordAgent(core.AgentEvent{Agent: "liveness-probe"})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RecordAgent blocked while emit was sampling vitals")
+	}
+	close(release)
+}
+
 // waitFor polls cond until it holds or the deadline passes; probe completion
 // is asynchronous, so tests must wait rather than sleep-and-hope.
 func waitFor(t *testing.T, cond func() bool, msg string) {

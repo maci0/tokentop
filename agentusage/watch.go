@@ -678,11 +678,11 @@ func (w *Watcher) Sample() Sample {
 
 func (w *Watcher) poll(onChange func(Sample)) {
 	w.pollMu.Lock()
-	defer w.pollMu.Unlock()
 	var out, thinking, total, input int
 	if w.source != nil {
 		v, ok := w.readSource()
 		if !ok {
+			w.pollMu.Unlock()
 			return
 		}
 		out, thinking, total, input = v.output, v.thinking, v.total, v.input
@@ -706,6 +706,9 @@ func (w *Watcher) poll(onChange func(Sample)) {
 	}
 	s := w.sample
 	w.mu.Unlock()
+	w.pollMu.Unlock()
+	// Callback after pollMu: onChange may Poll (final read, tests), and
+	// holding the lock across it deadlocks that path.
 	if grew && onChange != nil {
 		onChange(s)
 	}

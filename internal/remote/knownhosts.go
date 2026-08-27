@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -21,6 +22,12 @@ var knownHostsPath = func() string {
 	return filepath.Join(dir, "toktop", "known_hosts")
 }
 
+// knownHostsMu serializes TOFU reads and writes. Two Connects racing would
+// otherwise each snapshot the file, add a different host, and last-write
+// the other away. Handshake callbacks from one connection are sequential;
+// the lock covers concurrent connections and the file itself.
+var knownHostsMu sync.Mutex
+
 // tofu returns a HostKeyCallback implementing trust-on-first-use against a
 // small local store: first contact is remembered, changed keys are refused
 // with both fingerprints so the operator can judge.
@@ -29,13 +36,20 @@ func tofu() (ssh.HostKeyCallback, error) {
 	if path == "" {
 		return nil, fmt.Errorf("cannot resolve config dir for host key store")
 	}
-	store, err := readKnownHosts(path)
-	if err != nil {
+	// Fail at Connect, not mid-handshake, if the store is unreadable.
+	// A missing file is fine; the callback creates it on first contact.
+	if _, err := readKnownHosts(path); err != nil {
 		return nil, err
 	}
 	return func(hostname string, _ net.Addr, key ssh.PublicKey) error {
 		line := hostname + " " + string(ssh.MarshalAuthorizedKey(key))
 		line = strings.TrimSpace(line)
+		knownHostsMu.Lock()
+		defer knownHostsMu.Unlock()
+		store, err := readKnownHosts(path)
+		if err != nil {
+			return err
+		}
 		if old, ok := store[hostname]; ok {
 			if old == line {
 				return nil
@@ -81,7 +95,42 @@ func writeKnownHosts(path string, store map[string]string) error {
 	for host, key := range store {
 		b.WriteString(host + " " + key + "\n")
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".known_hosts-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpName) // no-op once the rename succeeded
+	}()
+	if _, err := tmp.WriteString(b.String()); err != nil {
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return replaceFile(tmpName, path)
+}
+
+// replaceFile renames tmpName over path. Unix rename replaces atomically;
+// Windows refuses to clobber, so the destination is removed first. Callers
+// serialize writers (knownHostsMu).
+func replaceFile(tmpName, path string) error {
+	if err := os.Rename(tmpName, path); err == nil {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func short(s string) string {

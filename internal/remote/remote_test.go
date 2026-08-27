@@ -231,6 +231,45 @@ func TestTOFUStore(t *testing.T) {
 	}
 }
 
+// Two Connects writing different hosts must both persist. A snapshot-then-
+// WriteFile race drops whichever host finished first.
+func TestTOFUConcurrentHostsPersist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	old := knownHostsPath
+	t.Cleanup(func() { knownHostsPath = old })
+	knownHostsPath = func() string { return path }
+
+	hosts := []string{"a.example:22", "b.example:22"}
+	errc := make(chan error, len(hosts))
+	for _, h := range hosts {
+		go func(h string) {
+			cb, err := tofu()
+			if err != nil {
+				errc <- err
+				return
+			}
+			errc <- cb(h, nil, fakePublicKey(h))
+		}(h)
+	}
+	for range hosts {
+		if err := <-errc; err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := readKnownHosts(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store) != len(hosts) {
+		t.Fatalf("store = %v, want %d hosts", store, len(hosts))
+	}
+	for _, h := range hosts {
+		if _, ok := store[h]; !ok {
+			t.Errorf("missing %s in %v", h, store)
+		}
+	}
+}
+
 // The default-key leg of the auth chain must pick up a passphrase-less key
 // from ~/.ssh and silently skip unreadable or encrypted files.
 func TestDefaultKeyPathsAndAuthChain(t *testing.T) {

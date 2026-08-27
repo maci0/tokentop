@@ -265,6 +265,30 @@ func TestRateNeedsPositiveSpanAndGrowth(t *testing.T) {
 	}
 }
 
+// onChange may Poll for a final read. Holding pollMu across the callback
+// deadlocks that path.
+func TestOnChangeMayPoll(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	path := filepath.Join(store, "session.jsonl")
+	w := Watch("claude", work, time.Now())
+	append_(t, path, claudeLine(work, 100))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.poll(func(Sample) { w.Poll() })
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("onChange calling Poll deadlocked")
+	}
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output tokens %d, want 100", got)
+	}
+}
+
 func TestRunReportsGrowth(t *testing.T) {
 	store := withStore(t, "claude")
 	work := t.TempDir()

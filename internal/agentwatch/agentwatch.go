@@ -123,12 +123,28 @@ func (w *Watcher) discover(ctx context.Context) {
 	live := make(map[int]bool, len(found))
 
 	w.mu.Lock()
-	var started, gone []*tracked
+	var newProcs []agentusage.Process
 	for _, p := range found {
 		live[p.PID] = true
-		if _, seen := w.tracked[p.PID]; seen {
-			continue
+		if _, seen := w.tracked[p.PID]; !seen {
+			newProcs = append(newProcs, p)
 		}
+	}
+	var gone []*tracked
+	for pid, t := range w.tracked {
+		if !live[pid] {
+			delete(w.tracked, pid)
+			gone = append(gone, t)
+		}
+	}
+	w.mu.Unlock()
+
+	// Watch walks transcript stores; doing that under w.mu would stall
+	// report() for agents already being followed. cancel is set before
+	// the map insert so stopOne never observes a nil cancel.
+	var started []*tracked
+	var startCtx []context.Context
+	for _, p := range newProcs {
 		// A watcher counts only what is written after it attaches, so an agent
 		// already halfway through a task contributes from here on rather than
 		// retroactively. That keeps the rate honest at the cost of the first
@@ -137,41 +153,44 @@ func (w *Watcher) discover(ctx context.Context) {
 		if watch == nil {
 			continue // this agent keeps nothing readable
 		}
-		t := &tracked{proc: p, watch: watch, done: make(chan struct{})}
-		w.tracked[p.PID] = t
-		started = append(started, t)
-	}
-	for pid, t := range w.tracked {
-		if !live[pid] {
-			delete(w.tracked, pid)
-			gone = append(gone, t)
-		}
-	}
-	pids := make([]int, 0, len(w.tracked))
-	for pid := range w.tracked {
-		pids = append(pids, pid)
-	}
-	endpoints, labels := w.engineEndpoints()
-	w.mu.Unlock()
-
-	for _, t := range started {
 		tctx, cancel := context.WithCancel(ctx)
-		t.cancel = cancel
+		t := &tracked{proc: p, watch: watch, done: make(chan struct{}), cancel: cancel}
+		w.mu.Lock()
+		if _, seen := w.tracked[p.PID]; seen {
+			w.mu.Unlock()
+			cancel()
+			continue
+		}
+		w.tracked[p.PID] = t
+		w.mu.Unlock()
+		started = append(started, t)
+		startCtx = append(startCtx, tctx)
+	}
+
+	for i, t := range started {
 		go func(t *tracked, tctx context.Context) {
 			defer close(t.done)
 			t.watch.Run(tctx, w.readEvery, func(s agentusage.Sample) {
 				w.report(t, s)
 			})
-		}(t, tctx)
+		}(t, startCtx[i])
 	}
 	for _, t := range gone {
 		w.stopOne(t)
 	}
 
+	w.mu.Lock()
+	pids := make([]int, 0, len(w.tracked))
+	for pid := range w.tracked {
+		pids = append(pids, pid)
+	}
+	w.mu.Unlock()
+
 	// Re-checked every pass rather than once at discovery: an agent connects
 	// to its engine after it starts, and may switch engines mid-session.
 	// One table read covers every tracked pid; matching each agent against
 	// each engine separately would reread /proc/net/tcp per pair.
+	endpoints, labels := w.engineEndpoints()
 	matched := agentusage.MatchingEndpoints(pids, endpoints)
 	w.mu.Lock()
 	for pid, t := range w.tracked {

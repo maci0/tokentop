@@ -166,6 +166,21 @@ func TestStatsMergeFreshnessAndOverlay(t *testing.T) {
 	}
 }
 
+// The merged sample is published to the UI while the next poll rewrites
+// s.last.GPUs; aliasing that slice would data-race with a render.
+func TestMergeCopiesGPUs(t *testing.T) {
+	s := &Stats{
+		at:   time.Now(),
+		last: core.SysSample{GPUs: []core.GPUDevice{{Vendor: "nvidia", Name: "A"}}},
+	}
+	var into core.SysSample
+	s.Merge(&into)
+	s.last.GPUs[0].Name = "mutated"
+	if into.GPUs[0].Name != "A" {
+		t.Fatalf("Merge aliased GPU slice: %+v", into.GPUs)
+	}
+}
+
 const rocmJSON = `{"card0":{"Temperature (Sensor edge) (C)":"52.0","GPU use (%)":"88","Used Memory (VRAM)":"12271640576","Total Memory (VRAM)":"17163091968"}}`
 
 // vitalsDumpFrom builds a full vitals payload from ordered sections.

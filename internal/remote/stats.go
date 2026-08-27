@@ -136,7 +136,9 @@ func (s *Stats) Merge(into *core.SysSample) {
 		into.HostUptime = s.last.HostUptime
 	}
 	if len(s.last.GPUs) > 0 {
-		into.GPUs = s.last.GPUs
+		// Copy: s.last is rewritten on the next poll, and the merged
+		// sample is published to the UI goroutine.
+		into.GPUs = append([]core.GPUDevice(nil), s.last.GPUs...)
 	}
 	if len(s.last.Drivers) > 0 {
 		for k, v := range s.last.Drivers {
