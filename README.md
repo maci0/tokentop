@@ -322,18 +322,22 @@ toktop update     subcommand: install the latest release (--check to only
 toktop help       same as --help; `toktop help update` for the subcommand
 toktop version    same as --version
 --demo            simulated fleet, zero setup
---add URL         attach an openai-compatible endpoint (repeatable)
+--add URL         attach an openai-compatible http(s) endpoint (repeatable;
+                  host required, no userinfo; use --bearer / $TOKTOP_BEARER)
 ssh://user@host   positional; monitor remote hosts (repeatable)
---ssh-key PATH    private key for ssh targets (overrides ~/.ssh/config)
+--ssh-key PATH    private key for ssh targets (overrides ~/.ssh/config;
+                  ~ is expanded; a missing file aborts at startup)
 --bearer TOKEN    bearer token sent to --add endpoints only; OmniRoute API
-                  keys etc. (env: OMNIROUTE_API_KEY, then TOKTOP_BEARER)
+                  keys etc. (env: OMNIROUTE_API_KEY, then TOKTOP_BEARER;
+                  an explicit --bearer, even empty, wins)
 --agents          watch AI coding agents on this machine (session logs)
 --opencode-db     with --agents: also read opencode's SQLite session
                   database (needs a build with the sqlite tag)
 --probe N         auto-probe every N seconds
 --interval D      poll interval (default 1s)
---ingest ADDR     agent event listen address (default 127.0.0.1:8420)
---no-ingest       disable the event endpoint
+--ingest ADDR     agent event listen address, host:port
+                  (default 127.0.0.1:8420; empty is rejected)
+--no-ingest       disable the event endpoint (`--ingest` is then ignored)
 --once            render one frame and exit
 --plain           with --once: linear text report instead of the dashboard
                   frame (screen-reader friendly)
@@ -350,24 +354,31 @@ Password auth for ssh targets: interactive prompt, or `TOKTOP_SSH_PASSWORD`.
 
 | variable | what it does |
 |---|---|
-| `OMNIROUTE_API_KEY` | bearer token fallback for `--bearer` (checked first) |
+| `OMNIROUTE_API_KEY` | bearer token fallback for `--bearer` (checked first unless `--bearer` is passed) |
 | `TOKTOP_BEARER` | bearer token fallback for `--bearer` (checked after `OMNIROUTE_API_KEY`) |
 | `TOKTOP_SSH_PASSWORD` | ssh password for headless runs; otherwise an interactive prompt |
 | `TOKTOP_COLUMNS` / `TOKTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20, and a set-but-invalid value aborts with exit code 2 |
 | `GITHUB_TOKEN` | optional; authenticates `toktop update`'s GitHub API calls past the anonymous rate limit |
 | `GAUNTLET_HOME` | directory holding `agents.json` (default `~/.gauntlet`) |
+| `XDG_DATA_HOME` | with `--opencode-db`: directory under which `opencode/opencode.db` is read (default `~/.local/share`) |
+| `NO_COLOR` | strips terminal styling when set to any value (honored by the renderer) |
 
-The flag always wins over its env fallback. Prefer an env var over
-`--bearer` for tokens: command-line arguments are visible in process
-listings to every user on the host. The token travels only to endpoints
-named with `--add`; engines found by port scanning receive no credentials,
-so a hostile listener on a probed port cannot collect your gateway key.
-An endpoint that needs the key must be attached explicitly, e.g.
-`toktop --add http://127.0.0.1:20128`. Unknown `TOKTOP_*` variables are
-reported at startup, so a typo fails loudly instead of doing nothing.
-Out-of-range flag values (`--interval 0`, negative `--probe`, `--frames < 1`
-with `--once`) abort with exit code 2 instead of being silently adjusted;
-so do out-of-range `TOKTOP_COLUMNS` / `TOKTOP_LINES` when `--once` renders.
+An explicit `--bearer`, even empty, wins over its env fallbacks; otherwise
+the environment is used. Prefer an env var over `--bearer` for tokens:
+command-line arguments are visible in process listings to every user on
+the host, and passing `--bearer` prints a reminder of that. The token
+travels only to endpoints named with `--add`; engines found by port scanning
+receive no credentials, so a hostile listener on a probed port cannot
+collect your gateway key. `--add` URLs must be `http://` or `https://` with
+a host and must not embed userinfo (`user:pass@`); an endpoint that needs
+the key is attached as `toktop --add http://127.0.0.1:20128` with the token
+in the environment. `--ingest` must be `host:port` (empty would bind every
+interface on an ephemeral port and is rejected). Unknown `TOKTOP_*`
+variables are reported at startup, so a typo fails loudly instead of doing
+nothing. Out-of-range flag values (`--interval 0`, negative `--probe`,
+`--frames < 1` with `--once`, a malformed `--add` or `--ingest`) abort with
+exit code 2 instead of being silently adjusted; so do out-of-range
+`TOKTOP_COLUMNS` / `TOKTOP_LINES` when `--once` renders.
 
 ## Build & test
 

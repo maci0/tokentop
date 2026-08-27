@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -191,4 +192,23 @@ func expandTilde(p string) string {
 		}
 	}
 	return p
+}
+
+// ResolveKeyFile expands a leading tilde in file and checks that the result
+// names a regular file. --ssh-key uses this at startup so a typo or a
+// directory fails before any ssh dial, rather than as a generic auth
+// rejection after discovery has already run.
+func ResolveKeyFile(file string) (string, error) {
+	file = expandTilde(strings.TrimSpace(file))
+	if file == "" {
+		return "", errors.New("empty path")
+	}
+	fi, err := os.Stat(file)
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", file)
+	}
+	return file, nil
 }

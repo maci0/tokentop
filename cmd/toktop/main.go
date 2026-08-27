@@ -11,6 +11,7 @@ import (
 	"log"
 	"maps"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -108,7 +109,7 @@ func main() {
 	)
 	flag.BoolVar(&showHelp, "help", false, "show help and exit")
 	flag.BoolVar(&showHelp, "h", false, "show help and exit")
-	flag.Var(&adds, "add", "attach an openai-compatible backend URL (repeatable)")
+	flag.Var(&adds, "add", "attach an openai-compatible backend http(s) URL (repeatable)")
 	// Error paths (unknown flag, bad value) print this usage on stderr and
 	// exit 2; -h/--help is handled below so it lands on stdout with exit 0.
 	flag.Usage = func() { usage(os.Stderr) }
@@ -152,8 +153,22 @@ func main() {
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	warnUnknownEnv()
-	warnIgnoredFlags(explicit, *demoMode, *once, *agents, len(remoteTargets))
+	warnIgnoredFlags(explicit, *demoMode, *once, *agents, *noIngest, len(remoteTargets))
 	warnIgnoredFrameEnv(*once)
+	if !*noIngest {
+		if err := validateIngestAddr(*ingestArg); err != nil {
+			fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
+			os.Exit(2)
+		}
+	}
+	if *sshKey != "" && !*demoMode && len(remoteTargets) > 0 {
+		resolved, err := remote.ResolveKeyFile(*sshKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "toktop: --ssh-key: %v\n", err)
+			os.Exit(2)
+		}
+		*sshKey = resolved
+	}
 
 	if !*once && !term.IsTerminal(int(os.Stdout.Fd())) {
 		// The live dashboard paints with alt-screen sequences; piped or
@@ -168,15 +183,12 @@ func main() {
 	ingestSet := explicit["ingest"]
 
 	// Bearer token for gateways that require API keys (OmniRoute et al).
-	// Flag wins; OMNIROUTE_API_KEY / TOKTOP_BEARER are convenience fallbacks.
-	switch {
-	case *bearerArg != "":
-		bearer.Set(*bearerArg)
-	case os.Getenv("OMNIROUTE_API_KEY") != "":
-		bearer.Set(os.Getenv("OMNIROUTE_API_KEY"))
-	case os.Getenv("TOKTOP_BEARER") != "":
-		bearer.Set(os.Getenv("TOKTOP_BEARER"))
+	// An explicit --bearer, even empty, wins so "not set" and "set to empty"
+	// stay distinct; otherwise OMNIROUTE_API_KEY then TOKTOP_BEARER.
+	if tok := resolveBearer(*bearerArg, explicit["bearer"]); tok != "" {
+		bearer.Set(tok)
 	}
+	warnBearerFlag(explicit["bearer"], *bearerArg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -477,10 +489,34 @@ type flagAddList []string
 
 func (a *flagAddList) String() string { return strings.Join(*a, ",") }
 func (a *flagAddList) Set(v string) error {
-	if strings.TrimSpace(v) == "" {
+	v = strings.TrimSpace(v)
+	if v == "" {
 		return errors.New("empty URL")
 	}
+	if err := validateAddURL(v); err != nil {
+		return err
+	}
 	*a = append(*a, v)
+	return nil
+}
+
+// validateAddURL rejects values that cannot be polled as an OpenAI-compatible
+// engine: missing scheme, non-http(s), no host, or credentials in the URL
+// (those belong in --bearer / $TOKTOP_BEARER, not in argv or logs).
+func validateAddURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("URL must be http:// or https://, got %q", raw)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("URL must be http:// or https://, got %q", raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("URL missing host, got %q", raw)
+	}
+	if u.User != nil {
+		return errors.New("URL must not contain userinfo; set --bearer or $TOKTOP_BEARER")
+	}
 	return nil
 }
 
@@ -516,10 +552,11 @@ Flags:
 	fmt.Fprint(w, `
 Positional arguments are ssh:// targets and may repeat; help and version
 are also accepted as commands. http(s) URLs are rejected with an --add hint;
-anything else points at --help. Bearer tokens fall back to $OMNIROUTE_API_KEY
-then $TOKTOP_BEARER (--bearer wins) and are sent only to --add endpoints;
-ssh passwords come from the terminal prompt or $TOKTOP_SSH_PASSWORD. See
-README.md for all environment variables.
+anything else points at --help. --add URLs must be http(s) with a host and
+must not embed userinfo. Bearer tokens fall back to $OMNIROUTE_API_KEY then
+$TOKTOP_BEARER (an explicit --bearer, even empty, wins) and are sent only
+to --add endpoints; ssh passwords come from the terminal prompt or
+$TOKTOP_SSH_PASSWORD. See README.md for all environment variables.
 `)
 }
 
@@ -593,9 +630,12 @@ func unexpectedArg(arg string) error {
 
 // warnIgnoredFlags names flags passed explicitly but with no effect in the
 // chosen mode: a silently dropped knob looks like a broken feature.
-func warnIgnoredFlags(set map[string]bool, demo, once, agents bool, nRemote int) {
+func warnIgnoredFlags(set map[string]bool, demo, once, agents, noIngest bool, nRemote int) {
 	if set["opencode-db"] && !agents {
 		fmt.Fprintln(os.Stderr, "toktop: --opencode-db has no effect without --agents")
+	}
+	if set["ingest"] && noIngest {
+		fmt.Fprintln(os.Stderr, "toktop: --ingest has no effect with --no-ingest")
 	}
 	if set["seed"] && !demo {
 		fmt.Fprintln(os.Stderr, "toktop: --seed has no effect without --demo")
@@ -654,6 +694,55 @@ func validateFlags(once bool, interval time.Duration, probeSecs, frames int) err
 		return fmt.Errorf("--frames must be >= 1, got %d", frames)
 	}
 	return nil
+}
+
+// validateIngestAddr rejects listen addresses that are empty or not host:port
+// before net.Listen sees them. An empty string is equivalent to ":0" (every
+// interface, ephemeral port), which would silently expose the unauthenticated
+// ingest endpoint; a missing port is a common typo for "use the default".
+func validateIngestAddr(addr string) error {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return errors.New("--ingest address must be host:port, not empty")
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("--ingest address must be host:port, got %q", addr)
+	}
+	n, convErr := strconv.Atoi(port)
+	if convErr != nil || n < 0 || n > 65535 {
+		return fmt.Errorf("--ingest port must be 0-65535, got %q", port)
+	}
+	return nil
+}
+
+// resolveBearer returns the token sent to --add endpoints. An explicit
+// --bearer (including empty) wins so clearing the token does not fall through
+// to the environment; otherwise OMNIROUTE_API_KEY, then TOKTOP_BEARER.
+func resolveBearer(flagVal string, flagSet bool) string {
+	if flagSet {
+		return flagVal
+	}
+	if v := os.Getenv("OMNIROUTE_API_KEY"); v != "" {
+		return v
+	}
+	return os.Getenv("TOKTOP_BEARER")
+}
+
+// warnBearerFlag names the two --bearer footguns: a token on argv is
+// readable from process listings, and an explicit empty value suppresses
+// the env fallbacks rather than meaning "unset".
+func warnBearerFlag(flagSet bool, flagVal string) {
+	if !flagSet {
+		return
+	}
+	if flagVal != "" {
+		fmt.Fprintln(os.Stderr, "toktop: --bearer is visible in process listings; prefer $TOKTOP_BEARER or $OMNIROUTE_API_KEY")
+		return
+	}
+	if os.Getenv("OMNIROUTE_API_KEY") != "" || os.Getenv("TOKTOP_BEARER") != "" {
+		fmt.Fprintln(os.Stderr, "toktop: empty --bearer overrides $OMNIROUTE_API_KEY / $TOKTOP_BEARER")
+	}
 }
 
 // Frame floors: below these the static frame cannot lay out legibly. The

@@ -40,6 +40,12 @@ support channel (see SECURITY.md).
 - Empty dashboard names how to quit and re-run, shows when it is paused, and
   does not suggest `--agents` when that watch is already on.
 - Failed probes show the error instead of a green zero rate.
+- `--add` rejects non-http(s) URLs, values with no host, and URLs that embed
+  userinfo (use `--bearer` / `$TOKTOP_BEARER`). `--ingest` rejects an empty
+  or non-`host:port` listen address instead of binding every interface on an
+  ephemeral port. `--bearer` that is explicitly empty no longer falls through
+  to `$OMNIROUTE_API_KEY` / `$TOKTOP_BEARER`. `--ssh-key` expands `~` and
+  fails at startup if the file is missing.
 - Agent session directories on Windows (and default APFS) match the
   filesystem's case and separator rules, so transcripts are not dropped
   when an agent recorded `C:/Users/Foo` and toktop resolved `c:\users\foo`.

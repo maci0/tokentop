@@ -115,6 +115,48 @@ func TestExpandTildeAcceptsBothSeparators(t *testing.T) {
 	}
 }
 
+func TestResolveKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+
+	t.Run("empty", func(t *testing.T) {
+		if _, err := ResolveKeyFile("  "); err == nil {
+			t.Fatal("empty path accepted")
+		}
+	})
+	t.Run("missing", func(t *testing.T) {
+		if _, err := ResolveKeyFile(filepath.Join(dir, "no-such-key")); err == nil {
+			t.Fatal("missing file accepted")
+		}
+	})
+	t.Run("directory", func(t *testing.T) {
+		if _, err := ResolveKeyFile(dir); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("directory = %v, want not a regular file", err)
+		}
+	})
+	t.Run("regular file", func(t *testing.T) {
+		key := filepath.Join(dir, "id_ed25519")
+		if err := os.WriteFile(key, []byte("dummy"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := ResolveKeyFile(key)
+		if err != nil || got != key {
+			t.Fatalf("ResolveKeyFile(%q) = %q, %v", key, got, err)
+		}
+	})
+	t.Run("tilde", func(t *testing.T) {
+		key := filepath.Join(dir, "id_ed25519")
+		if err := os.WriteFile(key, []byte("dummy"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := ResolveKeyFile("~/id_ed25519")
+		if err != nil || got != key {
+			t.Fatalf("ResolveKeyFile(~/id_ed25519) = %q, %v; want %q", got, err, key)
+		}
+	})
+}
+
 func TestCutConfigField(t *testing.T) {
 	cases := []struct {
 		line, key, val string

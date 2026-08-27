@@ -234,6 +234,7 @@ func TestUsage(t *testing.T) {
 		"-demo",                // generated flag docs survive
 		"OMNIROUTE_API_KEY",    // env fallbacks named
 		"--add",                // http(s) leftovers hint at --add
+		"userinfo",             // --add must not embed credentials
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("usage() missing %q", want)
@@ -304,6 +305,7 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		demo     bool
 		once     bool
 		agents   bool
+		noIngest bool
 		nRemote  int
 		wantSub  string // empty means silence expected
 		wantAlso string // additional flag that must be named
@@ -332,10 +334,16 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		{name: "ssh-key with target silent", set: map[string]bool{"ssh-key": true}, nRemote: 1},
 		{name: "ssh target with demo warns", demo: true, nRemote: 1, wantSub: "ssh://"},
 		{name: "ssh target without demo silent", nRemote: 1},
+		{name: "ingest with no-ingest warns", set: map[string]bool{"ingest": true}, noIngest: true,
+			wantSub: "--ingest"},
+		{name: "ingest without no-ingest silent", set: map[string]bool{"ingest": true}},
+		{name: "no-ingest without ingest silent", noIngest: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := captureStderr(t, func() { warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents, tt.nRemote) })
+			got := captureStderr(t, func() {
+				warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents, tt.noIngest, tt.nRemote)
+			})
 			if tt.wantSub == "" {
 				if got != "" {
 					t.Fatalf("warnIgnoredFlags() printed %q, want silence", got)
@@ -599,6 +607,129 @@ func TestFlagAddListRejectsEmpty(t *testing.T) {
 	if got := a.String(); got != "http://127.0.0.1:8000" {
 		t.Fatalf("String() = %q", got)
 	}
+}
+
+func TestValidateAddURL(t *testing.T) {
+	tests := []struct {
+		raw     string
+		wantErr string // empty means accepted
+	}{
+		{raw: "http://127.0.0.1:8000"},
+		{raw: "https://engine.example:443/v1"},
+		{raw: "http://[::1]:8080"},
+		{raw: "127.0.0.1:8000", wantErr: "http:// or https://"},
+		{raw: "ftp://127.0.0.1:21", wantErr: "http:// or https://"},
+		{raw: "http://", wantErr: "missing host"},
+		{raw: "http://user:pass@127.0.0.1:8000", wantErr: "userinfo"},
+		{raw: "http://user@127.0.0.1:8000", wantErr: "userinfo"},
+	}
+	for _, tt := range tests {
+		err := validateAddURL(tt.raw)
+		if tt.wantErr == "" {
+			if err != nil {
+				t.Errorf("validateAddURL(%q) = %v, want nil", tt.raw, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+			t.Errorf("validateAddURL(%q) = %v, want error mentioning %q", tt.raw, err, tt.wantErr)
+		}
+	}
+	var a flagAddList
+	if err := a.Set("not-a-url"); err == nil {
+		t.Fatal("scheme-less --add must be rejected")
+	}
+	if err := a.Set("  https://10.0.0.5:8000  "); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.String(); got != "https://10.0.0.5:8000" {
+		t.Fatalf("trimmed Set stored %q", got)
+	}
+}
+
+func TestValidateIngestAddr(t *testing.T) {
+	tests := []struct {
+		addr    string
+		wantErr string
+	}{
+		{addr: "127.0.0.1:8420"},
+		{addr: "[::1]:8420"},
+		{addr: ":8420"},
+		{addr: "0.0.0.0:0"},
+		{addr: "localhost:8420"},
+		{addr: "", wantErr: "not empty"},
+		{addr: "   ", wantErr: "not empty"},
+		{addr: "8420", wantErr: "host:port"},
+		{addr: "0.0.0.0", wantErr: "host:port"},
+		{addr: "127.0.0.1:http", wantErr: "port"},
+		{addr: "127.0.0.1:65536", wantErr: "port"},
+		{addr: "127.0.0.1:-1", wantErr: "port"},
+	}
+	for _, tt := range tests {
+		err := validateIngestAddr(tt.addr)
+		if tt.wantErr == "" {
+			if err != nil {
+				t.Errorf("validateIngestAddr(%q) = %v, want nil", tt.addr, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+			t.Errorf("validateIngestAddr(%q) = %v, want error mentioning %q", tt.addr, err, tt.wantErr)
+		}
+	}
+}
+
+func TestResolveBearer(t *testing.T) {
+	t.Setenv("OMNIROUTE_API_KEY", "omni")
+	t.Setenv("TOKTOP_BEARER", "tok")
+
+	if got := resolveBearer("flag", true); got != "flag" {
+		t.Errorf("explicit flag = %q, want flag", got)
+	}
+	if got := resolveBearer("", true); got != "" {
+		t.Errorf("explicit empty = %q, want empty (must not fall through)", got)
+	}
+	if got := resolveBearer("", false); got != "omni" {
+		t.Errorf("env fallback = %q, want omni first", got)
+	}
+	t.Setenv("OMNIROUTE_API_KEY", "")
+	if got := resolveBearer("", false); got != "tok" {
+		t.Errorf("second env = %q, want tok", got)
+	}
+	t.Setenv("TOKTOP_BEARER", "")
+	if got := resolveBearer("", false); got != "" {
+		t.Errorf("unset = %q, want empty", got)
+	}
+}
+
+func TestWarnBearerFlag(t *testing.T) {
+	t.Run("unset is silent", func(t *testing.T) {
+		t.Setenv("TOKTOP_BEARER", "x")
+		if got := captureStderr(t, func() { warnBearerFlag(false, "") }); got != "" {
+			t.Fatalf("unset printed %q", got)
+		}
+	})
+	t.Run("token on argv warns", func(t *testing.T) {
+		got := captureStderr(t, func() { warnBearerFlag(true, "sk") })
+		if !strings.Contains(got, "process listings") {
+			t.Fatalf("printed %q, want process listings", got)
+		}
+	})
+	t.Run("empty overrides env", func(t *testing.T) {
+		t.Setenv("TOKTOP_BEARER", "x")
+		t.Setenv("OMNIROUTE_API_KEY", "")
+		got := captureStderr(t, func() { warnBearerFlag(true, "") })
+		if !strings.Contains(got, "empty --bearer") {
+			t.Fatalf("printed %q, want empty --bearer", got)
+		}
+	})
+	t.Run("empty with no env is silent", func(t *testing.T) {
+		t.Setenv("TOKTOP_BEARER", "")
+		t.Setenv("OMNIROUTE_API_KEY", "")
+		if got := captureStderr(t, func() { warnBearerFlag(true, "") }); got != "" {
+			t.Fatalf("printed %q, want silence", got)
+		}
+	})
 }
 
 func TestRoutableBind(t *testing.T) {
