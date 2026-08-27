@@ -53,6 +53,12 @@ func FuzzHandlePost(f *testing.F) {
 		w := httptest.NewRecorder()
 		s.handlePost(w, r)
 
+		respBody := w.Body.String()
+		for _, leaked := range []string{"agentEventWire", "Go struct field", "Go value of type", "2006-01-02T15:04:05"} {
+			if strings.Contains(respBody, leaked) {
+				t.Fatalf("response leaked internals %q: %q", leaked, respBody)
+			}
+		}
 		switch w.Code {
 		case http.StatusAccepted:
 			if len(rec.evs) == 0 {
@@ -60,8 +66,8 @@ func FuzzHandlePost(f *testing.F) {
 			}
 			// Events written to the wire must match those actually recorded.
 			var ack int
-			if n, _ := fmt.Sscanf(w.Body.String(), `{"accepted":%d}`, &ack); n != 1 || ack != len(rec.evs) {
-				t.Fatalf("ack %q vs %d recorded events", w.Body.String(), len(rec.evs))
+			if n, _ := fmt.Sscanf(respBody, `{"accepted":%d}`, &ack); n != 1 || ack != len(rec.evs) {
+				t.Fatalf("ack %q vs %d recorded events", respBody, len(rec.evs))
 			}
 		case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
 			// A mid-stream failure keeps the events decoded before it; each

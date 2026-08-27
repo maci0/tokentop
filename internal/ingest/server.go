@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -282,12 +283,17 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 					fmt.Sprintf("event stream exceeds %d byte cap", maxBytes.Limit))
 				return
 			}
-			fail(http.StatusBadRequest, "bad json: "+err.Error())
+			fail(http.StatusBadRequest, clientJSONError(err))
 			return
 		}
 		at, err := parseEventTime(wire.At)
 		if err != nil {
 			fail(http.StatusBadRequest, "bad ts: "+err.Error())
+			return
+		}
+		prompt, output, thinking, err := parseTokenFields(wire)
+		if err != nil {
+			fail(http.StatusBadRequest, err.Error())
 			return
 		}
 		ev := core.AgentEvent{
@@ -296,9 +302,9 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			Agent:          wire.Agent,
 			Model:          wire.Model,
 			Kind:           wire.Kind,
-			PromptTokens:   wire.PromptTokens,
-			OutputTokens:   wire.OutputTokens,
-			ThinkingTokens: wire.ThinkingTokens,
+			PromptTokens:   prompt,
+			OutputTokens:   output,
+			ThinkingTokens: thinking,
 			Note:           wire.Note,
 		}
 		// Event fields are attacker-shaped text (any local process or peer
@@ -342,19 +348,21 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	done(http.StatusAccepted, n, "")
 }
 
-// agentEventWire mirrors core.AgentEvent for decoding, with the timestamp
-// carried raw: encoding/json's time parser demands an explicit offset, so a
-// well-formed but offset-less stamp would abort the whole stream with 400
-// before parseEventTime could apply the UTC default the feed documents.
+// agentEventWire mirrors core.AgentEvent for decoding, with ts and token
+// counts carried raw: encoding/json's time parser demands an explicit offset,
+// and int64 rejects whole JSON numbers such as 100.0, so a well-formed but
+// offset-less stamp or a Python-dumped float would abort the whole stream
+// with 400 before parseEventTime / parseTokenJSON could apply the documented
+// forms.
 type agentEventWire struct {
 	At             json.RawMessage `json:"ts"`
 	ID             string          `json:"id"`
 	Agent          string          `json:"agent"`
 	Model          string          `json:"model"`
 	Kind           string          `json:"kind"`
-	PromptTokens   int64           `json:"prompt_tokens"`
-	OutputTokens   int64           `json:"output_tokens"`
-	ThinkingTokens int64           `json:"thinking_tokens"`
+	PromptTokens   json.RawMessage `json:"prompt_tokens"`
+	OutputTokens   json.RawMessage `json:"output_tokens"`
+	ThinkingTokens json.RawMessage `json:"thinking_tokens"`
 	Note           string          `json:"note"`
 }
 
@@ -377,7 +385,7 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 	}
 	v, err := strconv.Unquote(s)
 	if err != nil {
-		return time.Time{}, errors.New("ts must be an RFC 3339 string")
+		return time.Time{}, errBadTS
 	}
 	if strings.TrimSpace(v) == "" {
 		return time.Time{}, nil
@@ -402,7 +410,63 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 			return t, nil
 		}
 	}
-	return time.ParseInLocation(layouts[0], v, time.UTC)
+	return time.Time{}, errBadTS
+}
+
+var errBadTS = errors.New("must be an RFC 3339 string")
+
+// clientJSONError turns an encoding/json decode failure into a sender-facing
+// reason: JSON field names, no Go type names.
+func clientJSONError(err error) string {
+	var ut *json.UnmarshalTypeError
+	if errors.As(err, &ut) {
+		if ut.Field != "" {
+			return fmt.Sprintf("bad json: %s must be %s, not %s", ut.Field, wantJSONType(ut), ut.Value)
+		}
+		return fmt.Sprintf("bad json: expected a JSON object or NDJSON stream, got %s", ut.Value)
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return "bad json: truncated"
+	}
+	return "bad json: " + err.Error()
+}
+
+func wantJSONType(ut *json.UnmarshalTypeError) string {
+	if ut.Type != nil && ut.Type.String() == "string" {
+		return "a string"
+	}
+	return "the documented type"
+}
+
+// parseTokenFields reads the three token counts. Whole JSON numbers (100.0,
+// 1e2) count as integers; a fractional remainder or a non-number is 400.
+func parseTokenFields(w agentEventWire) (prompt, output, thinking int64, err error) {
+	if prompt, err = parseTokenJSON(w.PromptTokens, "prompt_tokens"); err != nil {
+		return
+	}
+	if output, err = parseTokenJSON(w.OutputTokens, "output_tokens"); err != nil {
+		return
+	}
+	thinking, err = parseTokenJSON(w.ThinkingTokens, "thinking_tokens")
+	return
+}
+
+func parseTokenJSON(raw json.RawMessage, field string) (int64, error) {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return 0, nil
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i, nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) && math.Trunc(f) == f {
+		if f > math.MaxInt64 || f < math.MinInt64 {
+			return 0, fmt.Errorf("bad json: %s is out of range", field)
+		}
+		return int64(f), nil
+	}
+	return 0, fmt.Errorf("bad json: %s must be an integer", field)
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {

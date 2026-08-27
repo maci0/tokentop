@@ -129,10 +129,16 @@ const SECURITY_HEADER_NAMES = [
 test("non-GET methods and /health keep their contract", async () => {
   const denied = await call({}, { method: "POST" });
   expect(denied.status).toBe(405);
+  expect(denied.headers.get("allow")).toBe("GET, HEAD");
   const health = await call({}, { path: "/health" });
   expect(health.status).toBe(200);
   expect(health.headers.get("cache-control")).toBe("no-store");
-  for (const res of [denied, health]) {
+  const healthHead = await call({}, { method: "HEAD", path: "/health" });
+  expect(healthHead.status).toBe(200);
+  expect(healthHead.headers.get("content-type")).toBe(health.headers.get("content-type"));
+  expect(healthHead.headers.get("content-length")).toBe(health.headers.get("content-length"));
+  expect((await healthHead.arrayBuffer()).byteLength).toBe(0);
+  for (const res of [denied, health, healthHead]) {
     for (const name of SECURITY_HEADER_NAMES) {
       expect(res.headers.get(name)).not.toBeNull();
     }

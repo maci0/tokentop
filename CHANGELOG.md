@@ -16,9 +16,13 @@ support channel (see SECURITY.md).
   `via <engine>` and are not added again to header or chart totals.
 - Ingest `POST /v1/events` accepts optional `id` (a repeat of a key still in
   the retained feed is ignored, so retries are safe) and `thinking_tokens`.
+- Ingest token counts accept whole JSON numbers (`100.0`, `1e2`), matching
+  what Python `json.dumps` of a float emits.
 
 ### Fixed
 
+- Ingest type errors for `POST /v1/events` name the JSON field (for example
+  `prompt_tokens must be an integer`) instead of the internal Go type.
 - `go install` binaries report the installed module version from `--version`
   and `toktop update`, instead of impersonating 0.1.0.
 - Crush session databases are summed once per review; a continued session

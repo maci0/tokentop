@@ -133,11 +133,11 @@ Event fields are all optional; anything omitted gets the default:
 | field | type | default | notes |
 |---|---|---|---|
 | `id` | string | - | caller-chosen key, capped at 128 runes; a repeat of a key still in the retained feed (last 64 events) is ignored |
-| `ts` | RFC 3339 string | arrival instant | offset-less stamps decode as UTC |
+| `ts` | RFC 3339 string | arrival instant | offset-less stamps decode as UTC; a space instead of `T` is accepted |
 | `agent` | string | `anonymous` | capped at 64 runes |
 | `model` | string | - | capped at 128 runes |
 | `kind` | string | `turn` | known kinds: `turn`, `tool`, `error`, `note`; custom kinds pass through lowercased, capped at 24 runes |
-| `prompt_tokens` / `output_tokens` / `thinking_tokens` | integer | `0` | negative values clamp to `0`; thinking is the reasoning share of output when the agent says so |
+| `prompt_tokens` / `output_tokens` / `thinking_tokens` | integer | `0` | negative values and values above 2^40 clamp to `0`; a whole JSON number such as `100.0` counts; thinking is the reasoning share of output when the agent says so |
 | `note` | string | - | free-form, capped at 512 runes |
 
 One POST answers `202` with `{"accepted":N}` once every event in the stream
@@ -145,9 +145,10 @@ is recorded, `400` for malformed JSON or a bad `ts`, `408` when a stream
 stalls mid-body, and `413` past the 1 MiB body cap. A POST carrying an
 `Origin` header (browser-driven; scripts and agents never send one) is
 refused with `403`, so a web page cannot forge rows into a running
-dashboard. Error bodies are short
-plain-text reasons; unknown fields are ignored, so harnesses can include
-their own. The request `Content-Type` header is not checked: the body is
+dashboard. Wrong methods on these paths answer `405` with `Allow`.
+Error bodies are short
+plain-text reasons that name the field or expected shape; unknown fields are
+ignored, so harnesses can include their own. The request `Content-Type` header is not checked: the body is
 always read as JSON/NDJSON, so plain `curl -d` works unmodified.
 Every POST is logged to stderr as one structured line (`req`, `status`,
 `accepted`, `duration`, `remote`; failures add `error`). Event bodies are

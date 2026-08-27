@@ -309,14 +309,19 @@ export default {
     }
     if (url.pathname === "/health") {
       // Uptime probes hit this continuously; caching it would only blur
-      // what the last probe actually saw.
-      return new Response("ok\n", {
-        headers: {
-          "content-type": "text/plain; charset=utf-8",
-          "cache-control": "no-store",
-          ...SECURITY_HEADERS,
-        },
-      });
+      // what the last probe actually saw. HEAD must carry the GET headers
+      // and no body (RFC 9110).
+      const healthBody = "ok\n";
+      const healthHeaders = {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+        "content-length": String(new TextEncoder().encode(healthBody).byteLength),
+        ...SECURITY_HEADERS,
+      };
+      if (request.method === "HEAD") {
+        return new Response(null, { headers: healthHeaders });
+      }
+      return new Response(healthBody, { headers: healthHeaders });
     }
     // One page: anything else is that page too, rather than a 404 nobody
     // learns anything from.

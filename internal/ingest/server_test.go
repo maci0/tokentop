@@ -189,12 +189,92 @@ func TestIngestRejectsGarbageTimestamp(t *testing.T) {
 	rec := &memRecorder{}
 	s := startIngest(t, rec)
 
-	resp := post(t, "http://"+s.Addr()+"/v1/events", `{"agent":"x","ts":"yesterday"}`)
-	if resp != http.StatusBadRequest {
-		t.Fatalf("garbage ts status = %d, want 400", resp)
+	code, body := postBody(t, "http://"+s.Addr()+"/v1/events", `{"agent":"x","ts":"yesterday"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("garbage ts status = %d, want 400", code)
 	}
 	if len(rec.evs) != 0 {
 		t.Fatal("garbage-timestamped event recorded")
+	}
+	if !strings.Contains(body, "ts") || strings.Contains(body, "2006-01-02") {
+		t.Errorf("ts error should name the field, not the parser layout, got %q", body)
+	}
+}
+
+// Type mistakes must name the JSON field (or the expected shape) so a harness
+// can fix the payload. encoding/json's default text names the Go type.
+func TestIngestJSONTypeErrorsNameTheField(t *testing.T) {
+	s := startIngest(t, &memRecorder{})
+	base := "http://" + s.Addr() + "/v1/events"
+	cases := []struct {
+		body string
+		want []string
+	}{
+		{`[{"agent":"a"}]`, []string{"object", "NDJSON", "array"}},
+		{`{"prompt_tokens":"100"}`, []string{"prompt_tokens", "integer"}},
+		{`{"output_tokens":true}`, []string{"output_tokens", "integer"}},
+		{`{"thinking_tokens":[1]}`, []string{"thinking_tokens", "integer"}},
+		{`{"agent":["x"]}`, []string{"agent", "string"}},
+		{`{"prompt_tokens":100.5}`, []string{"prompt_tokens", "integer"}},
+		{`{"agent":"x","ts":123}`, []string{"ts"}},
+	}
+	for _, tc := range cases {
+		code, body := postBody(t, base, tc.body)
+		if code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", tc.body, code)
+			continue
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s: body %q missing %q", tc.body, body, w)
+			}
+		}
+		for _, leaked := range []string{"agentEventWire", "Go struct field", "Go value of type", "2006-01-02"} {
+			if strings.Contains(body, leaked) {
+				t.Errorf("%s: body %q leaked %q", tc.body, body, leaked)
+			}
+		}
+	}
+}
+
+// Python json.dumps of a float emits 100.0; scientific notation is valid JSON.
+// Both are whole numbers and must record as integers, not 400.
+func TestIngestAcceptsWholeJSONNumberTokenCounts(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"py","prompt_tokens":100.0,"output_tokens":1e2,"thinking_tokens":3}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 1)
+	if rec.evs[0].PromptTokens != 100 || rec.evs[0].OutputTokens != 100 || rec.evs[0].ThinkingTokens != 3 {
+		t.Errorf("tokens = %+v", rec.evs[0])
+	}
+}
+
+func TestIngestMethodNotAllowedSetsAllow(t *testing.T) {
+	s := startIngest(t, &memRecorder{})
+
+	req, err := http.NewRequest(http.MethodPut, "http://"+s.Addr()+"/v1/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", resp.StatusCode)
+	}
+	allow := resp.Header.Get("Allow")
+	for _, m := range []string{http.MethodGet, http.MethodHead, http.MethodPost} {
+		if !strings.Contains(allow, m) {
+			t.Errorf("Allow = %q, missing %s", allow, m)
+		}
 	}
 }
 
@@ -464,6 +544,32 @@ func TestHealthz(t *testing.T) {
 	}
 	if got := resp.Header.Get("Content-Type"); got != "text/plain; charset=utf-8" {
 		t.Errorf("healthz content-type = %q, want text/plain; charset=utf-8", got)
+	}
+}
+
+func TestHealthzHEADHasNoBody(t *testing.T) {
+	s := startIngest(t, &memRecorder{})
+	req, err := http.NewRequest(http.MethodHead, "http://"+s.Addr()+"/healthz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD /healthz = %d, want 200", resp.StatusCode)
+	}
+	if len(body) != 0 {
+		t.Errorf("HEAD /healthz body = %q, want empty", body)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Errorf("HEAD /healthz content-type = %q, want text/plain; charset=utf-8", got)
 	}
 }
 
