@@ -69,6 +69,32 @@ func TestSelfIsSkipped(t *testing.T) {
 	}
 }
 
+func TestSnapshotDropsUnrelatedProcesses(t *testing.T) {
+	orig := platformList
+	t.Cleanup(func() { platformList = orig })
+
+	platformList = func() ([]raw, error) {
+		return []raw{
+			{pid: 1, name: "ollama", args: []string{"ollama", "serve"}},
+			{pid: 2, name: "firefox", args: []string{"firefox"}},
+			{pid: 3, name: "python3", args: []string{"python3", "--port", "9000"}},
+		}, nil
+	}
+	list := NewSampler().Snapshot()
+	if len(list) != 2 {
+		t.Fatalf("snapshot = %+v, want ollama and the --port process", list)
+	}
+	var sawFirefox bool
+	for _, p := range list {
+		if p.Name == "firefox" {
+			sawFirefox = true
+		}
+	}
+	if sawFirefox {
+		t.Fatal("unrelated process was kept")
+	}
+}
+
 func TestSnapshotKeepsLastGoodOnError(t *testing.T) {
 	orig := platformList
 	t.Cleanup(func() { platformList = orig })

@@ -102,6 +102,14 @@ func TestConnectedToSeesARealConnection(t *testing.T) {
 	if ConnectedTo(pid, nil) {
 		t.Error("no endpoints means nothing to match")
 	}
+
+	got := MatchingEndpoints([]int{pid, -1}, []netip.AddrPort{engine, elsewhere})
+	if got[pid] != engine {
+		t.Errorf("MatchingEndpoints = %v, want pid %d -> %s", got, pid, engine)
+	}
+	if _, ok := got[-1]; ok {
+		t.Error("dead pid matched an endpoint")
+	}
 }
 
 func TestPeersOnAnImpossiblePID(t *testing.T) {

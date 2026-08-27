@@ -401,7 +401,7 @@ func Watch(tool, dir string, since time.Time) *Watcher {
 	if src, ok := sourceFor(tool); ok {
 		w := &Watcher{src: src, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
 		if ss, ok := src.(sessionSource); ok {
-			base, ok := ss.sessions(w.dirs)
+			base, ok := ss.sessions(w.dirs, time.Time{})
 			if !ok {
 				base = map[string]map[string]int64{}
 			}
@@ -566,7 +566,7 @@ func (w *Watcher) readSrc() (values, bool) {
 		if !ok {
 			return values{}, false
 		}
-		cur, ok := ss.sessions(w.dirs)
+		cur, ok := ss.sessions(w.dirs, w.since)
 		if !ok {
 			return values{}, false
 		}
@@ -672,13 +672,68 @@ const rescanEvery = time.Second
 // while it ran.
 const recencyWindow = 2 * time.Minute
 
+// rootListing is one walk of a transcript store, shared by every watcher
+// reading the same root. Ten claude processes would otherwise WalkDir the
+// same ~/.claude/projects tree independently every rescan.
+type rootListing struct {
+	files []string
+	at    time.Time
+}
+
+var (
+	rootListMu sync.Mutex
+	rootLists  = map[string]rootListing{}
+)
+
+func rootListKey(root, suffix string) string { return root + "\x00" + suffix }
+
+// listTranscripts returns recent files under root matching suffix. force
+// bypasses the shared cache so a final Poll cannot miss a file created
+// inside the last rescan window.
+func listTranscripts(root, suffix string, cutoff time.Time, force bool) []string {
+	key := rootListKey(root, suffix)
+	if !force {
+		rootListMu.Lock()
+		c, ok := rootLists[key]
+		hit := ok && time.Since(c.at) < rescanEvery
+		var files []string
+		if hit {
+			files = c.files
+		}
+		rootListMu.Unlock()
+		if hit {
+			return append([]string(nil), files...)
+		}
+	}
+	var out []string
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() || !strings.HasSuffix(path, suffix) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.ModTime().Before(cutoff) {
+			return nil
+		}
+		out = append(out, path)
+		return nil
+	})
+	rootListMu.Lock()
+	rootLists[key] = rootListing{files: out, at: time.Now()}
+	rootListMu.Unlock()
+	return append([]string(nil), out...)
+}
+
 // candidates lists transcript files recent enough to belong to this review,
 // reusing the previous walk for a few seconds. An empty result is cached too:
 // until something matches, the store is walked once per rescanEvery rather
 // than on every poll, and a session created in between surfaces when the
 // window expires, the same bound a non-empty listing already works under.
 func (w *Watcher) candidates() []string {
-	if !w.scanned.IsZero() && time.Since(w.scanned) < rescanEvery {
+	force := w.scanned.IsZero()
+	if !force && time.Since(w.scanned) < rescanEvery {
 		return w.cached
 	}
 	cutoff := time.Now().Add(-recencyWindow)
@@ -687,20 +742,7 @@ func (w *Watcher) candidates() []string {
 		if root == "" {
 			continue
 		}
-		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() || !strings.HasSuffix(path, w.ad.suffix) {
-				return nil
-			}
-			info, err := d.Info()
-			if err != nil || info.ModTime().Before(cutoff) {
-				return nil
-			}
-			out = append(out, path)
-			return nil
-		})
+		out = append(out, listTranscripts(root, w.ad.suffix, cutoff, force)...)
 	}
 	w.forgetIdle(out)
 	w.cached, w.scanned = out, time.Now()

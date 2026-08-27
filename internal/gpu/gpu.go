@@ -84,23 +84,46 @@ func run(ctx context.Context, path string, args ...string) ([]byte, bool) {
 var vendorOrder = map[string]int{"nvidia": 0, "amd": 1, "intel": 2, "apple": 3}
 
 // Sample collects devices from every vendor present on the host.
+// Vendor CLIs are independent and each can take up to runTimeout, so they
+// run concurrently: a 1s nvidia-smi plus a 1s rocm-smi finishes in ~1s
+// instead of ~2s on the sysmon budget.
 func Sample(ctx context.Context) []core.GPUDevice {
-	var devs []core.GPUDevice
-
-	if p, ok := lookup("nvidia-smi"); ok {
-		if out, ok2 := run(ctx, p,
-			"--query-gpu=index,name,temperature.gpu,memory.used,memory.total,utilization.gpu,power.draw,driver_version",
-			"--format=csv,noheader,nounits"); ok2 {
-			devs = append(devs, ParseNvidiaSMI(out)...)
+	var (
+		mu   sync.Mutex
+		devs []core.GPUDevice
+		wg   sync.WaitGroup
+	)
+	add := func(d []core.GPUDevice) {
+		if len(d) == 0 {
+			return
 		}
+		mu.Lock()
+		devs = append(devs, d...)
+		mu.Unlock()
 	}
 
-	amd := sampleAMD(ctx)
-	devs = append(devs, amd...)
-
-	if p, ok := lookup("xpu-smi"); ok {
-		devs = append(devs, sampleXPU(ctx, p)...)
-	}
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		if p, ok := lookup("nvidia-smi"); ok {
+			if out, ok2 := run(ctx, p,
+				"--query-gpu=index,name,temperature.gpu,memory.used,memory.total,utilization.gpu,power.draw,driver_version",
+				"--format=csv,noheader,nounits"); ok2 {
+				add(ParseNvidiaSMI(out))
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		add(sampleAMD(ctx))
+	}()
+	go func() {
+		defer wg.Done()
+		if p, ok := lookup("xpu-smi"); ok {
+			add(sampleXPU(ctx, p))
+		}
+	}()
+	wg.Wait()
 
 	sort.SliceStable(devs, func(i, j int) bool {
 		if vendorOrder[devs[i].Vendor] != vendorOrder[devs[j].Vendor] {

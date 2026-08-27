@@ -49,26 +49,55 @@ func parseLsofPeers(out string) []netip.AddrPort {
 	return peers
 }
 
-// ConnectedTo reports whether a process holds a connection to any of the given
-// endpoints, which is how a monitor decides that an agent's tokens are already
-// being counted somewhere else.
+// peersByPID, when set by a platform file, lists peers for many pids while
+// reading the kernel connection tables once. Nil means fall back to Peers.
+var peersByPID func([]int) map[int][]netip.AddrPort
+
+// MatchingEndpoints maps each pid to the first endpoint it holds a connection
+// to. One pass over the kernel tables covers every process, so a dashboard
+// watching N agents does not reread /proc/net/tcp N times (or N×M times when
+// matching M engines one by one).
 //
 // Endpoints are matched on port plus address, with loopback spellings treated
 // as equal: an engine advertised as 127.0.0.1:11434 and a connection to
-// ::1:11434 are the same engine.
-func ConnectedTo(pid int, endpoints []netip.AddrPort) bool {
-	if len(endpoints) == 0 {
-		return false
+// ::1:11434 are the same engine. The returned value is the advertised
+// endpoint, not the peer's local spelling.
+func MatchingEndpoints(pids []int, endpoints []netip.AddrPort) map[int]netip.AddrPort {
+	out := map[int]netip.AddrPort{}
+	if len(pids) == 0 || len(endpoints) == 0 {
+		return out
 	}
-	peers := Peers(pid)
-	for _, p := range peers {
-		for _, e := range endpoints {
-			if sameEndpoint(p, e) {
-				return true
+	var byPID map[int][]netip.AddrPort
+	if peersByPID != nil {
+		byPID = peersByPID(pids)
+	} else {
+		byPID = make(map[int][]netip.AddrPort, len(pids))
+		for _, pid := range pids {
+			if peers := Peers(pid); len(peers) > 0 {
+				byPID[pid] = peers
 			}
 		}
 	}
-	return false
+	for pid, peers := range byPID {
+	find:
+		for _, e := range endpoints {
+			for _, p := range peers {
+				if sameEndpoint(p, e) {
+					out[pid] = e
+					break find
+				}
+			}
+		}
+	}
+	return out
+}
+
+// ConnectedTo reports whether a process holds a connection to any of the given
+// endpoints, which is how a monitor decides that an agent's tokens are already
+// being counted somewhere else.
+func ConnectedTo(pid int, endpoints []netip.AddrPort) bool {
+	_, ok := MatchingEndpoints([]int{pid}, endpoints)[pid]
+	return ok
 }
 
 func sameEndpoint(a, b netip.AddrPort) bool {

@@ -278,12 +278,63 @@ func scanTemps(hwmonRoot, thermalRoot string) []core.TempReading {
 	return temps
 }
 
+// sensorLayoutTTL bounds how long chip names, labels and paths are reused.
+// The values still come from the input files every poll; only the walk of
+// hwmon*/temp*_input and name/label files is amortized. A GPU that appears
+// after start shows up on the next expiry, the same window hostStatic uses
+// for drivers that load late.
+const sensorLayoutTTL = 30 * time.Second
+
+type sensorInput struct {
+	path  string
+	label string
+	gpu   bool
+}
+
+type cachedSensors struct {
+	inputs []sensorInput
+	at     time.Time
+}
+
+var (
+	sensorLayoutMu sync.Mutex
+	sensorLayouts  = map[string]cachedSensors{}
+)
+
+func sensorLayout(key, root string, build func(string) []sensorInput) []sensorInput {
+	sensorLayoutMu.Lock()
+	if c, ok := sensorLayouts[key]; ok && time.Since(c.at) < sensorLayoutTTL {
+		in := c.inputs
+		sensorLayoutMu.Unlock()
+		return in
+	}
+	sensorLayoutMu.Unlock()
+	inputs := build(root)
+	sensorLayoutMu.Lock()
+	sensorLayouts[key] = cachedSensors{inputs: inputs, at: time.Now()}
+	sensorLayoutMu.Unlock()
+	return inputs
+}
+
 func scanHwmon(root string) []core.TempReading {
+	inputs := sensorLayout("hwmon\x00"+root, root, listHwmon)
+	var out []core.TempReading
+	for _, in := range inputs {
+		mc, ok := readMilliC(in.path)
+		if !ok {
+			continue
+		}
+		out = append(out, core.TempReading{Label: in.label, MilliC: mc, IsGPU: in.gpu})
+	}
+	return out
+}
+
+func listHwmon(root string) []sensorInput {
 	chips, err := filepath.Glob(filepath.Join(root, "hwmon*"))
 	if err != nil {
 		return nil
 	}
-	var out []core.TempReading
+	var out []sensorInput
 	for _, chip := range chips {
 		nameB, err := os.ReadFile(filepath.Join(chip, "name"))
 		chipName := strings.ToLower(strings.TrimSpace(string(nameB)))
@@ -293,42 +344,47 @@ func scanHwmon(root string) []core.TempReading {
 		isGPUChip := containsAny(chipName, gpuChips...)
 		inputs, _ := filepath.Glob(filepath.Join(chip, "temp*_input"))
 		for _, in := range inputs {
-			mc, ok := readMilliC(in)
-			if !ok {
-				continue
-			}
 			label := chipName
 			base := strings.TrimSuffix(filepath.Base(in), "_input")
 			if lb, err := os.ReadFile(filepath.Join(chip, base+"_label")); err == nil {
 				label = strings.ToLower(strings.TrimSpace(string(lb)))
 			}
 			gpu := isGPUChip || containsAny(label, "gpu", "junction", "hotspot", "edge")
-			out = append(out, core.TempReading{Label: label, MilliC: mc, IsGPU: gpu})
+			out = append(out, sensorInput{path: in, label: label, gpu: gpu})
 		}
 	}
 	return out
 }
 
 func scanThermalZones(root string) []core.TempReading {
+	inputs := sensorLayout("thermal\x00"+root, root, listThermalZones)
+	var out []core.TempReading
+	for _, in := range inputs {
+		mc, ok := readMilliC(in.path)
+		if !ok {
+			continue
+		}
+		out = append(out, core.TempReading{Label: in.label, MilliC: mc, IsGPU: in.gpu})
+	}
+	return out
+}
+
+func listThermalZones(root string) []sensorInput {
 	zones, err := filepath.Glob(filepath.Join(root, "thermal_zone*"))
 	if err != nil {
 		return nil
 	}
-	var out []core.TempReading
+	var out []sensorInput
 	for _, z := range zones {
 		tb, err := os.ReadFile(filepath.Join(z, "type"))
 		if err != nil {
 			continue
 		}
-		mc, ok := readMilliC(filepath.Join(z, "temp"))
-		if !ok {
-			continue
-		}
 		typ := strings.ToLower(strings.TrimSpace(string(tb)))
-		out = append(out, core.TempReading{
-			Label:  typ,
-			MilliC: mc,
-			IsGPU:  containsAny(typ, "gpu"),
+		out = append(out, sensorInput{
+			path:  filepath.Join(z, "temp"),
+			label: typ,
+			gpu:   containsAny(typ, "gpu"),
 		})
 	}
 	return out

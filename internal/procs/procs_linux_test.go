@@ -54,6 +54,9 @@ func TestSamplerLinuxTree(t *testing.T) {
 		if p.PID == 456 {
 			t.Error("kernel thread leaked into listing")
 		}
+		if p.PID == 789 {
+			t.Error("unrelated process leaked into engine listing")
+		}
 	}
 }
 

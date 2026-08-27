@@ -26,8 +26,12 @@ type usageSource interface {
 // them at attach so a continued session contributes only what it adds,
 // matching the file adapters. The outer key is the database path, so two
 // projects cannot collide on a session id.
+//
+// A zero since returns every session (the attach baseline). A non-zero
+// since returns sessions written at or after that instant, which is enough
+// to compute growth: untouched sessions contribute a zero delta.
 type sessionSource interface {
-	sessions(dirs []string) (map[string]map[string]int64, bool)
+	sessions(dirs []string, since time.Time) (map[string]map[string]int64, bool)
 }
 
 var (

@@ -20,6 +20,8 @@ support channel (see SECURITY.md).
   of a watched engine's totals).
 - Ingest token counts accept whole JSON numbers (`100.0`, `1e2`), matching
   what Python `json.dumps` of a float emits.
+- `agentusage.MatchingEndpoints` attributes many agent processes to engines
+  in one connection-table pass.
 
 ### Changed
 
@@ -34,6 +36,8 @@ support channel (see SECURITY.md).
   `prompt_tokens must be an integer`) instead of the internal Go type.
 - `go install` binaries report the installed module version from `--version`
   and `toktop update`, instead of impersonating 0.1.0.
+- `--agents` no longer re-walks every transcript store on each tick, and
+  engine attribution reads the kernel connection tables once per pass.
 - Crush session databases are summed once per review; a continued session
   contributes only growth after attach.
 - Transcripts that grew under one mtime stamp are still read.

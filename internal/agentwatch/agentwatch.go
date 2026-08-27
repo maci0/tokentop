@@ -71,6 +71,8 @@ type tracked struct {
 	// dashboard; ViaEngine on the event is what stops aggregates adding them
 	// on top of the engine's own numbers.
 	viaEngine string
+	cancel    context.CancelFunc
+	done      chan struct{}
 }
 
 // New returns a watcher feeding rec. A nil engines function means nothing is
@@ -90,18 +92,15 @@ func New(rec Recorder, engines Engines) *Watcher {
 func (w *Watcher) Run(ctx context.Context) {
 	discover := time.NewTicker(w.discoverEvery)
 	defer discover.Stop()
-	read := time.NewTicker(w.readEvery)
-	defer read.Stop()
 
-	w.discover()
+	w.discover(ctx)
 	for {
 		select {
 		case <-ctx.Done():
+			w.stopAll()
 			return
 		case <-discover.C:
-			w.discover()
-		case <-read.C:
-			w.read()
+			w.discover(ctx)
 		}
 	}
 }
@@ -115,12 +114,12 @@ func (w *Watcher) Following(pid int) bool {
 }
 
 // discover starts following new agent processes and forgets exited ones.
-func (w *Watcher) discover() {
+func (w *Watcher) discover(ctx context.Context) {
 	found := agentusage.Discover()
 	live := make(map[int]bool, len(found))
 
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	var started, gone []*tracked
 	for _, p := range found {
 		live[p.PID] = true
 		if _, seen := w.tracked[p.PID]; seen {
@@ -134,25 +133,79 @@ func (w *Watcher) discover() {
 		if watch == nil {
 			continue // this agent keeps nothing readable
 		}
-		w.tracked[p.PID] = &tracked{proc: p, watch: watch}
+		t := &tracked{proc: p, watch: watch, done: make(chan struct{})}
+		w.tracked[p.PID] = t
+		started = append(started, t)
 	}
-	for pid := range w.tracked {
+	for pid, t := range w.tracked {
 		if !live[pid] {
 			delete(w.tracked, pid)
+			gone = append(gone, t)
 		}
+	}
+	pids := make([]int, 0, len(w.tracked))
+	for pid := range w.tracked {
+		pids = append(pids, pid)
+	}
+	endpoints, labels := w.engineEndpoints()
+	w.mu.Unlock()
+
+	for _, t := range started {
+		tctx, cancel := context.WithCancel(ctx)
+		t.cancel = cancel
+		go func(t *tracked, tctx context.Context) {
+			defer close(t.done)
+			t.watch.Run(tctx, w.readEvery, func(s agentusage.Sample) {
+				w.report(t, s)
+			})
+		}(t, tctx)
+	}
+	for _, t := range gone {
+		w.stopOne(t)
 	}
 
 	// Re-checked every pass rather than once at discovery: an agent connects
 	// to its engine after it starts, and may switch engines mid-session.
-	endpoints, labels := w.engineEndpoints()
+	// One table read covers every tracked pid; matching each agent against
+	// each engine separately would reread /proc/net/tcp per pair.
+	matched := agentusage.MatchingEndpoints(pids, endpoints)
+	w.mu.Lock()
 	for pid, t := range w.tracked {
 		t.viaEngine = ""
-		for i, e := range endpoints {
-			if agentusage.ConnectedTo(pid, []netip.AddrPort{e}) {
-				t.viaEngine = labels[i]
-				break
+		if ap, ok := matched[pid]; ok {
+			for i, e := range endpoints {
+				if e == ap {
+					t.viaEngine = labels[i]
+					break
+				}
 			}
 		}
+	}
+	w.mu.Unlock()
+}
+
+func (w *Watcher) stopAll() {
+	w.mu.Lock()
+	gone := make([]*tracked, 0, len(w.tracked))
+	for pid, t := range w.tracked {
+		delete(w.tracked, pid)
+		gone = append(gone, t)
+	}
+	w.mu.Unlock()
+	for _, t := range gone {
+		w.stopOne(t)
+	}
+}
+
+func (w *Watcher) stopOne(t *tracked) {
+	if t.cancel != nil {
+		t.cancel()
+	}
+	if t.done != nil {
+		<-t.done
+	}
+	if t.watch != nil {
+		w.report(t, t.watch.Poll())
 	}
 }
 
@@ -193,6 +246,8 @@ func parseEngineAddr(addr string) (netip.AddrPort, string, bool) {
 }
 
 // read takes one reading per tracked agent and reports what grew.
+// Tests drive it directly; the live path is Watcher.Run per agent, which
+// already polls on readEvery without forcing a store walk each tick.
 func (w *Watcher) read() {
 	w.mu.Lock()
 	snapshot := make([]*tracked, 0, len(w.tracked))
@@ -202,31 +257,42 @@ func (w *Watcher) read() {
 	w.mu.Unlock()
 
 	for _, t := range snapshot {
-		cur := t.watch.Poll()
-		if cur.Empty() {
-			continue
-		}
-		out := cur.Output - t.last.Output
-		think := cur.Thinking - t.last.Thinking
-		prompt := cur.Input - t.last.Input
-		if out <= 0 && think <= 0 && prompt <= 0 {
-			continue // nothing new: silence is not an event
-		}
-		t.last = cur
-		if w.rec == nil {
-			continue
-		}
-		w.rec.RecordAgent(core.AgentEvent{
-			At:             cur.At,
-			Agent:          t.proc.Tool,
-			Kind:           "turn",
-			PromptTokens:   int64(max(prompt, 0)),
-			OutputTokens:   int64(max(out, 0)),
-			ThinkingTokens: int64(max(think, 0)),
-			ViaEngine:      t.viaEngine,
-			Note:           note(t.proc, think, t.viaEngine),
-		})
+		w.report(t, t.watch.Poll())
 	}
+}
+
+// report records growth since the last sample. Live Run callbacks and the
+// test-driven read path both come through here so deltas stay consistent.
+func (w *Watcher) report(t *tracked, cur agentusage.Sample) {
+	if cur.Empty() {
+		return
+	}
+	w.mu.Lock()
+	out := cur.Output - t.last.Output
+	think := cur.Thinking - t.last.Thinking
+	prompt := cur.Input - t.last.Input
+	if out <= 0 && think <= 0 && prompt <= 0 {
+		w.mu.Unlock()
+		return // nothing new: silence is not an event
+	}
+	t.last = cur
+	proc := t.proc
+	via := t.viaEngine
+	rec := w.rec
+	w.mu.Unlock()
+	if rec == nil {
+		return
+	}
+	rec.RecordAgent(core.AgentEvent{
+		At:             cur.At,
+		Agent:          proc.Tool,
+		Kind:           "turn",
+		PromptTokens:   int64(max(prompt, 0)),
+		OutputTokens:   int64(max(out, 0)),
+		ThinkingTokens: int64(max(think, 0)),
+		ViaEngine:      via,
+		Note:           note(proc, think, via),
+	})
 }
 
 // note carries what the event cannot: where the agent is working, how much of

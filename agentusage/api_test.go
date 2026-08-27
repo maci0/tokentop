@@ -30,6 +30,7 @@ var publicFuncs = []string{
 	"Discover",
 	"EnableOpenCodeDB",
 	"LoadDefinitions",
+	"MatchingEndpoints",
 	"Peers",
 	"Rate",
 	"RegisterSpec",

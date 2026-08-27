@@ -15,20 +15,51 @@ import (
 	"strings"
 )
 
+func init() { peersByPID = linuxPeersByPID }
+
 // Peers walks the process's open descriptors for socket inodes and looks each
 // up in the kernel's TCP tables, all through procfs.
 func Peers(pid int) []netip.AddrPort {
-	inodes := socketInodes(pid)
-	if len(inodes) == 0 {
-		return nil
+	return linuxPeersByPID([]int{pid})[pid]
+}
+
+// linuxPeersByPID reads the kernel TCP tables once and matches every pid's
+// socket inodes against them.
+func linuxPeersByPID(pids []int) map[int][]netip.AddrPort {
+	out := make(map[int][]netip.AddrPort, len(pids))
+	pidInodes := make(map[int]map[uint64]bool, len(pids))
+	allInodes := map[uint64]bool{}
+	for _, pid := range pids {
+		inodes := socketInodes(pid)
+		if len(inodes) == 0 {
+			continue
+		}
+		pidInodes[pid] = inodes
+		for ino := range inodes {
+			allInodes[ino] = true
+		}
+	}
+	if len(allInodes) == 0 {
+		return out
 	}
 	byInode := map[uint64]netip.AddrPort{}
 	for _, table := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
-		readTCPTable(table, inodes, byInode)
+		readTCPTable(table, allInodes, byInode)
 	}
-	out := make([]netip.AddrPort, 0, len(byInode))
-	for _, ap := range byInode {
-		out = append(out, ap)
+	for pid, inodes := range pidInodes {
+		seen := map[netip.AddrPort]bool{}
+		var peers []netip.AddrPort
+		for ino := range inodes {
+			ap, ok := byInode[ino]
+			if !ok || seen[ap] {
+				continue
+			}
+			seen[ap] = true
+			peers = append(peers, ap)
+		}
+		if len(peers) > 0 {
+			out[pid] = peers
+		}
 	}
 	return out
 }

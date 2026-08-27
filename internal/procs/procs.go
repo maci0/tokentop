@@ -90,6 +90,11 @@ func (s *Sampler) Snapshot() []Info {
 			RSS:      r.rss,
 			PortHint: ExtractPort(r.args),
 		}
+		if eng, defPort, ok := MatchEngine(info); ok {
+			info.Engine, info.DefPort = eng, defPort
+		} else if info.PortHint == 0 {
+			continue // not an engine and no listen-port flag: drop it
+		}
 		switch {
 		case r.cpuPercent > 0:
 			info.CPUPct = r.cpuPercent
@@ -102,15 +107,12 @@ func (s *Sampler) Snapshot() []Info {
 		if _, tracked := s.prev[r.pid]; !tracked || r.ticks != 0 {
 			s.prev[r.pid] = r.ticks
 		}
-		if eng, defPort, ok := MatchEngine(info); ok {
-			info.Engine, info.DefPort = eng, defPort
-		}
 		out = append(out, info)
 	}
 	// prune dead pids so the map cannot grow forever
-	live := make(map[int]struct{}, len(list))
-	for _, r := range list {
-		live[r.pid] = struct{}{}
+	live := make(map[int]struct{}, len(out))
+	for _, p := range out {
+		live[p.PID] = struct{}{}
 	}
 	for pid := range s.prev {
 		if _, ok := live[pid]; !ok {
@@ -155,6 +157,16 @@ func ExtractPort(args []string) int {
 
 // isPort reports whether p is a number a process can listen on.
 func isPort(p int) bool { return p >= 1 && p <= 65535 }
+
+// keepProcess reports whether a process is relevant to engine discovery or
+// accounting: a known engine, or any process that names a listen port.
+func keepProcess(name string, args []string) bool {
+	if ExtractPort(args) != 0 {
+		return true
+	}
+	_, _, ok := MatchEngine(Info{Name: name, Args: args})
+	return ok
+}
 
 // ListenPort returns the process's effective listen port: an explicit --port
 // flag on the command line when present, else the matched engine's default.

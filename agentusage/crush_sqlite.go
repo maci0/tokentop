@@ -123,11 +123,18 @@ const crushSessionsQuery = `
 	SELECT id, completion_tokens
 	FROM sessions`
 
+const crushSessionsSinceQuery = crushSessionsQuery + `
+	WHERE (CASE WHEN updated_at > 100000000000 THEN updated_at ELSE updated_at * 1000 END) >= ?`
+
 // sessions returns each database's current per-session completion tokens.
 // Watch snapshots this at attach so a continued session contributes only
 // what it adds afterwards, matching the file adapters. A missing or
 // unreadable store is not an error: most trees have never run crush.
-func (crushDBSource) sessions(dirs []string) (map[string]map[string]int64, bool) {
+//
+// A zero since reads every session (the attach baseline). After that, only
+// rows touched since the review started: idle history is not re-scanned
+// on every poll.
+func (crushDBSource) sessions(dirs []string, since time.Time) (map[string]map[string]int64, bool) {
 	seen := map[string]bool{}
 	out := map[string]map[string]int64{}
 	for _, dir := range dirs {
@@ -136,7 +143,7 @@ func (crushDBSource) sessions(dirs []string) (map[string]map[string]int64, bool)
 			continue
 		}
 		seen[path] = true
-		sess, ok := readCrushSessions(path)
+		sess, ok := readCrushSessions(path, since)
 		if !ok {
 			return nil, false
 		}
@@ -145,7 +152,7 @@ func (crushDBSource) sessions(dirs []string) (map[string]map[string]int64, bool)
 	return out, true
 }
 
-func readCrushSessions(path string) (map[string]int64, bool) {
+func readCrushSessions(path string, since time.Time) (map[string]int64, bool) {
 	db, err := openReadOnly(path)
 	if err != nil {
 		return nil, false
@@ -155,7 +162,13 @@ func readCrushSessions(path string) (map[string]int64, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), dbQueryTimeout)
 	defer cancel()
 
-	rows, err := db.QueryContext(ctx, crushSessionsQuery)
+	query := crushSessionsQuery
+	var args []any
+	if !since.IsZero() {
+		query = crushSessionsSinceQuery
+		args = append(args, since.UnixMilli())
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, false
 	}

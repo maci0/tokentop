@@ -35,6 +35,9 @@ func listLinux() ([]raw, error) {
 		}
 
 		r := raw{pid: pid, name: baseName(args[0]), args: args}
+		if !keepProcess(r.name, args) {
+			continue // skip /proc/PID/stat for firefox and friends
+		}
 
 		// One stat read yields both CPU ticks and RSS; a second read of
 		// status would double the per-PID syscalls on every poll.
@@ -55,22 +58,35 @@ func procStatCPUAndRSS(stat string) (ticks uint64, rssBytes uint64) {
 	if open < 0 || closeP < 0 || closeP+2 > len(stat) {
 		return 0, 0
 	}
-	fields := strings.Fields(stat[closeP+2:]) // field 3 onward
-	const (
-		utimeIdx = 11 // field 14 overall -> idx 11 here
-		stimeIdx = 12 // field 15 overall -> idx 12 here
-		rssIdx   = 21 // field 24 overall (rss, pages) -> idx 21 here
-	)
-	if len(fields) > stimeIdx {
-		u, _ := strconv.ParseUint(fields[utimeIdx], 10, 64)
-		si, _ := strconv.ParseUint(fields[stimeIdx], 10, 64)
-		ticks = u + si
+	// Field 3 onward, walked in place: strings.Fields would allocate a
+	// slice of ~50 strings per process per poll.
+	rest := stat[closeP+2:]
+	var utime, stime, pages uint64
+	field := 3
+	i := 0
+	for field <= 24 && i < len(rest) {
+		for i < len(rest) && (rest[i] == ' ' || rest[i] == '\t') {
+			i++
+		}
+		if i >= len(rest) {
+			break
+		}
+		start := i
+		for i < len(rest) && rest[i] != ' ' && rest[i] != '\t' && rest[i] != '\n' {
+			i++
+		}
+		switch field {
+		case 14:
+			utime, _ = strconv.ParseUint(rest[start:i], 10, 64)
+		case 15:
+			stime, _ = strconv.ParseUint(rest[start:i], 10, 64)
+		case 24:
+			pages, _ = strconv.ParseUint(rest[start:i], 10, 64)
+			return utime + stime, pagesToBytes(pages)
+		}
+		field++
 	}
-	if len(fields) > rssIdx {
-		pages, _ := strconv.ParseUint(fields[rssIdx], 10, 64)
-		rssBytes = pagesToBytes(pages)
-	}
-	return ticks, rssBytes
+	return utime + stime, pagesToBytes(pages)
 }
 
 // pagesToBytes converts a /proc/pid/stat RSS page count to bytes. A page
