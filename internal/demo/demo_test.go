@@ -3,6 +3,7 @@ package demo
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -178,5 +179,27 @@ func TestSourceConcurrentAccess(t *testing.T) {
 		case <-runDone:
 			return
 		}
+	}
+}
+
+// Demo mode shares the ingest recorder: a retried POST with the same id
+// must not grow the feed, matching the live collector.
+func TestRecordAgentSameIDKeptOnce(t *testing.T) {
+	s := NewSource(time.Second, 1)
+	ev := core.AgentEvent{At: time.Now(), ID: "turn-1", Agent: "coder", OutputTokens: 50}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.RecordAgent(ev)
+		}()
+	}
+	wg.Wait()
+	s.mu.Lock()
+	n := len(s.agents)
+	s.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("agents = %d, want 1", n)
 	}
 }

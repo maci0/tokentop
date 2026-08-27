@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -141,6 +142,54 @@ func TestApplyReplacesTargetOnMatch(t *testing.T) {
 	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(target), ".toktop-update-*"))
 	if len(matches) != 0 {
 		t.Fatalf("temp files left behind: %v", matches)
+	}
+}
+
+// A second Apply of the same release (double-click, lost success, crash
+// after the rename) must leave the already-current binary alone and not
+// fetch the asset again.
+func TestApplyTwiceLeavesTargetUnchanged(t *testing.T) {
+	payload := []byte("#!/bin/sh\necho new\n")
+	sum := sha256.Sum256(payload)
+	name := AssetName("9.9.9")
+	sums := checksumsArchive(t, hex.EncodeToString(sum[:])+"  "+name+"\n")
+	var assets atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/asset", func(w http.ResponseWriter, r *http.Request) {
+		assets.Add(1)
+		w.Write(payload)
+	})
+	mux.HandleFunc("/checksums", func(w http.ResponseWriter, r *http.Request) { w.Write(sums) })
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	rel := &Release{TagName: "v9.9.9"}
+	body := `{"tag_name":"v9.9.9","assets":[
+		{"name":"` + name + `","browser_download_url":"` + srv.URL + `/asset"},
+		{"name":"` + checksumsName("9.9.9") + `","browser_download_url":"` + srv.URL + `/checksums"}]}`
+	if err := json.Unmarshal([]byte(body), rel); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(t.TempDir(), "toktop")
+	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyTo(context.Background(), rel, target); err != nil {
+		t.Fatal(err)
+	}
+	if assets.Load() != 1 {
+		t.Fatalf("first apply fetched the asset %d times, want 1", assets.Load())
+	}
+	if _, err := applyTo(context.Background(), rel, target); err != nil {
+		t.Fatal(err)
+	}
+	if assets.Load() != 1 {
+		t.Fatalf("second apply fetched the asset, total %d", assets.Load())
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != string(payload) {
+		t.Fatalf("target = %q (%v), want the installed binary", got, err)
 	}
 }
 

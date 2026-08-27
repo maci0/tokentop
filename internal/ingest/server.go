@@ -183,6 +183,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		}
 		ev := core.AgentEvent{
 			At:             at,
+			ID:             wire.ID,
 			Agent:          wire.Agent,
 			Model:          wire.Model,
 			Kind:           wire.Kind,
@@ -196,6 +197,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		// control characters before the values are stored and later rendered.
 		// Defaults come after sanitization: a value the sanitizer empties
 		// (pure escape sequences) must not slip past the fallback.
+		ev.ID = clampField(core.SanitizeText(ev.ID), 128)
 		ev.Agent = clampField(core.SanitizeText(ev.Agent), 64)
 		if ev.Agent == "" {
 			ev.Agent = "anonymous"
@@ -241,6 +243,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 // before parseEventTime could apply the UTC default the feed documents.
 type agentEventWire struct {
 	At             json.RawMessage `json:"ts"`
+	ID             string          `json:"id"`
 	Agent          string          `json:"agent"`
 	Model          string          `json:"model"`
 	Kind           string          `json:"kind"`
@@ -291,7 +294,7 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintln(w, `{"hint":"POST /v1/events with {ts,agent,kind,model,prompt_tokens,output_tokens,thinking_tokens,note}"}`)
+	fmt.Fprintln(w, `{"hint":"POST /v1/events with {id,ts,agent,kind,model,prompt_tokens,output_tokens,thinking_tokens,note}"}`)
 }
 
 // clampField caps a free-form event field at n user-perceived characters

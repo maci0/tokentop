@@ -130,6 +130,7 @@ Event fields are all optional; anything omitted gets the default:
 
 | field | type | default | notes |
 |---|---|---|---|
+| `id` | string | - | caller-chosen key, capped at 128 runes; a repeat of a key still in the retained feed (last 64 events) is ignored |
 | `ts` | RFC 3339 string | arrival instant | offset-less stamps decode as UTC |
 | `agent` | string | `anonymous` | capped at 64 runes |
 | `model` | string | - | capped at 128 runes |
@@ -148,9 +149,9 @@ their own. The request `Content-Type` header is not checked: the body is
 always read as JSON/NDJSON, so plain `curl -d` works unmodified.
 
 Streams are recorded line by line: if a later line fails, events before it
-stay recorded and the error states how many, so a retry should resume after
-the failing line rather than replay the whole stream (replaying would
-duplicate the kept events).
+stay recorded and the error states how many. Retrying a stream (or a
+successful POST whose 202 was lost) is safe when each event carries a stable
+`id`; without one, replaying the kept lines would duplicate them.
 
 ## Zero vendor libraries
 

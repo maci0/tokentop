@@ -79,6 +79,7 @@ func (p *ProviderSnapshot) PrimaryModel() string {
 // wire shape is defined separately by ingest's agentEventWire.
 type AgentEvent struct {
 	At             time.Time
+	ID             string // caller-chosen; a repeat still in the retained feed is ignored
 	Agent          string
 	Model          string
 	Kind           string // turn | tool | error | note
@@ -87,6 +88,21 @@ type AgentEvent struct {
 	ThinkingTokens int64  // reasoning share of OutputTokens, when the agent says so
 	ViaEngine      string // monitored engine already counting this output; aggregates skip it
 	Note           string
+}
+
+// HasAgentID reports whether events already contain this id. The empty string
+// never matches, so events without an id are not treated as duplicates of
+// each other.
+func HasAgentID(events []AgentEvent, id string) bool {
+	if id == "" {
+		return false
+	}
+	for i := range events {
+		if events[i].ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // ProbeSample is one synthetic generation probe result.

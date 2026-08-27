@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -363,6 +364,53 @@ func TestRecordAgentKeepsChronologicalOrder(t *testing.T) {
 	}
 	if !c.agents[len(c.agents)-1].At.Equal(base.Add(7 * time.Second)) {
 		t.Fatal("newest agent is not last")
+	}
+}
+
+// A retried ingest POST (lost 202, replayed NDJSON) carries the same id;
+// the retained feed must stay a single event so rates do not double-count.
+func TestRecordAgentSameIDKeptOnce(t *testing.T) {
+	c := New(nil, time.Second)
+	ev := core.AgentEvent{At: time.Now(), ID: "turn-1", Agent: "coder", OutputTokens: 50}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.RecordAgent(ev)
+		}()
+	}
+	wg.Wait()
+	if len(c.agents) != 1 {
+		t.Fatalf("agents = %d, want 1", len(c.agents))
+	}
+
+	c.RecordAgent(core.AgentEvent{At: time.Now(), ID: "turn-2", Agent: "coder", OutputTokens: 10})
+	if len(c.agents) != 2 {
+		t.Fatalf("distinct ids = %d, want 2", len(c.agents))
+	}
+
+	c.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "coder", OutputTokens: 1})
+	c.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "coder", OutputTokens: 1})
+	if len(c.agents) != 4 {
+		t.Fatalf("events without id = %d, want 4 total", len(c.agents))
+	}
+}
+
+// The id window is the retained ring: once an event is evicted, its id may
+// be reused rather than pinning a key forever.
+func TestRecordAgentReusesEvictedID(t *testing.T) {
+	c := New(nil, time.Second)
+	c.RecordAgent(core.AgentEvent{At: time.Now(), ID: "old", Agent: "a"})
+	for i := 0; i < core.AgentHistoryLen; i++ {
+		c.RecordAgent(core.AgentEvent{At: time.Now(), ID: fmt.Sprintf("n%d", i), Agent: "a"})
+	}
+	if core.HasAgentID(c.agents, "old") {
+		t.Fatal("old id still retained after eviction")
+	}
+	c.RecordAgent(core.AgentEvent{At: time.Now(), ID: "old", Agent: "a", OutputTokens: 7})
+	if !core.HasAgentID(c.agents, "old") {
+		t.Fatal("evicted id must be reusable")
 	}
 }
 

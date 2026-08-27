@@ -115,7 +115,8 @@ func (r *Release) NewerThan(current string) bool {
 //
 // The new binary is written next to the current one (same filesystem, so the
 // rename is atomic) and only renamed after its checksum matches. A failed
-// verification leaves the running binary untouched.
+// verification leaves the running binary untouched. If the destination
+// already matches the release checksum, the asset is not fetched or replaced.
 func Apply(ctx context.Context, rel *Release) (string, error) {
 	self, err := os.Executable()
 	if err != nil {
@@ -160,6 +161,9 @@ func applyTo(ctx context.Context, rel *Release, self string) (string, error) {
 	expect, ok := ChecksumFor(sums, want)
 	if !ok {
 		return "", fmt.Errorf("checksums.txt has no entry for %s", want)
+	}
+	if have, err := fileChecksum(self); err == nil && have == expect {
+		return self, nil
 	}
 
 	dir := filepath.Dir(self)
@@ -229,6 +233,21 @@ func fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("%s returned %s", url, resp.Status)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, limit))
+}
+
+// fileChecksum is the hex SHA-256 of path, capped the same way a download is
+// so a huge existing file cannot fill memory on the "already current" check.
+func fileChecksum(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(f, maxAssetBytes+1)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // download streams url into w and returns the hex SHA-256 of what was written.

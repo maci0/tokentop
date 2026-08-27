@@ -90,6 +90,23 @@ func TestIngestAcceptsEvents(t *testing.T) {
 	}
 }
 
+// An id is a caller-chosen key for retries: it must survive ingest as sent
+// (after sanitization) so the collector can ignore a replay of the same event.
+func TestIngestForwardsId(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"id":"turn-1","agent":"coder","output_tokens":50}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 1)
+	if rec.evs[0].ID != "turn-1" {
+		t.Errorf("id = %q, want turn-1", rec.evs[0].ID)
+	}
+}
+
 // Offset-less RFC 3339 stamps (Python datetime.isoformat() without tzinfo,
 // hand-rolled harnesses) decode as UTC: encoding/json alone would reject
 // them and drop every event queued behind the bad one in the same batch.
@@ -389,7 +406,7 @@ func TestIngestHintListsAllFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"ts", "agent", "kind", "model", "prompt_tokens", "output_tokens", "thinking_tokens", "note"} {
+	for _, field := range []string{"id", "ts", "agent", "kind", "model", "prompt_tokens", "output_tokens", "thinking_tokens", "note"} {
 		if !strings.Contains(string(body), field) {
 			t.Errorf("hint omits accepted field %s: %s", field, body)
 		}
@@ -420,16 +437,16 @@ func TestIngestClampsOversizedFields(t *testing.T) {
 	s := startIngest(t, rec)
 
 	huge := strings.Repeat("x", 10_000)
-	body := fmt.Sprintf(`{"agent":%q,"model":%q,"note":%q}`, huge, huge, huge)
+	body := fmt.Sprintf(`{"id":%q,"agent":%q,"model":%q,"note":%q}`, huge, huge, huge, huge)
 	resp := post(t, "http://"+s.Addr()+"/v1/events", body)
 	if resp != http.StatusAccepted {
 		t.Fatalf("status = %d", resp)
 	}
 	awaitEvents(t, rec, 1)
 	ev := rec.evs[0]
-	if len(ev.Agent) > 64 || len(ev.Model) > 128 || utf8.RuneCountInString(ev.Note) > 512 {
-		t.Errorf("oversized fields retained: agent=%d model=%d note=%d",
-			len(ev.Agent), len(ev.Model), utf8.RuneCountInString(ev.Note))
+	if len(ev.ID) > 128 || len(ev.Agent) > 64 || len(ev.Model) > 128 || utf8.RuneCountInString(ev.Note) > 512 {
+		t.Errorf("oversized fields retained: id=%d agent=%d model=%d note=%d",
+			len(ev.ID), len(ev.Agent), len(ev.Model), utf8.RuneCountInString(ev.Note))
 	}
 }
 

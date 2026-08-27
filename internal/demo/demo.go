@@ -215,6 +215,9 @@ func (s *Source) RecordAgent(ev core.AgentEvent) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if core.HasAgentID(s.agents, ev.ID) {
+		return
+	}
 	s.addAgent(ev)
 }
 

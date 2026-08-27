@@ -395,10 +395,14 @@ func (c *Collector) ring(m map[string]*timedRing, key string) *timedRing {
 // Events come from many senders whose clocks disagree (the ingest endpoint
 // can face a LAN), so arrival order is not time order; every consumer reads
 // Agents newest-last (see core.Snapshot), so keep them sorted by timestamp
-// the way the probe ring is.
+// the way the probe ring is. A non-empty ID that is already in the retained
+// window is ignored, so a retried POST of the same event does not double-count.
 func (c *Collector) RecordAgent(ev core.AgentEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if core.HasAgentID(c.agents, ev.ID) {
+		return
+	}
 	c.agents = insertSorted(append(c.agents, ev), agentAt)
 	if len(c.agents) > core.AgentHistoryLen {
 		c.agents = c.agents[len(c.agents)-core.AgentHistoryLen:]
