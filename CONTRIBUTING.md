@@ -5,8 +5,12 @@
 - Go, at the version pinned in `go.mod`. `make` sets `GOTOOLCHAIN` to that
   exact version so a newer compiler on the host cannot change the artifact.
   CI installs the same version via `go-version-file: go.mod`.
-- A C compiler (`gcc` or `clang`) for `go test -race`; plain builds and
-  cross-compiles are pure Go and need nothing else.
+- A C compiler (`gcc` or `clang`) for `go test -race`. `make test` and
+  `make test-pkg` force `CGO_ENABLED=1` even if the environment has it off
+  (`make build` still builds with cgo off). Plain builds and cross-compiles
+  are pure Go and need nothing else.
+- `bun` at the version in `.bun-version` for `make site-check`.
+- `uv` for `make scripts-check` (tool pins in `scripts/requirements-dev.txt`).
 - No services or databases: everything is stdlib plus the modules in
   `go.mod`.
 
@@ -20,11 +24,14 @@ make demo        # build and run against a simulated fleet
 
 ## The edit-test loop
 
-Run one package or one test while iterating (drop `-run` for a whole package):
+Run one package or one test while iterating (drop `RUN` for a whole package).
+`make` pins the `go.mod` compiler, `-mod=readonly`, `-race`, and `-shuffle=on`,
+and turns cgo on, matching CI:
 
 ```
-go test -race ./internal/ui
-go test -race ./internal/core -run TestSanitizeTextPreservesUTF8
+make test-pkg PKG=./internal/ui
+make test-pkg PKG=./internal/core RUN=TestSanitizeTextPreservesUTF8
+make test-pkg PKG=./agentusage TESTTAGS=sqlite
 ```
 
 To see the dashboard render without an interactive terminal:
@@ -49,7 +56,7 @@ tmux new-session -d -x 180 -y 50 -s shot './toktop --demo --seed 7 --no-hot-relo
 sleep 60 && tmux send-keys -t shot p          # let the charts fill, then probe
 tmux capture-pane -e -p -t shot > .scratch/capture.txt
 tmux kill-session -t shot
-uv run --with-requirements scripts/requirements.txt \
+uv run --isolated --no-project --with-requirements scripts/requirements.txt \
   scripts/screenshot.py .scratch/capture.txt docs/images/dashboard.png 2 180 50
 ```
 
@@ -57,7 +64,8 @@ The trailing arguments are scale, columns and rows; passing the pane geometry
 keeps the renderer from re-deriving it and wrapping. `VERSION` is stamped into
 the header, so pass the version being released rather than `dev`. Rendering
 needs a Meslo Nerd Font installed, or `TOKTOP_SCREENSHOT_FONT` pointing at a
-regular-weight `.ttf`.
+regular-weight `.ttf`. The `uv run` flags match `make scripts-check` so uv
+does not create a `.venv` from `pyproject.toml`.
 
 The image's pixel size is repeated in `site/worker.js` as the `og:image`
 dimensions; update both together.
@@ -71,9 +79,11 @@ dimensions; update both together.
 | `make build` | host binary with version stamping |
 | `make demo` / `make run` | build, then launch |
 | `make test` | all tests, `-race -shuffle=on` (same flags as CI) |
+| `make test-pkg` | one package or test: `PKG=./internal/ui` `[RUN=TestName]` |
 | `make cover` | coverage summary per package into `dist/` |
 | `make check` | go.mod tidy-diff + gofmt -s + staticcheck + vet |
 | `make ci` | Go merge gates: tidy-diff, fmt, lint, vet, govulncheck, race tests |
+| `make pr` | every PR merge gate except the OS matrix: `ci` + `site-check` + `scripts-check` |
 | `make fmt` | rewrite files with gofmt -s |
 | `make fix` | apply `go fix` modernization autofixes, then gofmt |
 | `make lint` | staticcheck over both halves of the sqlite tag gate |
@@ -92,24 +102,20 @@ cross-compile job also runs `go vet ./...` and staticcheck under its
 GOOS/GOARCH, so platform-specific files get the same static analysis as
 the host build. Both halves of the sqlite tag gate (`agentusage` with and
 without `-tags sqlite`) are vetted and staticchecked everywhere. Everything
-Go except the three-OS matrix is one command locally:
+except the three-OS test matrix and the cross-compile job is one command
+locally:
 
 ```
-make ci
+make pr
 ```
 
-Two jobs cover what is not Go: `bun test site/` for the Cloudflare Worker in
-`site/`, and the screenshot-script checks. Run them the same way locally:
-
-```
-make site-check
-make scripts-check
-```
-
-`scripts-check` installs the exact versions in `scripts/requirements-dev.txt`
-into an isolated env (black, ruff, mypy, plus the renderer deps). Do not run
-unpinned `uvx black` / `uvx ruff` / `uvx mypy`: those resolve to whatever
-PyPI returns today.
+That is `make ci` (gofmt, tidy, staticcheck, vet, govulncheck, race tests for
+both sqlite tag halves), `make site-check` (`bun test site/`), and
+`make scripts-check`. `scripts-check` installs the exact versions in
+`scripts/requirements-dev.txt` into an isolated env (black, ruff, mypy, plus
+the renderer deps). Do not run unpinned `uvx black` / `uvx ruff` / `uvx mypy`:
+those resolve to whatever PyPI returns today. Platform-specific files also
+need `make vet-cross` (the same gate `release.yml` runs before shipping).
 
 Keep platform-specific code behind build tags or runtime checks; the
 cross-compile job catches code that only builds, or only vets and lints

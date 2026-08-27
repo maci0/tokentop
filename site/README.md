@@ -39,8 +39,10 @@ needs a better reason than decoration. The budget is pinned by a test, so
 drift fails `bun test site/`; numbers above are re-measurable with it:
 
 ```sh
-bun test site/    # pins negotiation, caching and the method/health contract
+bun test site/    # or `make site-check` from the repo root
 ```
+
+The bun version is pinned in `.bun-version`; CI reads the same file.
 
 Routing is by custom domain (`toktop.ai`, `www.toktop.ai`) rather than a
 route pattern, so Cloudflare manages the DNS record for both names. The zone's

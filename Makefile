@@ -73,15 +73,43 @@ run: build ## build, then run against local engines
 demo: build ## build, then run the simulated fleet
 	./$(BINARY) --demo
 
+# -race links runtime/cgo. Honor CC when set; otherwise gcc, then clang
+# (Go's search order). make build keeps CGO off; only race tests need this.
+NEED_CC = cc="$${CC:-}"; \
+	if [ -z "$$cc" ]; then \
+		if command -v gcc >/dev/null 2>&1; then cc=gcc; \
+		elif command -v clang >/dev/null 2>&1; then cc=clang; \
+		fi; \
+	fi; \
+	if [ -z "$$cc" ] || ! command -v $$cc >/dev/null 2>&1; then \
+		echo "make: go test -race needs a C compiler (gcc or clang) on PATH"; \
+		echo "  CGO stays off for make build; only the race tests need it."; \
+		exit 1; \
+	fi
+
 .PHONY: test
 test: ## run all tests with the race detector, shuffled order (both halves of the sqlite tag gate)
-	$(GO) test -mod=readonly -race -shuffle=on ./...
-	$(GO) test -mod=readonly -tags sqlite -race -shuffle=on ./agentusage/...
+	@$(NEED_CC)
+	CGO_ENABLED=1 $(GO) test -mod=readonly -race -shuffle=on ./...
+	CGO_ENABLED=1 $(GO) test -mod=readonly -tags sqlite -race -shuffle=on ./agentusage/...
+
+# Same flags and toolchain as `make test`. PKG is required; RUN and TESTTAGS
+# are optional (TESTTAGS=sqlite is the other half of the agentusage gate).
+.PHONY: test-pkg
+test-pkg: ## one package/test: PKG=./internal/ui [RUN=TestName] [TESTTAGS=sqlite]
+	@if [ -z "$(PKG)" ]; then \
+		echo "make test-pkg: set PKG (e.g. PKG=./internal/ui)"; \
+		echo "  optional: RUN=TestName  TESTTAGS=sqlite"; \
+		exit 1; \
+	fi
+	@$(NEED_CC)
+	CGO_ENABLED=1 $(GO) test -mod=readonly $(if $(TESTTAGS),-tags $(TESTTAGS) )-race -shuffle=on $(if $(RUN),-run $(RUN) )$(PKG)
 
 .PHONY: cover
 cover: ## test coverage summary per package into dist/
+	@$(NEED_CC)
 	mkdir -p $(DIST)
-	$(GO) test -mod=readonly $(GOTAGS) -race -shuffle=on -coverprofile=$(DIST)/coverage.out ./...
+	CGO_ENABLED=1 $(GO) test -mod=readonly $(GOTAGS) -race -shuffle=on -coverprofile=$(DIST)/coverage.out ./...
 	$(GO) tool cover -func=$(DIST)/coverage.out | tail -1
 
 .PHONY: sbom
@@ -120,6 +148,10 @@ lint: ## run staticcheck (both halves of the sqlite tag gate)
 
 .PHONY: site-check
 site-check: ## bun test the Cloudflare Worker in site/ (CI parity)
+	@command -v bun >/dev/null 2>&1 || { \
+		echo "make site-check: bun is not on PATH (see .bun-version)"; \
+		exit 1; \
+	}
 	bun test site/
 
 .PHONY: fmt
@@ -137,6 +169,10 @@ tidy-check: ## fail if go.mod or go.sum would change
 
 .PHONY: scripts-check
 scripts-check: ## black, ruff and mypy over scripts/ (same pins as CI)
+	@command -v uv >/dev/null 2>&1 || { \
+		echo "make scripts-check: uv is not on PATH (pins are scripts/requirements-dev.txt)"; \
+		exit 1; \
+	}
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt black --check scripts/
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt ruff check scripts/
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt mypy scripts/
@@ -156,6 +192,12 @@ ci: ## Go merge gates: tidy-diff, fmt, lint, vet, govulncheck, race tests
 	@$(MAKE) check
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 	@$(MAKE) test
+
+.PHONY: pr
+pr: ## every PR merge gate except the OS matrix: ci + site-check + scripts-check
+	@$(MAKE) ci
+	@$(MAKE) site-check
+	@$(MAKE) scripts-check
 
 .PHONY: clean
 clean: ## remove build artifacts

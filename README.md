@@ -337,9 +337,9 @@ make help                          # every task, one line each
 make build                         # host binary, version-stamped
 make demo                          # build, then run the simulated fleet
 make test                          # all tests, -race -shuffle=on
-make ci                            # exactly what CI gates on before merging
-go test ./internal/ui              # one package while iterating
-go test ./internal/core -run TestSanitizeTextPreservesUTF8   # one test
+make pr                            # every PR merge gate except the OS matrix
+make test-pkg PKG=./internal/ui    # one package while iterating
+make test-pkg PKG=./internal/core RUN=TestSanitizeTextPreservesUTF8
 ```
 
 Cross-compiles (no cgo anywhere); `make test-dist` is the same flags the
