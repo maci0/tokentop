@@ -72,11 +72,12 @@ dimensions; update both together.
 | `make test` | all tests, `-race -shuffle=on` (same flags as CI) |
 | `make cover` | coverage summary per package into `dist/` |
 | `make check` | go.mod tidy-diff + gofmt -s + staticcheck + vet |
-| `make scripts-check` | black, ruff and mypy over `scripts/` at pinned versions |
-| `make ci` | everything CI gates on: tidy-diff, fmt, lint, vet, govulncheck, race tests |
+| `make ci` | Go merge gates: tidy-diff, fmt, lint, vet, govulncheck, race tests |
 | `make fmt` | rewrite files with gofmt -s |
 | `make fix` | apply `go fix` modernization autofixes, then gofmt |
 | `make lint` | staticcheck over both halves of the sqlite tag gate |
+| `make scripts-check` | black, ruff and mypy over `scripts/` (same pins as CI) |
+| `make site-check` | `bun test site/` |
 | `make vet-cross` | vet + staticcheck on every release platform (the pre-ship gate release.yml runs) |
 
 ## Before opening a PR
@@ -100,7 +101,7 @@ Two jobs cover what is not Go: `bun test site/` for the Cloudflare Worker in
 `site/`, and the screenshot-script checks. Run them the same way locally:
 
 ```
-bun test site/
+make site-check
 make scripts-check
 ```
 

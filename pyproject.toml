@@ -1,0 +1,28 @@
+# Analyzers for scripts/ (the screenshot renderer). Go analysis lives in
+# staticcheck.conf and the Makefile.
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+src = ["scripts"]
+required-version = ">=0.16.4"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",  # black owns trailing commas
+    "D",       # names already say what the helpers do
+    "DOC",     # preview-only; same ground as D
+    "PTH",     # os.path is the script's I/O style
+    "PLR2004", # SGR widths and argv slots are the format
+    "T201",    # reports the written PNG path
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["scripts"]

@@ -1,6 +1,14 @@
 // Copyright (C) 2026 Marcel W. Wysocki
 // SPDX-License-Identifier: MIT
 
+package agentusage
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+)
+
 // Generic parsing of one transcript JSON line: usage counters are picked up
 // by key rather than modeled per agent.
 //
@@ -10,13 +18,6 @@
 // that renames its usage fields degrades to "no numbers" instead of to wrong
 // numbers. Nothing here guesses: a key that is not recognized contributes
 // nothing.
-package agentusage
-
-import (
-	"bytes"
-	"encoding/json"
-	"strings"
-)
 
 // jsonEvent is what one JSON line contributed.
 type jsonEvent struct {

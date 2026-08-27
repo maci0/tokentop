@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Marcel W. Wysocki
+# SPDX-License-Identifier: MIT
 """Render a tmux ANSI capture (SGR truecolor/256/8) to a PNG screenshot.
 
 Usage: screenshot.py <capture.txt> <out.png> [scale] [cols] [rows]

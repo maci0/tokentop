@@ -5,6 +5,9 @@ VERSION ?= dev
 
 GO          ?= go
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck@2026.2.1
+BLACK       := uvx black==26.5.1
+RUFF        := uvx ruff==0.16.5
+MYPY        := uvx --from mypy==2.3.1 --with-requirements scripts/requirements.txt mypy
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 
 # opencode keeps its sessions in SQLite rather than JSONL, so reading it means
@@ -102,6 +105,16 @@ lint: ## run staticcheck (both halves of the sqlite tag gate)
 	$(STATICCHECK) ./...
 	$(STATICCHECK) -tags sqlite ./agentusage/...
 
+.PHONY: scripts-check
+scripts-check: ## black, ruff and mypy over scripts/ (CI parity)
+	$(BLACK) --check scripts/
+	$(RUFF) check scripts/
+	$(MYPY) scripts/
+
+.PHONY: site-check
+site-check: ## bun test the Cloudflare Worker in site/ (CI parity)
+	bun test site/
+
 .PHONY: fmt
 fmt: ## rewrite all Go files with gofmt (including simplifications)
 	gofmt -s -w .
@@ -132,7 +145,7 @@ check: ## verify go.mod, gofmt -s formatting, vet and staticcheck (CI parity)
 	@$(MAKE) vet
 
 .PHONY: ci
-ci: ## everything CI runs before merging: tidy-diff, fmt, lint, vet, govulncheck, race tests
+ci: ## Go merge gates: tidy-diff, fmt, lint, vet, govulncheck, race tests
 	@$(MAKE) check
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 	@$(MAKE) test
