@@ -102,3 +102,15 @@ func pagesToBytes(pages uint64) uint64 {
 	}
 	return pages * ps
 }
+
+// keepProcess reports whether a process is relevant to engine discovery or
+// accounting: a known engine, or any process that names a listen port. Only
+// the /proc walk needs it; ps and the CIM query hand back one batch, so
+// filtering per process there saves nothing.
+func keepProcess(name string, args []string) bool {
+	if ExtractPort(args) != 0 {
+		return true
+	}
+	_, _, ok := MatchEngine(Info{Name: name, Args: args})
+	return ok
+}
