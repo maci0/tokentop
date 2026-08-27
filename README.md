@@ -289,7 +289,7 @@ technology:
 
   ```
   $ toktop --once --plain
-  5/5 engines up · out 979 tok/s · in 4.1k tok/s · session 24s
+  5/5 engines up · out 1.5k tok/s · in 10k tok/s · 2 agents · session 24s
 
   ENGINES
   up   vllm-a100 (vllm)
@@ -297,15 +297,15 @@ technology:
          out 155 tok/s · in 662 tok/s · kv cache 68% · running 2 · waiting 0 · ttft 115ms
 
   SYSTEM
-  memory 64% (247G/384G) · swap 17% · load 5.06
+  memory 64% (248G/384G) · swap 17% · load 5.06
   gpu nv0 A100-SXM4-80GB 82° 69% util vram 57G/80G 397W
 
   PROBES
-  ok llama3.1:8b-instruct-q4_K_M ttft 83ms 26.8 tok/s
+  ok meta-llama/Llama-3.3-70B-Instruct-engine ttft 113ms 135 tok/s
 
   AGENT FEED
-  ops-agent 487 tok/s · swarm-07 392 tok/s
-  10:16:15 error swarm-07 model deepseek-ai/DeepSeek-R1 prompt 1.5k output 242 note retry after 429
+  ops-agent 293 tok/s · research-agent 247 tok/s
+  03:29:23 note ops-agent model Qwen/Qwen2.5-32B-Instruct-AWQ prompt 9.2k output 783 note browser(search docs)
   ```
 
 - **Tested contrast** - unit tests hold the palette to WCAG 2.2 AA: text
@@ -319,6 +319,8 @@ technology:
 ```
 toktop update     subcommand: install the latest release (--check to only
                   report it, --repo owner/name for a fork)
+toktop help       subcommand: usage (help update for the updater's own)
+toktop version    subcommand: same as --version
 toktop help       same as --help; `toktop help update` for the subcommand
 toktop version    same as --version
 --demo            simulated fleet, zero setup

@@ -98,14 +98,17 @@ const HTML = htmlForWire(`<!doctype html>
   <p class="tag"><code>btop</code> for AI: a terminal dashboard for LLM inference
   engines and the coding agents hammering them.</p>
 
-<pre tabindex="0"><code>ENGINES  <span class="dim">local + ssh</span>
-  llama.cpp   <span class="up">▲ 42.1 tok/s</span>   kv <span class="warm">61%</span>   q 2   qwen3-30b
-  vLLM        <span class="up">▲ 18.7 tok/s</span>   kv 12%   q 0   llama-3.3-70b
+<pre tabindex="0"><code><span class="dim">$</span> toktop --demo
+
+ENGINES  <span class="dim">local + ssh</span>
+  ollama    <span class="dim">llama3.1:8b-instruct-q4_K_M</span>
+    kv <span class="warm">80%</span>   <span class="up">▲ 36.4</span> ▼ 115    run 2 wait 5
+  vllm      <span class="dim">Qwen/Qwen2.5-32B-Instruct-AWQ</span>
+    kv <span class="warm">73%</span>   <span class="up">▲ 620</span> ▼ 2.6k   run 2 wait 0
 
 AGENTS  <span class="dim">read from their own session logs</span>
-  claude      <span class="up">▲ 1.1k tok/s</span>   2.4k tok   <span class="up">● live</span>
-  codex       <span class="up">▲ 340 tok/s</span>    18k tok    <span class="dim">idle 12s</span>
-  opencode    <span class="up">▲ 612 tok/s</span>    41k tok    <span class="up">● live</span></code></pre>
+  swarm-07     <span class="up">▲ 101 tok/s</span>   ▲2.3k ▼19.1k   <span class="up">● live</span>
+  coder-agent  <span class="dim">no rate yet</span>   ▲1.0k ▼8.8k    <span class="dim">idle 7s</span></code></pre>
 
   <h2>Install</h2>
 <pre tabindex="0"><code>go install -tags sqlite github.com/maci0/toktop/cmd/toktop@latest
