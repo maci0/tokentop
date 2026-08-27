@@ -219,6 +219,30 @@ func TestWarmupFrameUsesStatusGlyphs(t *testing.T) {
 	}
 }
 
+// The header clock is the viewer's wall time: a snapshot stamp (or tick)
+// may carry UTC or a sender offset, and Format without Local would print
+// that zone's hour instead of the operator's.
+func TestHeaderClockRendersInLocalZone(t *testing.T) {
+	at := time.Date(2026, 8, 24, 23, 30, 5, 0, time.FixedZone("sender", 5*3600+1800))
+	m := New(Config{Version: "t"}, nil)
+	m.w, m.h, m.ready = 110, 36, true
+	m.clock = at
+	m.snap = core.Snapshot{
+		At: at,
+		Providers: []core.ProviderSnapshot{{
+			Label: "ollama", Kind: core.KindOllama, OK: true, OutTokPS: 10,
+		}},
+	}
+	out := strip(m.View())
+	want := at.Local().Format("15:04:05")
+	if !strings.Contains(out, want) {
+		t.Fatalf("header clock missing local %q:\n%s", want, out)
+	}
+	if foreign := at.Format("15:04:05"); foreign != want && strings.Contains(out, foreign) {
+		t.Fatalf("header clock still in stamp zone %q:\n%s", foreign, out)
+	}
+}
+
 // feedLine must render event timestamps in the viewer's zone: ingest events
 // carry sender-supplied RFC 3339 stamps whose offset (or absent offset,
 // decoded as UTC) is otherwise shown as-is.
@@ -609,6 +633,8 @@ func TestFmtDurMinuteRollover(t *testing.T) {
 		5*time.Minute + 30*time.Second:            "5m30s",
 		time.Hour + 2*time.Minute + 3*time.Second: "1h02m",
 		3*time.Hour + 5*time.Minute:               "3h05m",
+		-5 * time.Second:                          "0s",
+		-2 * time.Hour:                            "0s",
 	}
 	for d, want := range cases {
 		if got := fmtDur(d); got != want {

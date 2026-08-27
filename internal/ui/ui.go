@@ -297,7 +297,9 @@ func (m Model) renderHeader() string {
 	if m.paused {
 		right += styleWarn.Render("‖ PAUSED ") + dim("│ ")
 	}
-	right += styleMagic.Render(m.clock.Format("15:04:05"))
+	// Ticks and snapshot stamps may carry UTC or a sender offset; show the
+	// viewer's clock, matching feedLine.
+	right += styleMagic.Render(m.clock.Local().Format("15:04:05"))
 	left := fitSegments(segs, m.w-lipgloss.Width(right)-1)
 	return joinSpread(left, right, m.w)
 }

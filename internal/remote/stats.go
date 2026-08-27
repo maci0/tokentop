@@ -34,7 +34,9 @@ const sectionMark = "%toktop%"
 // telemetry (NVIDIA via nvidia-smi, AMD via rocm-smi; whichever is present) in
 // one round trip, sections separated by sectionMark lines. Load and memory
 // come from /proc and degrade to empty on non-Linux remotes; CPU model, OS
-// name and kernel have Darwin fallbacks.
+// name, kernel and uptime have Darwin fallbacks. Darwin uptime is
+// kern.boottime vs date(1): the remote is a shell one-liner, so CLOCK_MONOTONIC
+// is not available the way the local Darwin sampler uses it.
 func vitalsScript() string {
 	return `
 cat /proc/loadavg 2>/dev/null
@@ -42,6 +44,13 @@ echo ` + sectionMark + `
 cat /proc/meminfo 2>/dev/null
 echo ` + sectionMark + `
 cut -d' ' -f1 /proc/uptime 2>/dev/null
+boot=$(sysctl -n kern.boottime 2>/dev/null)
+sec=${boot#*sec = }
+sec=${sec%%,*}
+case $sec in
+  ''|*[!0-9]*) ;;
+  *) echo $(($(date +%s) - sec));;
+esac
 echo ` + sectionMark + `
 cpu=$(sed -n 's/^model name[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | sed -n 1p)
 [ -n "$cpu" ] || cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)

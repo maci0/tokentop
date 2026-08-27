@@ -65,16 +65,24 @@ func fmtMs(ms float64) string {
 }
 
 func fmtDur(d time.Duration) string {
+	if d < 0 {
+		// A future event (sender clock ahead) or a stepped wall clock can
+		// yield a negative idle/uptime; "idle -5s" is not a duration.
+		d = 0
+	}
 	d = d.Truncate(time.Second)
 	if d < time.Minute {
 		return d.String()
 	}
 	// Past an hour, minutes-only strings ("75m30s") make the reader do the
 	// hours math; uptimes and agent idle spans routinely cross that mark.
+	// int64, not int: a 32-bit int wraps a duration past ~68 years of
+	// seconds, which host uptime can approach; the hour/minute breakdown
+	// would then print garbage.
 	if d < time.Hour {
-		return fmt.Sprintf("%dm%02ds", d/time.Minute, int(d/time.Second)%60)
+		return fmt.Sprintf("%dm%02ds", d/time.Minute, int64(d/time.Second)%60)
 	}
-	return fmt.Sprintf("%dh%02dm", int(d/time.Hour), int(d/time.Minute)%60)
+	return fmt.Sprintf("%dh%02dm", int64(d/time.Hour), int64(d/time.Minute)%60)
 }
 
 func humanBytes(b uint64) string {

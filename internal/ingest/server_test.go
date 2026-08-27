@@ -130,6 +130,30 @@ func TestIngestAcceptsNaiveTimestampsAsUTC(t *testing.T) {
 	}
 }
 
+// Colon-less numeric offsets (`date '+%Y-%m-%dT%H:%M:%S%z'` -> -0700) are
+// ISO 8601 but not RFC 3339. They used to fail every accepted layout and
+// abort the NDJSON batch with 400, dropping every event queued behind the
+// first one. They must land on the same instant as the colon form.
+func TestIngestAcceptsColonlessNumericOffsets(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"date","ts":"2026-01-02T03:04:05-0700"}`+"\n"+
+			`{"agent":"date","ts":"2026-01-02 03:04:05-0700"}`+"\n"+
+			`{"agent":"rfc","ts":"2026-01-02T03:04:05-07:00"}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 3)
+	want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("", -7*3600))
+	for i, ev := range rec.evs {
+		if !ev.At.Equal(want) {
+			t.Errorf("event %d At = %v, want same instant as %v", i, ev.At, want)
+		}
+	}
+}
+
 // SQL-style stamps separate date and time with a space (`date '+%F %T'`,
 // SQLite and Postgres text output). One of them used to fail both accepted
 // shapes and abort the whole NDJSON batch with 400, dropping every event

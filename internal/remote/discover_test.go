@@ -74,6 +74,7 @@ func TestVitalsScript(t *testing.T) {
 	s := vitalsScript()
 	for _, want := range []string{
 		"/proc/loadavg", "/proc/meminfo", "/proc/uptime",
+		"kern.boottime",
 		"/proc/cpuinfo", "/etc/os-release", "uname -r", "nvidia-smi",
 	} {
 		if !strings.Contains(s, want) {

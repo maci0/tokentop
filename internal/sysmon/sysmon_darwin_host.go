@@ -48,6 +48,26 @@ func appleNPUs() []string {
 }
 
 func boottimeUptime() time.Duration {
+	// CLOCK_MONOTONIC is time since boot including sleep and is immune to
+	// NTP steps and `date` changes. kern.boottime minus time.Now() is a
+	// wall-clock subtraction: a host whose clock jumps forward at NTP
+	// sync (common just after boot) reports a huge uptime, and one whose
+	// clock is set back reports a negative duration that fmtDur would
+	// print as idle-looking garbage. Linux reads /proc/uptime and Windows
+	// GetTickCount64; this is the Darwin equivalent.
+	var ts unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err == nil {
+		if d := durationFromClock(ts.Sec, ts.Nsec); d > 0 {
+			return d
+		}
+	}
+	return boottimeWallFallback()
+}
+
+// boottimeWallFallback is the pre-CLOCK_MONOTONIC path: kern.boottime is a
+// wall-clock timeval, so a stepped clock still moves the reading. Used only
+// when clock_gettime is unavailable. Negative results collapse to zero.
+func boottimeWallFallback() time.Duration {
 	b, err := unix.SysctlRaw("kern.boottime")
 	if err != nil || len(b) < 8 {
 		return 0
@@ -56,5 +76,9 @@ func boottimeUptime() time.Duration {
 	if sec <= 0 {
 		return 0
 	}
-	return time.Since(time.Unix(sec, 0))
+	d := time.Since(time.Unix(sec, 0))
+	if d < 0 {
+		return 0
+	}
+	return d
 }

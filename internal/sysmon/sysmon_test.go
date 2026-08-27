@@ -95,6 +95,19 @@ func TestParseLoadavgRejectsNonFinite(t *testing.T) {
 	}
 }
 
+func TestDurationFromClock(t *testing.T) {
+	if got := durationFromClock(2, 500_000_000); got != 2*time.Second+500*time.Millisecond {
+		t.Errorf("2.5s = %v", got)
+	}
+	if durationFromClock(-1, 0) != 0 || durationFromClock(0, 0) != 0 || durationFromClock(0, -1) != 0 {
+		t.Error("non-positive clock readings must be zero")
+	}
+	const maxSec = int64(math.MaxInt64 / int64(time.Second))
+	if got := durationFromClock(maxSec, 0); got != time.Duration(math.MaxInt64) {
+		t.Errorf("huge clock = %v, want saturation", got)
+	}
+}
+
 func TestParseUptimeSecs(t *testing.T) {
 	if got := ParseUptimeSecs("183729.42"); got != time.Duration(183729.42*float64(time.Second)) {
 		t.Errorf("uptime = %v", got)

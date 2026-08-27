@@ -156,6 +156,25 @@ func durationFromSecs(secs float64) time.Duration {
 	return time.Duration(secs * float64(time.Second))
 }
 
+// durationFromClock converts a clock_gettime-style (sec, nsec) pair into a
+// Duration. A stepped or set-back wall clock can make boot-relative math
+// negative; saturate at zero and MaxInt64 the way durationFromSecs does for
+// /proc/uptime text, so a bad reading never renders as a wrapped uptime.
+func durationFromClock(sec, nsec int64) time.Duration {
+	if sec < 0 || (sec == 0 && nsec <= 0) {
+		return 0
+	}
+	const maxSec = int64(math.MaxInt64 / int64(time.Second))
+	if sec >= maxSec {
+		return time.Duration(math.MaxInt64)
+	}
+	d := time.Duration(sec)*time.Second + time.Duration(nsec)*time.Nanosecond
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
 // parseSwapUsage decodes a vm.swapusage string into bytes:
 // "total = 2048.00M used = 512.00M free = 1536.00M".
 func parseSwapUsage(s string) (total, used uint64) {

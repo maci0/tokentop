@@ -364,9 +364,12 @@ type agentEventWire struct {
 // datetime.isoformat() emit. SQL-style stamps separated by a space instead
 // of a T (`date '+%F %T'`, SQLite and Postgres text output) are accepted on
 // the same terms: the zone is honored when present, UTC is assumed when not.
-// Absent or null yields the zero Time, which the caller replaces with the
-// arrival instant. An empty or whitespace-only string counts as absent,
-// matching the empty-means-default behavior of every other event field.
+// Colon-less numeric offsets (`date '+%z'`, `-0700`) are ISO 8601 but not
+// RFC 3339; they are accepted as the same instant as the colon form so a
+// stream of them does not 400. Absent or null yields the zero Time, which
+// the caller replaces with the arrival instant. An empty or whitespace-only
+// string counts as absent, matching the empty-means-default behavior of
+// every other event field.
 func parseEventTime(raw json.RawMessage) (time.Time, error) {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" {
@@ -384,9 +387,14 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 	}
 	// Offset-less layouts decode as UTC; the fraction, if any, is accepted
 	// after the seconds field even though the layout does not spell it out.
+	// Z0700 is the colon-less numeric offset `date '+%z'` and many ISO 8601
+	// profiles emit; RFC 3339 requires the colon, so a stream of those
+	// stamps used to 400 and drop every event queued behind the first one.
 	layouts := []string{
+		"2006-01-02T15:04:05Z0700",  // RFC 3339-style offset without the colon
 		"2006-01-02T15:04:05",       // RFC 3339 without the offset
 		"2006-01-02 15:04:05Z07:00", // SQL-style stamp carrying its zone
+		"2006-01-02 15:04:05Z0700",  // SQL-style with a colon-less offset
 		"2006-01-02 15:04:05",       // SQL / date-style stamp without one
 	}
 	for _, layout := range layouts {
