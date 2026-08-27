@@ -436,12 +436,21 @@ func stripHome(dir string) (string, bool) {
 	return "~/" + filepath.ToSlash(rel), true
 }
 
+// resolvePath cleans p and resolves the symlinks in it. A path that is not on
+// disk resolves too: symlinks are evaluated on the deepest ancestor that does
+// exist and the rest is appended, so a directory removed mid-session (or one
+// an agent names before creating it) still compares equal to the same
+// directory spelled another way.
 func resolvePath(p string) string {
 	p = filepath.Clean(p)
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
 		return resolved
 	}
-	return p
+	parent := filepath.Dir(p)
+	if parent == p {
+		return p // root, or a bare name with nothing left to walk up to
+	}
+	return filepath.Join(resolvePath(parent), filepath.Base(p))
 }
 
 func lastTwoComponents(dir string) string {

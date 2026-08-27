@@ -329,10 +329,13 @@ func TestShortDirKeepsTheIdentifyingPart(t *testing.T) {
 		"/home/dev/project":     "dev/project",
 		"project":               "project",
 		"/":                     "/",
-		`C:\Users\dev\src\app`:  `src\app`,
+		// A backslash path is only a path where backslash is the separator.
+		// Elsewhere it is one filename, kept whole minus the two components
+		// the scan still finds in it.
+		`C:\Users\dev\src\app`: `src\app`,
 	}
 	if runtime.GOOS == "windows" {
-		cases[`C:\Users\dev\src\project`] = "src/project"
+		cases[`C:\Users\dev\src\app`] = "src/app" // separators fold to '/'
 		cases[`C:/Users/dev/project`] = "dev/project"
 	}
 	for in, want := range cases {
@@ -616,5 +619,23 @@ func TestParseEngineAddrDefaultPorts(t *testing.T) {
 		if ap != tt.want || label != tt.label {
 			t.Errorf("parseEngineAddr(%q) = %v %q, want %v %q", tt.in, ap, label, tt.want, tt.label)
 		}
+	}
+}
+
+// A directory that is not on disk (removed mid-session, or not created yet)
+// still lives under home, and the note must say so rather than printing the
+// operator's username. The spellings only diverge when home is reached
+// through a symlink, which on macOS is every temporary directory.
+func TestShortDirHidesHomeForAPathNotOnDisk(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv("HOME", link)
+	t.Setenv("USERPROFILE", link)
+
+	if got := shortDir(filepath.Join(link, "toktop")); got != "~/toktop" {
+		t.Errorf("project in home = %q, want ~/toktop", got)
 	}
 }
