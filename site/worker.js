@@ -54,7 +54,7 @@ const HTML = htmlForWire(`<!doctype html>
     font-family: var(--mono); font-size: 15px; line-height: 1.6;
   }
   main { max-width: 62rem; margin: 0 auto; }
-  h1 { font-size: 2.6rem; margin: 0; letter-spacing: -0.03em; }
+  h1 { font-size: 2.6rem; margin: 0; }
   /* Blinking content that starts automatically must be pausable/stoppable
      (WCAG 2.2.2); honoring prefers-reduced-motion is the static-page remedy,
      so the cursor only blinks for users who have not asked for stillness. */
@@ -63,10 +63,10 @@ const HTML = htmlForWire(`<!doctype html>
     @keyframes blink { 50% { opacity: 0; } }
   }
   .tag { color: var(--dim); margin: .6rem 0 2.4rem; font-size: 1.05rem; }
-  h2 { font-size: .82rem; letter-spacing: .16em; text-transform: uppercase;
+  h2 { font-size: .82rem; text-transform: uppercase;
        color: var(--dim); font-weight: 600; margin: 3rem 0 .9rem; }
   pre {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
     padding: 1rem 1.15rem; overflow-x: auto; margin: 0 0 1rem; font-size: 13.5px;
   }
   /* Narrow viewports clip code lines into a scroll container; a mouse-only

@@ -9,7 +9,7 @@ Dependencies are declared in scripts/requirements.txt (pyte, pillow).
 
 The capture must come from `tmux capture-pane -e -p` (one line per row,
 escape sequences preserved). Rendering uses the same monospace family the
-dashboard targets (Meslo LG), on the Catppuccin Mocha base the TUI paints.
+dashboard targets (Meslo LG), on the toktop.ai dark base the TUI paints.
 Set TOKTOP_SCREENSHOT_FONT to a regular-weight .ttf when no Meslo build
 is installed where the script looks.
 """
@@ -28,8 +28,8 @@ ANSI_RE = re.compile(
     rb"\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][A-Z0-9])"
 )
 
-BG: RGB = (30, 30, 46)  # #1e1e2e, matches internal/ui/theme.go cBase
-FG_DEFAULT: RGB = (205, 214, 244)  # #cdd6f4
+BG: RGB = (13, 17, 23)  # #0d1117, matches internal/ui/theme.go cBase
+FG_DEFAULT: RGB = (215, 221, 229)  # #d7dde5
 
 # Font roots cover the common layouts; exact subdirectories vary by distro.
 FONT_ROOTS: tuple[str, ...] = (
@@ -42,14 +42,14 @@ FONT_ROOTS: tuple[str, ...] = (
 
 # The 16 ANSI colors as SGR 30-37/90-97, tuned to the dashboard's palette.
 ANSI16: dict[int, RGB] = {
-    0: (73, 77, 100),  # black-ish (surface)
-    1: (243, 139, 168),  # red
-    2: (166, 227, 161),  # green
-    3: (249, 226, 175),  # yellow
-    4: (137, 180, 250),  # blue
-    5: (203, 166, 247),  # magenta
-    6: (137, 220, 235),  # cyan
-    7: (205, 214, 244),  # white
+    0: (74, 85, 99),  # black-ish (cBorder)
+    1: (227, 109, 109),  # red
+    2: (76, 195, 138),  # green / accent
+    3: (227, 179, 65),  # yellow / warm
+    4: (122, 162, 212),  # blue
+    5: (201, 149, 108),  # unused ANSI magenta; sand, not purple
+    6: (94, 200, 216),  # cyan
+    7: (215, 221, 229),  # white / fg
 }
 
 

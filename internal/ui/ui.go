@@ -285,7 +285,7 @@ func (m Model) renderHeader() string {
 		segs = append(segs, headerSeg{text: dim("up " + fmtDur(m.snap.Uptime)), shed: 50})
 	}
 	if m.snap.Sys != nil && m.snap.Sys.RemoteHost != "" {
-		segs = append(segs, headerSeg{text: styleMagic.Render("via ssh:" + core.SanitizeText(m.snap.Sys.RemoteHost))})
+		segs = append(segs, headerSeg{text: styleInfo.Render("via ssh:" + core.SanitizeText(m.snap.Sys.RemoteHost))})
 	}
 
 	right := ""
@@ -294,7 +294,7 @@ func (m Model) renderHeader() string {
 	}
 	// Ticks and snapshot stamps may carry UTC or a sender offset; show the
 	// viewer's clock, matching feedLine.
-	right += styleMagic.Render(m.clock.Local().Format("15:04:05"))
+	right += styleDim.Render(m.clock.Local().Format("15:04:05"))
 	left := fitSegments(segs, m.w-lipgloss.Width(right)-1)
 	return joinSpread(left, right, m.w)
 }
@@ -406,7 +406,7 @@ func (m Model) renderCharts() string {
 	in := panel(
 		"PROMPT "+styleInfo.Render("▼ "+fmtRate(aggInAt(m.snap, m.clock))+" tok/s"),
 		BrailleChart(aggHist(m.snap, false, w, cad), w, 1,
-			ChartStyle{Heat: func(float64) lipgloss.Color { return cTeal }}),
+			ChartStyle{Heat: func(float64) lipgloss.Color { return cCyan }}),
 		w, 1,
 	)
 	return out + "\n" + in
@@ -435,7 +435,7 @@ func (m Model) throughputTitle() string {
 	if len(m.snap.Providers) == 0 {
 		kind = dim("  output")
 	}
-	title := "THROUGHPUT " + styleHot.Render("▲ "+fmtRate(m.lastAgg)+" tok/s") + kind
+	title := "THROUGHPUT " + styleOK.Render("▲ "+fmtRate(m.lastAgg)+" tok/s") + kind
 	// Advertise the toggle in both modes: the hint only showing while
 	// compressed hid how to get back to the uniform timescale. Brackets mark
 	// the key so "compressed [t]" reads as mode plus switch rather than one
@@ -693,7 +693,7 @@ func hostSegments(sy *core.SysSample) []string {
 		segs = append(segs, styleInfo.Render(shorten(strings.Join(parts, " · "), 40)))
 	}
 	if len(sy.NPUs) > 0 {
-		segs = append(segs, styleMagic.Render("npu: "+strings.Join(sy.NPUs, ",")))
+		segs = append(segs, styleInfo.Render("npu: "+strings.Join(sy.NPUs, ",")))
 	}
 	return segs
 }
@@ -872,7 +872,7 @@ func procLine(p core.ProviderSnapshot) string {
 func (m Model) probesTitle() string {
 	t := "PROBES"
 	if last, ok := m.lastProbe(); ok {
-		t += " " + dim("last") + " " + fmtMs(last.TTFTms) + " " + styleHot.Render(fmtRate(last.TokPS)+"/s")
+		t += " " + dim("last") + " " + fmtMs(last.TTFTms) + " " + styleOK.Render(fmtRate(last.TokPS)+"/s")
 	}
 	// Pressing p fires real generations that take seconds: acknowledge the
 	// keypress immediately or it reads as dead until the first result lands.
@@ -1032,7 +1032,7 @@ func (m Model) renderFooter() string {
 		styleInfo.Render("?") + dim(" help")
 	tag := ""
 	if m.cfg.Demo {
-		tag = styleHot.Render(" DEMO ") + " "
+		tag = styleWarn.Render(" DEMO ") + " "
 	}
 	return tag + foot
 }
@@ -1050,7 +1050,7 @@ func (m Model) renderEmpty() string {
 		"or watch coding agents on this machine:",
 		styleInfo.Render("  toktop --agents"),
 		"or preview the dashboard:",
-		styleHot.Render("  toktop --demo"),
+		styleInfo.Render("  toktop --demo"),
 	}
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

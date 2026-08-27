@@ -29,17 +29,12 @@ func TestDimTextMeetsAAContrastOnBase(t *testing.T) {
 // above AA too so future palette edits fail loudly here rather than on screen.
 func TestStatusTextMeetsAAContrastOnBase(t *testing.T) {
 	for name, c := range map[string]lipgloss.Color{
-		"cText":     cText,
-		"cGreen":    cGreen,
-		"cYellow":   cYellow,
-		"cRed":      cRed,
-		"cCyan":     cCyan,
-		"cPink":     cPink,
-		"cMagenta":  cMagenta,
-		"cBlue":     cBlue,
-		"cPeach":    cPeach,
-		"cLavender": cLavender,
-		"cTeal":     cTeal,
+		"cText":   cText,
+		"cGreen":  cGreen,
+		"cYellow": cYellow,
+		"cRed":    cRed,
+		"cCyan":   cCyan,
+		"cBlue":   cBlue,
 	} {
 		if got := contrastRatioT(t, c, cBase); got < 4.5 {
 			t.Errorf("%s on cBase = %.2f:1, want >= 4.5:1", name, got)
@@ -52,7 +47,6 @@ func TestStatusTextMeetsAAContrastOnBase(t *testing.T) {
 // and before fadeClamped they measured ~1.3:1 against the background.
 func TestChartFadeHoldsNonTextContrast(t *testing.T) {
 	for name, c := range map[string]lipgloss.Color{
-		"teal":   cTeal,
 		"cyan":   cCyan,
 		"green":  cGreen,
 		"yellow": cYellow,
@@ -62,6 +56,15 @@ func TestChartFadeHoldsNonTextContrast(t *testing.T) {
 		if got < minGraphicContrast {
 			t.Errorf("%s at max fade = %.2f:1 on cBase, want >= %.1f:1", name, got, minGraphicContrast)
 		}
+	}
+}
+
+// The wordmark is one accent, not a per-letter gradient: the site's identity
+// is phosphor green on cool dark, and the dashboard has to match it.
+func TestWordmarkUsesSiteAccent(t *testing.T) {
+	want := lipgloss.NewStyle().Bold(true).Foreground(cGreen).Render("TOKTOP")
+	if got := wordmark(); got != want {
+		t.Errorf("wordmark = %q, want single-accent TOKTOP", got)
 	}
 }
 

@@ -29,6 +29,8 @@ support channel (see SECURITY.md).
   Prompt rates use that field, not max-context minus summed output.
 - Header and chart totals skip `via_engine` events individually, so an agent
   that switches onto a watched engine still contributes tokens spent before.
+- Dashboard colors match toktop.ai (cool dark, green accent, amber pressure).
+  The wordmark is a single accent color.
 
 ### Fixed
 

@@ -9,37 +9,31 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Catppuccin-mocha-leaning palette; degrades to nearest 256/16 colors on old terminals.
+// Palette matches the toktop.ai tokens in site/worker.js (cool dark, green
+// accent, amber pressure). Degrades to nearest 256/16 colors on old terminals.
 var (
-	cBase = lipgloss.Color("#1e1e2e")
-	// Secondary text must stay >= 4.5:1 on cBase (WCAG 1.4.3): the old
-	// #6c7086 measured ~3.4:1. overlay1 keeps hierarchy below cText.
-	cDim      = lipgloss.Color("#9399b2")
-	cText     = lipgloss.Color("#cdd6f4")
-	cBorder   = lipgloss.Color("#45475a")
-	cRed      = lipgloss.Color("#f38ba8")
-	cGreen    = lipgloss.Color("#a6e3a1")
-	cYellow   = lipgloss.Color("#f9e2af")
-	cPeach    = lipgloss.Color("#fab387")
-	cBlue     = lipgloss.Color("#89b4fa")
-	cCyan     = lipgloss.Color("#89dceb")
-	cTeal     = lipgloss.Color("#94e2d5")
-	cMagenta  = lipgloss.Color("#cba6f7")
-	cPink     = lipgloss.Color("#f5c2e7")
-	cLavender = lipgloss.Color("#b4befe")
+	cBase = lipgloss.Color("#0d1117")
+	// Secondary text must stay >= 4.5:1 on cBase (WCAG 1.4.3). Site --dim
+	// #7d8895 is 5.25:1 here; do not drop it back under the floor.
+	cDim    = lipgloss.Color("#7d8895")
+	cText   = lipgloss.Color("#d7dde5")
+	cBorder = lipgloss.Color("#4a5563")
+	cRed    = lipgloss.Color("#e36d6d")
+	cGreen  = lipgloss.Color("#4cc38a") // --accent
+	cYellow = lipgloss.Color("#e3b341") // --warm
+	cBlue   = lipgloss.Color("#7aa2d4")
+	cCyan   = lipgloss.Color("#5ec8d8")
 )
 
 var (
-	styleTitle = lipgloss.NewStyle().Bold(true).Foreground(cLavender)
+	styleTitle = lipgloss.NewStyle().Bold(true).Foreground(cText)
 	styleDim   = lipgloss.NewStyle().Foreground(cDim)
 	styleValue = lipgloss.NewStyle().Bold(true).Foreground(cText)
 
-	styleOK    = lipgloss.NewStyle().Foreground(cGreen)
-	styleWarn  = lipgloss.NewStyle().Foreground(cYellow)
-	styleBad   = lipgloss.NewStyle().Foreground(cRed)
-	styleInfo  = lipgloss.NewStyle().Foreground(cCyan)
-	styleHot   = lipgloss.NewStyle().Foreground(cPink)
-	styleMagic = lipgloss.NewStyle().Foreground(cMagenta)
+	styleOK   = lipgloss.NewStyle().Foreground(cGreen)
+	styleWarn = lipgloss.NewStyle().Foreground(cYellow)
+	styleBad  = lipgloss.NewStyle().Foreground(cRed)
+	styleInfo = lipgloss.NewStyle().Foreground(cCyan)
 
 	dotUp = styleOK.Render("●")
 	// ✗, not a red ●: down must read without color (WCAG 1.4.1), and it
@@ -50,24 +44,24 @@ var (
 	dotWarn = styleWarn.Render("●")
 
 	kindStyles = map[string]lipgloss.Style{
-		"ollama":    lipgloss.NewStyle().Foreground(cPeach),
-		"vllm":      lipgloss.NewStyle().Foreground(cMagenta),
+		"ollama":    lipgloss.NewStyle().Foreground(cYellow),
+		"vllm":      lipgloss.NewStyle().Foreground(cGreen),
 		"llama.cpp": lipgloss.NewStyle().Foreground(cCyan),
 		"openai":    lipgloss.NewStyle().Foreground(cBlue),
-		"sglang":    lipgloss.NewStyle().Foreground(cLavender),
+		"sglang":    lipgloss.NewStyle().Foreground(cBlue),
 		"trt-llm":   lipgloss.NewStyle().Foreground(cGreen),
-		"mlx":       lipgloss.NewStyle().Foreground(cPink),
+		"mlx":       lipgloss.NewStyle().Foreground(cCyan),
 		"lmstudio":  lipgloss.NewStyle().Foreground(cBlue),
 		"koboldcpp": lipgloss.NewStyle().Foreground(cYellow),
-		"localai":   lipgloss.NewStyle().Foreground(cTeal),
+		"localai":   lipgloss.NewStyle().Foreground(cCyan),
 		"tgi":       lipgloss.NewStyle().Foreground(cGreen),
-		"litellm":   lipgloss.NewStyle().Foreground(cLavender),
-		"gpustack":  lipgloss.NewStyle().Foreground(cTeal),
+		"litellm":   lipgloss.NewStyle().Foreground(cBlue),
+		"gpustack":  lipgloss.NewStyle().Foreground(cGreen),
 		"lemonade":  lipgloss.NewStyle().Foreground(cYellow),
-		// Routing proxies share lavender (litellm); OmniRoute is detected
+		// Routing proxies share blue (litellm); OmniRoute is detected
 		// via its X-OmniRoute-Route-Class header and must not fall through
 		// to the dim unknown-kind badge.
-		"omnirouter": lipgloss.NewStyle().Foreground(cLavender),
+		"omnirouter": lipgloss.NewStyle().Foreground(cBlue),
 	}
 
 	panelStyle = lipgloss.NewStyle().
@@ -123,40 +117,31 @@ func fmtKind(k string) string {
 	return fmt.Sprintf("%-9.9s", k)
 }
 
-// heatColor maps 0..1 intensity onto a cold->hot ramp. The quiet end floors
-// at cDim, not the surface gray #313244: the ramp also colors text (header
+// heatColor maps 0..1 intensity onto a cool-to-hot ramp (cyan, green, amber,
+// red). The quiet end floors at cDim: the ramp also colors text (header
 // and per-agent rates) that must hold 4.5:1 on cBase (WCAG 1.4.3), and its
 // near-zero cells are data-bearing chart marks bound by the same 3:1 floor
-// as the faded columns (WCAG 1.4.11). The surface gray measured ~1.3:1,
+// as the faded columns (WCAG 1.4.11). A surface-gray floor measured ~1.3:1,
 // invisible to low-vision users exactly when the rate it labels is small
 // next to the session peak.
 func heatColor(f float64) lipgloss.Color {
 	switch {
 	case f <= 0.02:
 		return cDim
-	case f < 0.25:
-		return cTeal
-	case f < 0.5:
+	case f < 0.30:
 		return cCyan
-	case f < 0.72:
+	case f < 0.58:
 		return cGreen
-	case f < 0.88:
+	case f < 0.82:
 		return cYellow
 	default:
 		return cRed
 	}
 }
 
-// wordmark renders the logo with a cyan→pink gradient. Static output:
-// built once, then reused by every frame.
+// wordmark is TOKTOP in the site accent. Static: built once, reused every frame.
 var wordmark = sync.OnceValue(func() string {
-	letters := []rune("TOKTOP")
-	colors := []lipgloss.Color{cTeal, cCyan, cBlue, cLavender, cMagenta, cPink, cPeach, cYellow}
-	var b strings.Builder
-	for i, l := range letters {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(colors[i%len(colors)]).Render(string(l)))
-	}
-	return b.String()
+	return lipgloss.NewStyle().Bold(true).Foreground(cGreen).Render("TOKTOP")
 })
 
 // relLuminance computes the WCAG 2.x relative luminance of a #rrggbb hex
