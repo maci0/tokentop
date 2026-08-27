@@ -64,8 +64,8 @@ func StaticFrame(cfg Config, s core.Snapshot, w, h int) string {
 	m.snap = s
 	m.w, m.h = w, h
 	m.ready = true
-	m.clock = time.Now()
-	if agg := aggOut(s); agg > 0 {
+	m.clock = frameNow(s, m.clock)
+	if agg := aggOutAt(s, m.clock); agg > 0 {
 		m.lastAgg = agg
 		m.maxAgg = agg
 	}
@@ -127,7 +127,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Engines that never answer (no known model yet, all down) would
 		// leave the "probing…" marker up forever without this bail-out.
-		if !m.probeReq.IsZero() && time.Since(m.probeReq) > 15*time.Second {
+		if !m.probeReq.IsZero() && m.clock.Sub(m.probeReq) > 15*time.Second {
 			m.probeReq = time.Time{}
 		}
 		return m, tickClock()
@@ -139,7 +139,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapMsg:
 		if !m.paused {
 			in := core.Snapshot(msg)
-			agg := aggOut(in)
+			agg := aggOutAt(in, m.clock)
 			m.lastAgg = agg
 			if agg > m.maxAgg {
 				m.maxAgg = agg
@@ -175,7 +175,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cfg.Prober != nil {
 				go m.cfg.Prober.ProbeAll()
 				if len(m.snap.Providers) > 0 {
-					m.probeReq = time.Now()
+					m.probeReq = m.clock
 				}
 			}
 			return m, nil
@@ -406,7 +406,7 @@ func (m Model) renderCharts() string {
 		w, outH,
 	)
 	in := panel(
-		"PROMPT "+styleInfo.Render("▼ "+fmtRate(aggIn(m.snap))+" tok/s"),
+		"PROMPT "+styleInfo.Render("▼ "+fmtRate(aggInAt(m.snap, m.clock))+" tok/s"),
 		BrailleChart(aggHist(m.snap, false, w, cad), w, 1,
 			ChartStyle{Heat: func(float64) lipgloss.Color { return cTeal }, FadeAge: true}),
 		w, 1,
@@ -1187,9 +1187,19 @@ func kvHeat(v float64) lipgloss.Color {
 	}
 }
 
-func aggOut(s core.Snapshot) float64 { return aggOutAt(s, time.Now()) }
-
-func aggIn(s core.Snapshot) float64 { return aggInAt(s, time.Now()) }
+// frameNow is the instant a snapshot treats as "now": its own stamp when
+// the collector filled one in, otherwise fallback (the UI clock, or wall
+// time if that is zero). Renderers use this so --once output and paused
+// frames do not slide the agent window against real time.
+func frameNow(s core.Snapshot, fallback time.Time) time.Time {
+	if !s.At.IsZero() {
+		return s.At
+	}
+	if !fallback.IsZero() {
+		return fallback
+	}
+	return time.Now()
+}
 
 func aggOutAt(s core.Snapshot, now time.Time) float64 {
 	t := 0.0

@@ -49,6 +49,59 @@ func TestDeterministicPerSeed(t *testing.T) {
 	}
 }
 
+// Two sources stepped at the same instants with the same seed must produce
+// identical snapshots, timestamps included. Ticker-driven Run still takes
+// one wall-clock read to place t0, so this is the byte-for-byte check.
+func TestDeterministicFrames(t *testing.T) {
+	t0 := time.Unix(1_700_000_000, 0).UTC()
+	a, b := NewSource(time.Second, 7), NewSource(time.Second, 7)
+	var last core.Snapshot
+	for i := range 24 {
+		now := t0.Add(time.Duration(i) * time.Second)
+		sa, sb := a.stepAt(now), b.stepAt(now)
+		if i == 10 {
+			a.ProbeAll()
+			b.ProbeAll()
+		}
+		if !reflect.DeepEqual(sa, sb) {
+			t.Fatalf("seeded sources diverged at frame %d:\n%+v\n%+v", i, sa, sb)
+		}
+		last = sa
+	}
+	if last.Uptime != 23*time.Second {
+		t.Fatalf("uptime = %v, want 23s", last.Uptime)
+	}
+	if !last.At.Equal(t0.Add(23 * time.Second)) {
+		t.Fatalf("At = %v, want %v", last.At, t0.Add(23*time.Second))
+	}
+	other := NewSource(time.Second, 8).stepAt(t0)
+	same := NewSource(time.Second, 7).stepAt(t0)
+	if reflect.DeepEqual(same, other) {
+		t.Fatal("different seeds produced identical first frames")
+	}
+}
+
+// ProbeAll and RecordAgent stamp the simulated instant, not wall time, so
+// injected activity stays on the seeded timeline.
+func TestExternalStampsUseSimulatedTime(t *testing.T) {
+	t0 := time.Unix(1_700_000_000, 0).UTC()
+	s := NewSource(time.Second, 3)
+	s.stepAt(t0)
+	s.RecordAgent(core.AgentEvent{Agent: "x"})
+	if len(s.agents) != 1 || !s.agents[0].At.Equal(t0) {
+		t.Fatalf("agent At = %v, want %v", s.agents, t0)
+	}
+	s.ProbeAll()
+	if len(s.probes) != len(s.backends) {
+		t.Fatalf("probes = %d, want %d", len(s.probes), len(s.backends))
+	}
+	for _, p := range s.probes {
+		if !p.At.Equal(t0) {
+			t.Fatalf("probe At = %v, want simulated %v", p.At, t0)
+		}
+	}
+}
+
 func TestSysSamplePresent(t *testing.T) {
 	snap := collectOne(t, NewSource(10*time.Millisecond, 5))
 	if snap.Sys == nil {

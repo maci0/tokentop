@@ -940,6 +940,61 @@ func TestPauseFreezesHeaderClock(t *testing.T) {
 	}
 }
 
+// --once must score agent rates against the snapshot's own stamp. Reading
+// wall time would drop events that were live when the sample was taken
+// once that sample is older than the 30s window.
+func TestStaticFrameUsesSnapshotTime(t *testing.T) {
+	past := time.Now().Add(-time.Hour)
+	snap := core.Snapshot{
+		At: past,
+		Providers: []core.ProviderSnapshot{{
+			Label: "ollama", Kind: core.KindOllama, OK: true, OutTokPS: 10,
+		}},
+		Agents: []core.AgentEvent{
+			{At: past.Add(-2 * time.Second), Agent: "bot", Kind: "turn",
+				PromptTokens: 80, OutputTokens: 40},
+			{At: past, Agent: "bot", Kind: "turn",
+				PromptTokens: 80, OutputTokens: 40},
+		},
+	}
+	out := strip(StaticFrame(Config{Version: "t"}, snap, 110, 36))
+	if !strings.Contains(out, "1 agent") {
+		t.Fatalf("hour-old snapshot dropped in-window agents:\n%s", out)
+	}
+}
+
+// The probing marker expires on the UI clock, not wall time, so a paused
+// frame does not clear it while frozen and a tick 16s later does.
+func TestProbeTimeoutFollowsClock(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	t0 := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	nm, _ := m.Update(tickMsg(t0))
+	m = nm.(Model)
+	m.probeReq = t0
+
+	nm, _ = m.Update(tickMsg(t0.Add(14 * time.Second)))
+	m = nm.(Model)
+	if m.probeReq.IsZero() {
+		t.Fatal("probe marker cleared before 15s of clock time")
+	}
+
+	nm, _ = m.Update(keyMsg(" "))
+	m = nm.(Model)
+	nm, _ = m.Update(tickMsg(t0.Add(time.Minute)))
+	m = nm.(Model)
+	if m.probeReq.IsZero() {
+		t.Fatal("paused frame expired the probe marker")
+	}
+
+	nm, _ = m.Update(keyMsg(" "))
+	m = nm.(Model)
+	nm, _ = m.Update(tickMsg(t0.Add(16 * time.Second)))
+	m = nm.(Model)
+	if !m.probeReq.IsZero() {
+		t.Fatal("probe marker survived 16s of clock time")
+	}
+}
+
 // The BACKENDS panel must mark down engines by more than color (WCAG 1.4.1):
 // the ✗ glyph matches the probe feed's convention and survives greyscale.
 func TestBackendsPanelMarksDownEnginesWithoutColor(t *testing.T) {

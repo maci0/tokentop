@@ -204,8 +204,6 @@ func (c *Collector) Run(ctx context.Context, out chan<- core.Snapshot) {
 }
 
 func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
-	snap := core.Snapshot{At: time.Now(), Uptime: time.Since(c.started)}
-
 	type result struct {
 		m   *provider.Metrics
 		err error
@@ -224,13 +222,14 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	}
 	wg.Wait()
 
+	now := time.Now()
+	snap := core.Snapshot{At: now, Uptime: now.Sub(c.started)}
+
 	c.mu.Lock()
 	snap.Agents = append([]core.AgentEvent(nil), c.agents...)
 	snap.Probes = append([]core.ProbeSample(nil), c.probes...)
 	snap.Sys = c.sysSnapshot()
 	byPort := procsByPort(c.procSnapshot())
-
-	now := time.Now()
 	for i, r := range results {
 		p := c.providers[i]
 		ps := core.ProviderSnapshot{

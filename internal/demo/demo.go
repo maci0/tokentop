@@ -27,6 +27,7 @@ type Source struct {
 	mu       sync.Mutex
 
 	start   time.Time
+	now     time.Time // last simulated instant; zero until the first frame
 	t       float64
 	histOut map[string][]float64
 	histIn  map[string][]float64
@@ -81,17 +82,16 @@ var notes = []string{
 	"final answer composed",
 }
 
-// Run blocks until ctx is done.
+// Run blocks until ctx is done. The ticker only paces real time; each
+// frame's simulated instant starts at the first wall-clock read and then
+// advances by interval, so ticker jitter and coalesced ticks cannot pull
+// timestamps off the seeded trajectory.
 func (s *Source) Run(ctx context.Context, ch chan<- core.Snapshot) {
-	s.start = time.Now()
-	s.nextEv = s.start.Add(2 * s.interval)
-	s.nextPr = s.start.Add(4 * s.interval)
 	tick := time.NewTicker(s.interval)
 	defer tick.Stop()
-	now := s.start
+	now := time.Now()
 	for {
-		s.frame(now)
-		snap := s.snapshot(now)
+		snap := s.stepAt(now)
 		select { // a stalled consumer must not pin the goroutine past cancel
 		case ch <- snap:
 		case <-ctx.Done():
@@ -100,9 +100,35 @@ func (s *Source) Run(ctx context.Context, ch chan<- core.Snapshot) {
 		select {
 		case <-ctx.Done():
 			return
-		case now = <-tick.C:
+		case <-tick.C:
+			now = now.Add(s.interval)
 		}
 	}
+}
+
+// stepAt applies one simulated frame at now and returns the snapshot. Tests
+// drive this directly so two sources with the same seed can be compared
+// without a wall-clock ticker.
+func (s *Source) stepAt(now time.Time) core.Snapshot {
+	s.mu.Lock()
+	if s.start.IsZero() {
+		s.start = now
+		s.nextEv = now.Add(2 * s.interval)
+		s.nextPr = now.Add(4 * s.interval)
+	}
+	s.now = now
+	s.mu.Unlock()
+	s.frame(now)
+	return s.snapshot(now)
+}
+
+// stamp is the current simulated instant, or wall time before Run/stepAt.
+// Caller holds s.mu.
+func (s *Source) stamp() time.Time {
+	if !s.now.IsZero() {
+		return s.now
+	}
+	return time.Now()
 }
 
 // frame mutates every simulated channel (rng, histories, vitals). It takes
@@ -210,13 +236,13 @@ func (s *Source) addAgent(ev core.AgentEvent) {
 
 // RecordAgent lets external scripts push events into the demo feed too.
 func (s *Source) RecordAgent(ev core.AgentEvent) {
-	if ev.At.IsZero() {
-		ev.At = time.Now()
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if core.HasAgentID(s.agents, ev.ID) {
 		return
+	}
+	if ev.At.IsZero() {
+		ev.At = s.stamp()
 	}
 	s.addAgent(ev)
 }
@@ -238,8 +264,9 @@ func (s *Source) addProbe(p core.ProbeSample) {
 func (s *Source) ProbeAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	at := s.stamp()
 	for i := range s.backends {
-		s.addProbe(s.synthProbe(s.backends[i], time.Now(), 60, 180, 0.3, 1))
+		s.addProbe(s.synthProbe(s.backends[i], at, 60, 180, 0.3, 1))
 	}
 }
 

@@ -54,7 +54,7 @@ func PlainTextFrame(cfg Config, s core.Snapshot) string {
 	case up < tot:
 		state += " (partial)"
 	}
-	now := time.Now()
+	now := frameNow(s, time.Time{})
 	fmt.Fprintf(&b, "%s · out %s tok/s · in %s tok/s",
 		state, fmtRate(aggOutAt(s, now)), fmtRate(aggInAt(s, now)))
 	if n := len(agentRates(s.Agents, now)); n > 0 {
@@ -242,7 +242,7 @@ func writeProbesPlain(b *strings.Builder, s core.Snapshot) {
 // guidance: which knob feeds this panel is invisible from a bare "empty".
 func writeFeedPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 	b.WriteString("\nAGENT FEED\n")
-	if rates := agentRates(s.Agents, time.Now()); len(rates) > 0 {
+	if rates := agentRates(s.Agents, frameNow(s, time.Time{})); len(rates) > 0 {
 		var parts []string
 		for i, r := range rates {
 			if i == 3 {
@@ -294,7 +294,7 @@ func writeFeedPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 // writeAgentsPlain is the plain counterpart of renderAgentsOnly: agents but
 // no engines.
 func writeAgentsPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
-	now := time.Now()
+	now := frameNow(s, time.Time{})
 	outPS, inPS := agentOwnTokPS(agentRates(s.Agents, now))
 	b.WriteString("no inference engines detected; --add URL attaches one\n")
 	fmt.Fprintf(b, "out %s tok/s · in %s tok/s\n", fmtRate(outPS), fmtRate(inPS))

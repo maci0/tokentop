@@ -147,6 +147,28 @@ func TestPlainFrameAgentsOnly(t *testing.T) {
 	}
 }
 
+// --once --plain must score agent rates against the snapshot stamp, not
+// wall time, or an hour-old sample would drop agents that were live then.
+func TestPlainFrameUsesSnapshotTime(t *testing.T) {
+	past := time.Now().Add(-time.Hour)
+	snap := core.Snapshot{
+		At: past,
+		Providers: []core.ProviderSnapshot{{
+			Label: "ollama", Kind: core.KindOllama, OK: true, OutTokPS: 10,
+		}},
+		Agents: []core.AgentEvent{
+			{At: past.Add(-2 * time.Second), Agent: "bot", Kind: "turn",
+				PromptTokens: 80, OutputTokens: 40},
+			{At: past, Agent: "bot", Kind: "turn",
+				PromptTokens: 80, OutputTokens: 40},
+		},
+	}
+	out := PlainTextFrame(Config{Version: "t"}, snap)
+	if !strings.Contains(out, "1 agents") {
+		t.Fatalf("hour-old snapshot dropped in-window agents:\n%s", out)
+	}
+}
+
 // Demo runs must not pass themselves off as real telemetry in the linear
 // frame either.
 func TestPlainFrameMarksDemo(t *testing.T) {
