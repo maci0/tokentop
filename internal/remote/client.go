@@ -218,10 +218,12 @@ func (c *Client) probe(wait time.Duration) bool {
 		_, _, err := c.conn.SendRequest("keepalive@toktop", true, nil)
 		ch <- ack{err == nil}
 	}()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
 	select {
 	case a := <-ch:
 		return a.ok
-	case <-time.After(wait):
+	case <-timer.C:
 		return false
 	case <-c.closed:
 		return false
@@ -257,6 +259,10 @@ func (c *Client) Run(ctx context.Context, script string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ssh session: %w", connLost(err))
 	}
+	// Wait does not close the channel. A vitals poll that leaves one
+	// session open per cycle will eventually hit the server's MaxSessions
+	// and freeze remote sampling for the rest of the dashboard.
+	defer sess.Close()
 	var stderr stderrBuf
 	sess.Stderr = &stderr
 
@@ -270,14 +276,16 @@ func (c *Client) Run(ctx context.Context, script string) (string, error) {
 		done <- result{string(out), oerr}
 	}()
 
+	timer := time.NewTimer(runTimeout)
+	defer timer.Stop()
 	select {
 	case r := <-done:
 		if r.err != nil {
 			return r.out, fmt.Errorf("remote command failed: %w%s", r.err, stderrTail(stderr.String()))
 		}
 		return r.out, nil
-	case <-time.After(runTimeout):
-		sess.Close()
+	case <-timer.C:
+		sess.Close() // unblock Output; the defer is a second close, which is safe
 		return "", fmt.Errorf("remote command timed out after %s%s", runTimeout, stderrTail(stderr.String()))
 	case <-ctx.Done():
 		sess.Close()

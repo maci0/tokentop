@@ -637,3 +637,72 @@ func TestReadErrorIsNotCachedAsProcessed(t *testing.T) {
 		t.Fatalf("output tokens %d, want 100: a failed read was cached as processed", got)
 	}
 }
+
+// Age a file out of the recency window. The walk must drop it so a long-lived
+// watcher does not keep every session file ever written; the counts and the
+// offset must survive so a later append is added, not re-read from the start.
+func TestIdleTranscriptDropsFromTheWalkWithoutLosingCounts(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	path := filepath.Join(store, "session.jsonl")
+
+	w := Watch("claude", work, time.Now())
+	append_(t, path, claudeLine(work, 100))
+	w.poll(nil)
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output tokens %d, want 100", got)
+	}
+
+	old := time.Now().Add(-recencyWindow - time.Minute)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	w.scanned = time.Time{}
+	if got := w.candidates(); len(got) != 0 {
+		t.Fatalf("idle file still in the walk: %v", got)
+	}
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output tokens %d after idle drop, want 100", got)
+	}
+
+	append_(t, path, claudeLine(work, 50))
+	w.scanned = time.Time{}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 150 {
+		t.Fatalf("output tokens %d, want 150: re-entry after idle drop lost or double-counted", got)
+	}
+}
+
+// A foreign transcript that ages out of the walk must leave the owner/offset
+// maps, or a dashboard following one agent would pin an entry per session
+// file on the machine for the rest of the process.
+func TestForeignIdleTranscriptIsForgotten(t *testing.T) {
+	store := withStore(t, "copilot")
+	work, other := t.TempDir(), t.TempDir()
+	mine := copilotSession(t, store, "mine", work)
+	theirs := copilotSession(t, store, "theirs", other)
+
+	w := Watch("copilot", work, time.Now())
+	append_(t, mine, `{"type":"assistant.message","data":{"usage":{"completion_tokens":10}}}`)
+	append_(t, theirs, `{"type":"assistant.message","data":{"usage":{"completion_tokens":999}}}`)
+	w.poll(nil)
+	if _, tracked := w.owner[theirs]; !tracked {
+		t.Fatal("expected the foreign session to be cached as not-ours while it is recent")
+	}
+
+	old := time.Now().Add(-recencyWindow - time.Minute)
+	if err := os.Chtimes(theirs, old, old); err != nil {
+		t.Fatal(err)
+	}
+	w.scanned = time.Time{}
+	_ = w.candidates()
+	if _, tracked := w.owner[theirs]; tracked {
+		t.Fatal("foreign session still tracked after aging out of the walk")
+	}
+	if _, tracked := w.offsets[theirs]; tracked {
+		t.Fatal("foreign session offset still tracked after aging out of the walk")
+	}
+	if got := w.Sample().Output; got != 10 {
+		t.Fatalf("output tokens %d, want 10 after forgetting the foreign session", got)
+	}
+}

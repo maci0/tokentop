@@ -649,6 +649,13 @@ const pollEvery = 250 * time.Millisecond
 // would cost far more than reading the one file that is growing.
 const rescanEvery = time.Second
 
+// recencyWindow is how long after a transcript's last write it stays in the
+// walk. Attach still sees files that went idle just before we started (Watch
+// runs this at since≈now); after that the window slides with wall time so a
+// long-lived dashboard does not accumulate every session file ever written
+// while it ran.
+const recencyWindow = 2 * time.Minute
+
 // candidates lists transcript files recent enough to belong to this review,
 // reusing the previous walk for a few seconds. An empty result is cached too:
 // until something matches, the store is walked once per rescanEvery rather
@@ -658,7 +665,7 @@ func (w *Watcher) candidates() []string {
 	if !w.scanned.IsZero() && time.Since(w.scanned) < rescanEvery {
 		return w.cached
 	}
-	cutoff := w.since.Add(-2 * time.Minute)
+	cutoff := time.Now().Add(-recencyWindow)
 	var out []string
 	for _, root := range w.ad.roots(w.dir) {
 		if root == "" {
@@ -679,8 +686,68 @@ func (w *Watcher) candidates() []string {
 			return nil
 		})
 	}
+	w.forgetIdle(out)
 	w.cached, w.scanned = out, time.Now()
 	return out
+}
+
+// forgetIdle drops per-file bookkeeping for transcripts that have aged out of
+// the walk and are not carrying this review's counts. Without it, stamps,
+// offsets and the owner cache grow by every session file that ever appeared
+// during a long --agents run, including other projects'. Counted files keep
+// their offsets so a later append is not read from the start and double-counted.
+func (w *Watcher) forgetIdle(live []string) {
+	keep := make(map[string]struct{}, len(live)+len(w.seen)+len(w.owner)+len(w.preexisting))
+	for _, path := range live {
+		keep[path] = struct{}{}
+	}
+	for path := range w.seen {
+		keep[path] = struct{}{}
+	}
+	for path, mine := range w.owner {
+		if mine {
+			keep[path] = struct{}{}
+		}
+	}
+	if w.ad.sessionCwd == nil {
+		for path, pre := range w.preexisting {
+			if pre {
+				keep[path] = struct{}{}
+			}
+		}
+	}
+	var drop []string
+	consider := func(path string) {
+		if _, ok := keep[path]; !ok {
+			drop = append(drop, path)
+			keep[path] = struct{}{} // so a path in several maps is listed once
+		}
+	}
+	for path := range w.stamps {
+		consider(path)
+	}
+	for path := range w.offsets {
+		consider(path)
+	}
+	for path := range w.owner {
+		consider(path)
+	}
+	for path := range w.preexisting {
+		consider(path)
+	}
+	for _, path := range drop {
+		w.dropFile(path)
+	}
+}
+
+func (w *Watcher) dropFile(path string) {
+	delete(w.stamps, path)
+	delete(w.offsets, path)
+	delete(w.owner, path)
+	delete(w.preexisting, path)
+	delete(w.base, path)
+	delete(w.baseThink, path)
+	delete(w.total, path)
 }
 
 // readNew consumes the bytes appended to one transcript since the last poll.

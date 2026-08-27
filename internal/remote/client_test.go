@@ -283,6 +283,14 @@ func TestClientConnectRunForward(t *testing.T) {
 	if got := strings.TrimSpace(out); got != "hello-remote" {
 		t.Errorf("run output = %q", got)
 	}
+	// Each Run must close its session; leaving them open would eventually
+	// refuse new channels. A few dozen back-to-back commands is well past
+	// a typical MaxSessions without being slow.
+	for i := 0; i < 32; i++ {
+		if _, err := cli.Run(t.Context(), "true"); err != nil {
+			t.Fatalf("run %d after prior sessions: %v", i, err)
+		}
+	}
 
 	// Relay an engine-ish HTTP-less TCP service: raw echo.
 	up, err := net.Listen("tcp", "127.0.0.1:0")

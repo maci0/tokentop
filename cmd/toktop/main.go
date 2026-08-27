@@ -628,13 +628,16 @@ func attachRemote(ctx context.Context, tgt remote.Target) ([]provider.Provider, 
 	go func() {
 		select {
 		case <-ctx.Done():
-			return // normal shutdown closes the client by design
 		case <-cli.Done():
-			if ctx.Err() != nil {
-				return // shutdown raced the drop; not a loss
+			if ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "toktop: ssh connection to %s lost (%v)\n", tgt.Host, cli.Err())
 			}
-			fmt.Fprintf(os.Stderr, "toktop: ssh connection to %s lost (%v)\n", tgt.Host, cli.Err())
 		}
+		// Close on both paths: watchClose reclaims listeners after a drop,
+		// but nothing else tears the client down, and a cancelled Run
+		// context would otherwise leave the conn, keepalive, and any
+		// still-bound forwards until process exit.
+		cli.Close()
 	}()
 
 	// Ascending remote ports: backend order must not depend on map iteration.

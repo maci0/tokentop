@@ -18,6 +18,11 @@ type identity struct {
 // Watch polls the executable's identity and calls onChange exactly once per
 // rebuild. It never fires for the initial stat.
 func Watch(ctx context.Context, exePath string, interval time.Duration, onChange func()) {
+	if interval <= 0 {
+		interval = time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
 	var prev identity
 	first := true
 	for {
@@ -37,7 +42,7 @@ func Watch(ctx context.Context, exePath string, interval time.Duration, onChange
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(interval):
+		case <-t.C:
 		}
 	}
 }
