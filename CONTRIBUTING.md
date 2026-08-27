@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-- Go, at the version pinned in `go.mod` (the toolchain downloads the right
-  one automatically if your `go` is newer). CI installs the same version via
-  `go-version-file: go.mod`.
+- Go, at the version pinned in `go.mod`. `make` sets `GOTOOLCHAIN` to that
+  exact version so a newer compiler on the host cannot change the artifact.
+  CI installs the same version via `go-version-file: go.mod`.
 - A C compiler (`gcc` or `clang`) for `go test -race`; plain builds and
   cross-compiles are pure Go and need nothing else.
 - No services or databases: everything is stdlib plus the modules in
@@ -131,8 +131,10 @@ cross-compiles every platform, generates checksums and a CycloneDX SBOM, and
 attaches binaries to the release. The host-platform artifact is smoke-tested
 for `--version` and for the sqlite driver actually being linked. Locally,
 `make release VERSION=x.y.z` reproduces the same artifacts in `dist/`. The
-checksums tarball is built deterministically: members are sorted, timestamps
-come from `SOURCE_DATE_EPOCH` (defaulting to the commit time), ownership is
+checksums tarball is built deterministically: members are sorted,
+checksums.txt lines are sorted by filename, timestamps come from
+`SOURCE_DATE_EPOCH` (defaulting to the commit time), ownership is
 normalized, and gzip's name/mtime header is stripped, so two builds of one
-source produce byte-identical archives. This needs GNU tar; where the system
-tar is bsdtar (macOS), install GNU tar as `gtar`.
+source produce byte-identical archives. Binaries are built with `-trimpath
+-buildvcs=false -mod=readonly -buildmode=pie`. This needs GNU tar; where the
+system tar is bsdtar (macOS), install GNU tar as `gtar`.

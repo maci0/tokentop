@@ -4,11 +4,24 @@ DIST    := dist
 VERSION ?= dev
 
 GO          ?= go
+# go.mod's go line is the compiler pin. GOTOOLCHAIN=auto would keep a newer
+# host toolchain (and its GOEXPERIMENT defaults), so two machines would emit
+# different binaries from the same source.
+GO_VERSION  := $(shell awk '/^go / { print $$2; exit }' go.mod)
+export GOTOOLCHAIN := go$(GO_VERSION)
+# Instruction-set baselines: an ambient GOAMD64=v3 would change amd64 artifacts.
+export GOAMD64 := v1
+export GOARM64 := v8.0
+# Strip paths, omit git stamps (checkout vs tarball would disagree), honor
+# go.sum, produce a PIE.
+GO_BUILDFLAGS := -trimpath -buildvcs=false -mod=readonly -buildmode=pie
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck@2026.2.1
 BLACK       := uvx black==26.5.1
 RUFF        := uvx ruff==0.16.5
 MYPY        := uvx --from mypy==2.3.1 --with-requirements scripts/requirements.txt mypy
 LDFLAGS     := -s -w -X main.version=$(VERSION)
+# gofmt from the selected toolchain, not a different major on PATH.
+GOFMT = $$($(GO) env GOROOT)/bin/gofmt
 
 # opencode keeps its sessions in SQLite rather than JSONL, so reading it means
 # linking a database driver in for one agent. Released binaries carry it (it is
@@ -25,7 +38,8 @@ export TZ := UTC
 
 # One timestamp for archive metadata: SOURCE_DATE_EPOCH when the caller sets
 # it, otherwise this commit's time, so two builds of the same source agree.
-SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || echo 0)
+# Exported so gzip/tar/any honoring tool sees the same value, not only Make.
+export SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || echo 0)
 
 # Normalizing tar metadata (--sort/--mtime/--owner) needs GNU tar; bsdtar
 # cannot express it. Where the system tar is bsdtar (macOS) GNU tar is often
@@ -50,7 +64,7 @@ help: ## show available targets
 # two developer machines produce different binaries from identical source.
 .PHONY: build
 build: ## build the toktop binary for this host
-	CGO_ENABLED=0 $(GO) build $(GOTAGS) -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
+	CGO_ENABLED=0 $(GO) build $(GOTAGS) $(GO_BUILDFLAGS) -ldflags "$(LDFLAGS)" -o $(BINARY) $(CMD)
 
 .PHONY: run
 run: build ## build, then run against local engines
@@ -62,13 +76,13 @@ demo: build ## build, then run the simulated fleet
 
 .PHONY: test
 test: ## run all tests with the race detector, shuffled order (both halves of the sqlite tag gate)
-	$(GO) test -race -shuffle=on ./...
-	$(GO) test -tags sqlite -race -shuffle=on ./agentusage/...
+	$(GO) test -mod=readonly -race -shuffle=on ./...
+	$(GO) test -mod=readonly -tags sqlite -race -shuffle=on ./agentusage/...
 
 .PHONY: cover
 cover: ## test coverage summary per package into dist/
 	mkdir -p $(DIST)
-	$(GO) test $(GOTAGS) -race -shuffle=on -coverprofile=$(DIST)/coverage.out ./...
+	$(GO) test -mod=readonly $(GOTAGS) -race -shuffle=on -coverprofile=$(DIST)/coverage.out ./...
 	$(GO) tool cover -func=$(DIST)/coverage.out | tail -1
 
 .PHONY: sbom
@@ -79,8 +93,8 @@ sbom: ## generate CycloneDX SBOM of all dependencies into dist/
 
 .PHONY: vet
 vet: ## run go vet (both halves of the sqlite tag gate)
-	$(GO) vet ./...
-	$(GO) vet -tags sqlite ./agentusage/...
+	$(GO) vet -mod=readonly ./...
+	$(GO) vet -mod=readonly -tags sqlite ./agentusage/...
 
 # Same per-platform gate release.yml runs before shipping; PLATFORMS is the
 # single source of truth so CI and local checks cannot list different targets.
@@ -93,8 +107,8 @@ vet-cross: ## vet + staticcheck every release platform from PLATFORMS
 	@for target in $(PLATFORMS); do \
 		goos=$${target%/*}; goarch=$${target#*/}; \
 		echo "checking $$goos/$$goarch"; \
-		env GOOS=$$goos GOARCH=$$goarch $(GO) vet ./... || exit 1; \
-		env GOOS=$$goos GOARCH=$$goarch $(GO) vet -tags sqlite ./agentusage/... || exit 1; \
+		env GOOS=$$goos GOARCH=$$goarch $(GO) vet -mod=readonly ./... || exit 1; \
+		env GOOS=$$goos GOARCH=$$goarch $(GO) vet -mod=readonly -tags sqlite ./agentusage/... || exit 1; \
 		env GOOS=$$goos GOARCH=$$goarch $(DIST)/bin/staticcheck ./... || exit 1; \
 		env GOOS=$$goos GOARCH=$$goarch $(DIST)/bin/staticcheck -tags sqlite ./agentusage/... || exit 1; \
 	done
@@ -117,12 +131,12 @@ site-check: ## bun test the Cloudflare Worker in site/ (CI parity)
 
 .PHONY: fmt
 fmt: ## rewrite all Go files with gofmt (including simplifications)
-	gofmt -s -w .
+	$(GOFMT) -s -w .
 
 .PHONY: fix
 fix: ## apply go fix modernization autofixes, then gofmt
 	$(GO) fix ./...
-	gofmt -s -w .
+	$(GOFMT) -s -w .
 
 .PHONY: tidy-check
 tidy-check: ## fail if go.mod or go.sum would change
@@ -136,7 +150,7 @@ scripts-check: ## format, lint and type-check scripts/ with pinned tools
 
 .PHONY: check
 check: ## verify go.mod, gofmt -s formatting, vet and staticcheck (CI parity)
-	@unformatted=$$(gofmt -s -l .); \
+	@unformatted=$$($(GOFMT) -s -l .); \
 		if [ -n "$$unformatted" ]; then \
 			echo "needs gofmt:"; echo "$$unformatted"; exit 1; \
 		fi
@@ -161,8 +175,13 @@ release: checksums ## build every release platform into dist/ with reproducible 
 checksums: test-dist ## checksum the dist/ binaries into a byte-reproducible tarball
 	@$(TAR) --sort=name --version >/dev/null 2>&1 || \
 		{ echo "$(TAR) rejects --sort: deterministic packaging needs GNU tar (install it as gtar)"; exit 1; }
-	@cd $(DIST) && { command -v sha256sum >/dev/null 2>&1 && sha256sum $(BINARY)_* || shasum -a 256 $(BINARY)_*; } > checksums.txt
-	@cd $(DIST) && { command -v sha256sum >/dev/null 2>&1 && sha256sum -c checksums.txt || shasum -a 256 -c checksums.txt; }
+	@cd $(DIST) && \
+		files=$$(printf '%s\n' $(BINARY)_* | sort) && \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			sha256sum $$files > checksums.txt && sha256sum -c checksums.txt; \
+		else \
+			shasum -a 256 $$files > checksums.txt && shasum -a 256 -c checksums.txt; \
+		fi
 	@cd $(DIST) && $(TAR) $(TAR_REPRO) -c checksums.txt | gzip -n > toktop_$(VERSION)_checksums.tar.gz && rm checksums.txt
 
 # Binaries of any earlier version are dropped first: leftovers would
@@ -173,11 +192,11 @@ test-dist: ## build every release platform without packaging
 	@rm -f $(DIST)/$(BINARY)_*
 	@for target in $(PLATFORMS); do \
 		goos=$${target%/*}; goarch=$${target#*/}; ext=""; \
-		[ "$$goos" = "windows" ] && ext=".exe"; \
+		if [ "$$goos" = "windows" ]; then ext=".exe"; fi; \
 		name="$(BINARY)_$(VERSION)_$${goos}_$${goarch}$${ext}"; \
 		echo "building $$name"; \
 		CGO_ENABLED=0 GOOS=$$goos GOARCH=$$goarch \
-			$(GO) build $(GOTAGS) -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(DIST)/$$name $(CMD) || exit 1; \
+			$(GO) build $(GOTAGS) $(GO_BUILDFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$$name $(CMD) || exit 1; \
 	done
 
 .PHONY: install

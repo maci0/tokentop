@@ -335,11 +335,11 @@ go test ./internal/ui              # one package while iterating
 go test ./internal/core -run TestSanitizeTextPreservesUTF8   # one test
 ```
 
-Cross-compiles (no cgo anywhere):
+Cross-compiles (no cgo anywhere); `make test-dist` is the same flags the
+release uses (`-trimpath -buildvcs=false -mod=readonly -buildmode=pie`):
 
 ```
-GOOS=darwin GOARCH=arm64 go build -o toktop-macos ./cmd/toktop
-GOOS=windows GOARCH=amd64 go build -o toktop.exe ./cmd/toktop
+make test-dist VERSION=x.y.z    # every release platform into dist/
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, the edit-test loop,
