@@ -281,6 +281,38 @@ func TestGaugeBar(t *testing.T) {
 	}
 }
 
+// BrailleChart fills a fixed pane: a degenerate size is empty, and a real
+// size occupies exactly h rows of w cells even when the series is all zeros.
+func TestBrailleChartPane(t *testing.T) {
+	st := ChartStyle{Heat: kvHeat}
+	if BrailleChart([]float64{1, 2, 3}, 0, 4, st) != "" {
+		t.Fatal("zero width must render nothing")
+	}
+	if BrailleChart([]float64{1, 2, 3}, 8, 0, st) != "" {
+		t.Fatal("zero height must render nothing")
+	}
+	out := BrailleChart([]float64{0, 1, 2, 3}, 8, 3, st)
+	lines := strings.Split(out, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("rows = %d, want 3", len(lines))
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w != 8 {
+			t.Errorf("row %d width = %d, want 8", i, w)
+		}
+	}
+	z := BrailleChart([]float64{0, 0, 0}, 4, 2, st)
+	zlines := strings.Split(z, "\n")
+	if z == "" || len(zlines) != 2 {
+		t.Fatalf("zero series = %q, want a 2-row pane", z)
+	}
+	for i, line := range zlines {
+		if w := lipgloss.Width(line); w != 4 {
+			t.Errorf("zero series row %d width = %d, want 4", i, w)
+		}
+	}
+}
+
 func TestShortenAndClip(t *testing.T) {
 	if got := shorten("abcdef", 4); got != "abc…" {
 		t.Errorf("shorten = %q", got)

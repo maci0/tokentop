@@ -225,11 +225,29 @@ func TestSourceConcurrentAccess(t *testing.T) {
 	}()
 
 	<-workerDone
+	s.mu.Lock()
+	nAgents, nProbes := len(s.agents), len(s.probes)
+	s.mu.Unlock()
+	if nAgents == 0 {
+		t.Fatal("RecordAgent produced no events")
+	}
+	if nProbes == 0 {
+		t.Fatal("ProbeAll produced no samples")
+	}
 	cancel()
+	var nSnap int
 	for { // keep draining until Run has noticed cancellation and returned
 		select {
 		case <-ch:
+			nSnap++
 		case <-runDone:
+			for len(ch) > 0 {
+				<-ch
+				nSnap++
+			}
+			if nSnap == 0 {
+				t.Fatal("Run produced no snapshots")
+			}
 			return
 		}
 	}

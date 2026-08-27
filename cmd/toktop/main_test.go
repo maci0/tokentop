@@ -101,7 +101,24 @@ func captureWarnUnknownEnv(t *testing.T) string {
 	return captureStderr(t, warnUnknownEnv)
 }
 
+// isolateToktopEnv unsets every TOKTOP_* variable so silence assertions do
+// not depend on the caller's environment.
+func isolateToktopEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		name, val, _ := strings.Cut(kv, "=")
+		if !strings.HasPrefix(name, "TOKTOP_") {
+			continue
+		}
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Setenv(name, val) })
+	}
+}
+
 func TestWarnUnknownEnv(t *testing.T) {
+	isolateToktopEnv(t)
 	t.Run("known variables pass silently", func(t *testing.T) {
 		t.Setenv("TOKTOP_BEARER", "x")
 		t.Setenv("TOKTOP_SSH_PASSWORD", "x")
@@ -282,13 +299,14 @@ func TestRunUpdateUsageErrors(t *testing.T) {
 
 func TestWarnIgnoredFlags(t *testing.T) {
 	tests := []struct {
-		name    string
-		set     map[string]bool
-		demo    bool
-		once    bool
-		agents  bool
-		nRemote int
-		wantSub string // empty means silence expected
+		name     string
+		set      map[string]bool
+		demo     bool
+		once     bool
+		agents   bool
+		nRemote  int
+		wantSub  string // empty means silence expected
+		wantAlso string // additional flag that must be named
 	}{
 		{name: "seed outside demo warns", set: map[string]bool{"seed": true}, wantSub: "--seed"},
 		{name: "seed inside demo silent", set: map[string]bool{"seed": true}, demo: true},
@@ -296,7 +314,7 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		{name: "frames outside once warns", set: map[string]bool{"frames": true}, wantSub: "--frames"},
 		{name: "frames inside once silent", set: map[string]bool{"frames": true}, once: true},
 		{name: "both no-ops warn twice", set: map[string]bool{"seed": true, "frames": true},
-			wantSub: "--seed"},
+			wantSub: "--seed", wantAlso: "--frames"},
 		{name: "opencode-db without agents warns", set: map[string]bool{"opencode-db": true},
 			wantSub: "--opencode-db"},
 		{name: "opencode-db with agents silent", set: map[string]bool{"opencode-db": true}, agents: true},
@@ -326,6 +344,12 @@ func TestWarnIgnoredFlags(t *testing.T) {
 			}
 			if !strings.Contains(got, tt.wantSub) {
 				t.Fatalf("warnIgnoredFlags() printed %q, want mention of %q", got, tt.wantSub)
+			}
+			if tt.wantAlso != "" && !strings.Contains(got, tt.wantAlso) {
+				t.Fatalf("warnIgnoredFlags() printed %q, want mention of %q", got, tt.wantAlso)
+			}
+			if tt.wantAlso != "" && strings.Count(got, "has no effect") < 2 {
+				t.Fatalf("warnIgnoredFlags() printed %q, want two no-effect warnings", got)
 			}
 		})
 	}

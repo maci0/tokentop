@@ -167,9 +167,27 @@ func TestSplitMetric(t *testing.T) {
 
 // Ensure kind constants stay stable; they key UI colors and probes.
 func TestKindConstants(t *testing.T) {
-	if core.KindOllama != "ollama" || core.KindVLLM != "vllm" ||
-		core.KindLlamaCPP != "llama.cpp" || core.KindOpenAI != "openai" {
-		t.Fatal("kind strings drifted")
+	cases := []struct{ got, want string }{
+		{core.KindOllama, "ollama"},
+		{core.KindVLLM, "vllm"},
+		{core.KindLlamaCPP, "llama.cpp"},
+		{core.KindOpenAI, "openai"},
+		{core.KindSGLang, "sglang"},
+		{core.KindTRTLLM, "trt-llm"},
+		{core.KindMLX, "mlx"},
+		{core.KindLMStudio, "lmstudio"},
+		{core.KindKoboldCPP, "koboldcpp"},
+		{core.KindLocalAI, "localai"},
+		{core.KindTGI, "tgi"},
+		{core.KindLiteLLM, "litellm"},
+		{core.KindGPUStack, "gpustack"},
+		{core.KindLemonade, "lemonade"},
+		{core.KindOmniRoute, "omnirouter"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("kind constant %q drifted from %q", c.got, c.want)
+		}
 	}
 }
 

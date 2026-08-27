@@ -141,7 +141,7 @@ func TestSilentAgentProducesNoEvents(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	bin := filepath.Join(t.TempDir(), "claude")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nsleep 5\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin)
@@ -160,13 +160,21 @@ func TestSilentAgentProducesNoEvents(t *testing.T) {
 	ctx := t.Context()
 	go w.Run(ctx)
 
-	time.Sleep(700 * time.Millisecond)
-	// Only this test's directory matters: other agents may genuinely be
-	// running on the machine and reporting real numbers.
-	for _, ev := range rec.all() {
-		if ev.Note == shortDir(cmd.Dir) {
-			t.Fatalf("invented an event for a silent agent: %+v", ev)
+	waitFor(t, 3*time.Second, func() bool { return w.Following(cmd.Process.Pid) })
+	// Followed, with nothing written to the transcript. A few read cycles
+	// must stay silent; checking before discovery would pass even if a
+	// silent agent invented events once it was tracked.
+	deadline := time.Now().Add(3 * w.readEvery)
+	for time.Now().Before(deadline) {
+		for _, ev := range rec.all() {
+			if ev.Note == shortDir(cmd.Dir) {
+				t.Fatalf("invented an event for a silent agent: %+v", ev)
+			}
 		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !w.Following(cmd.Process.Pid) {
+		t.Fatal("agent was forgotten before the silence check finished")
 	}
 }
 
@@ -313,8 +321,12 @@ func TestEngineTakesPrecedence(t *testing.T) {
 	go w.Run(ctx)
 
 	waitFor(t, 3*time.Second, func() bool { return w.Following(cmd.Process.Pid) })
-	// Let one discovery pass classify the connection before it spends.
-	time.Sleep(400 * time.Millisecond)
+	waitFor(t, 3*time.Second, func() bool {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		tr := w.tracked[cmd.Process.Pid]
+		return tr != nil && tr.viaEngine != ""
+	})
 	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 500))
 
 	waitFor(t, 3*time.Second, func() bool { return len(rec.all()) > 0 })

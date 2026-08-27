@@ -8,6 +8,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -598,11 +600,29 @@ func TestConcurrentRecordProbeEmit(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 	close(stop)
+	var nSnap int
 	for { // drain until the emit goroutine has exited its final send
 		select {
 		case <-ch:
+			nSnap++
 		case <-emitDone:
+			for len(ch) > 0 {
+				<-ch
+				nSnap++
+			}
 			wg.Wait()
+			if nSnap == 0 {
+				t.Fatal("emit produced no snapshots")
+			}
+			c.mu.Lock()
+			nAgents, nProbes := len(c.agents), len(c.probes)
+			c.mu.Unlock()
+			if nAgents == 0 {
+				t.Fatal("RecordAgent produced no events")
+			}
+			if nProbes == 0 {
+				t.Fatal("RecordProbe produced no samples")
+			}
 			return
 		}
 	}
@@ -616,8 +636,7 @@ func TestEmitBlockedSendDoesNotPinMu(t *testing.T) {
 	ctx := t.Context()
 	ch := make(chan core.Snapshot) // unbuffered: the send blocks until consumed
 	go col.emit(ctx, ch)
-
-	time.Sleep(100 * time.Millisecond) // emit is now parked on the blocked send
+	waitUntilEmitParked(t)
 
 	done := make(chan struct{})
 	go func() {
@@ -628,6 +647,11 @@ func TestEmitBlockedSendDoesNotPinMu(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("RecordAgent blocked while emit was parked on a channel send")
+	}
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("emit was not parked: no snapshot pending")
 	}
 }
 
@@ -643,6 +667,29 @@ func waitFor(t *testing.T, cond func() bool, msg string) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatal(msg)
+}
+
+func waitUntilEmitParked(t *testing.T) {
+	t.Helper()
+	waitFor(t, func() bool {
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		s := string(buf[:n])
+		return strings.Contains(s, "/collector.") && strings.Contains(s, "emit")
+	}, "emit never parked on the snapshot send")
+}
+
+// waitStay fails if cond drops during window: a "must not happen" check
+// that would otherwise be a single sleep-and-sample.
+func waitStay(t *testing.T, window time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(window)
+	for time.Now().Before(deadline) {
+		if !cond() {
+			t.Fatal(msg)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 // Holding 'p' or stacking --probe on top of it must not pile concurrent
@@ -672,10 +719,8 @@ func TestProbeAllSingleFlightPerBackend(t *testing.T) {
 	waitFor(t, func() bool { return hits.Load() == 1 }, "first wave never reached the engine")
 
 	c.ProbeAll() // first still in flight: this wave must be dropped
-	time.Sleep(30 * time.Millisecond)
-	if n := hits.Load(); n != 1 {
-		t.Fatalf("second wave started while the first was in flight (%d requests)", n)
-	}
+	waitStay(t, 50*time.Millisecond, func() bool { return hits.Load() == 1 },
+		"second wave started while the first was in flight")
 
 	close(release)
 	waitFor(t, func() bool {
@@ -709,8 +754,6 @@ func TestProbeAllWaveGap(t *testing.T) {
 	c.ProbeAll()
 	c.ProbeAll()
 	waitFor(t, func() bool { return hits.Load() == 1 }, "first wave never reached the engine")
-	time.Sleep(30 * time.Millisecond) // long enough for waves 2 and 3 to have fired unchecked
-	if n := hits.Load(); n != 1 {
-		t.Fatalf("gap gate let %d waves reach the engine, want 1", n)
-	}
+	waitStay(t, 50*time.Millisecond, func() bool { return hits.Load() == 1 },
+		"gap gate let extra waves reach the engine")
 }

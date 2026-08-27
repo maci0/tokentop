@@ -420,7 +420,6 @@ func TestIngestRejectsBrowserOriginatedPost(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if len(rec.evs) != 0 {
 		t.Fatalf("events = %d, want none from a browser-originated post", len(rec.evs))
 	}
