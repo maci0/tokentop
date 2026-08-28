@@ -5,6 +5,12 @@
   "main": "worker.js",
   "compatibility_date": "2026-08-25",
   "workers_dev": true,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
   "routes": [
     { "pattern": "toktop.ai", "custom_domain": true },
     { "pattern": "www.toktop.ai", "custom_domain": true }

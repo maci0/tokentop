@@ -31,12 +31,13 @@ so caches never hand a compressed body to a client that cannot decode it.
 
 ## Performance budget
 
-One request, no JavaScript, no webfonts, inline CSS only. Measured against the
-current source: 6,223 bytes identity / 2,690 gzip / 2,170 brotli - all inside
-the ~14 KB initial congestion window, so first paint needs a single round
-trip. Anything pulling the page past one window (a script, a font, an image)
-needs a better reason than decoration. The budget is pinned by a test, so
-drift fails `bun test site/`; numbers above are re-measurable with it:
+One request for the page, no JavaScript, no webfonts, inline CSS only. The
+hero is the real dashboard capture (WebP ~140 KB, PNG fallback), served from
+this Worker so a deploy updates share cards and the page together. Measured
+against the current source: 6,392 bytes identity / 2,686 gzip / 2,166 brotli
+for the HTML, still inside the ~14 KB initial congestion window. The budget
+is pinned by a test, so drift fails `bun test site/`; numbers above are
+re-measurable with it:
 
 ```sh
 bun test site/    # or `make site-check` from the repo root

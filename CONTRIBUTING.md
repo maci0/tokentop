@@ -71,7 +71,10 @@ pane in this checkout: a detached session otherwise starts wherever the tmux
 server did, and `./toktop` is not there.
 
 The image's pixel size is repeated in `site/worker.js` as the `og:image`
-dimensions; update both together.
+dimensions. Copy the PNG into `site/public/dashboard.png` and rebuild
+`site/public/dashboard.webp` (`magick docs/images/dashboard.png -strip
+-resize 1920x -quality 82 site/public/dashboard.webp`) so the live page
+and share cards pick up the same frame.
 
 ## Make targets
 
