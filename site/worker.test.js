@@ -177,9 +177,9 @@ test("recorded transfer sizes stay inside the initial congestion window", async 
   const brotli = new Uint8Array(
     await (await call({ "accept-encoding": "br" })).arrayBuffer(),
   ).byteLength;
-  expect(identity).toBe(6214);
-  expect(gzipped).toBe(2682);
-  expect(brotli).toBe(2165);
+  expect(identity).toBe(6223);
+  expect(gzipped).toBe(2690);
+  expect(brotli).toBe(2170);
   expect(identity).toBeLessThan(budget);
   expect(gzipped).toBeLessThan(budget);
   expect(brotli).toBeLessThan(budget);

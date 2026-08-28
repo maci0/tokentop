@@ -179,8 +179,7 @@ func (s *testSSHServer) serveSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 			err := cmd.Run()
 			status := uint32(0)
 			if err != nil {
-				var ee *exec.ExitError
-				if errors.As(err, &ee) {
+				if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 					status = uint32(ee.ExitCode())
 				} else {
 					status = 127
@@ -320,7 +319,7 @@ func TestClientConnectRunForward(t *testing.T) {
 	// Each Run must close its session; leaving them open would eventually
 	// refuse new channels. A few dozen back-to-back commands is well past
 	// a typical MaxSessions without being slow.
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		if _, err := cli.Run(t.Context(), "true"); err != nil {
 			t.Fatalf("run %d after prior sessions: %v", i, err)
 		}

@@ -5,7 +5,7 @@ package demo
 import (
 	"context"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"sort"
 	"sync"
 	"time"
@@ -45,7 +45,7 @@ type Source struct {
 func NewSource(interval time.Duration, seed int64) *Source {
 	return &Source{
 		interval: interval,
-		rng:      rand.New(rand.NewSource(seed)),
+		rng:      rand.New(rand.NewPCG(uint64(seed), 0)),
 		backends: []backend{
 			{label: "ollama", kind: core.KindOllama, addr: "http://127.0.0.1:11434", model: "llama3.1:8b-instruct-q4_K_M",
 				outBase: 38, inBase: 120, burstEvery: 17},
@@ -149,11 +149,11 @@ func (s *Source) frame(now time.Time) {
 	defer s.mu.Unlock()
 	if now.After(s.nextEv) {
 		s.genEvent(now)
-		s.nextEv = now.Add(time.Duration(2+s.rng.Intn(5)) * s.interval)
+		s.nextEv = now.Add(time.Duration(2+s.rng.IntN(5)) * s.interval)
 	}
 	if now.After(s.nextPr) {
 		s.genProbe(now)
-		s.nextPr = now.Add(time.Duration(6+s.rng.Intn(6)) * s.interval)
+		s.nextPr = now.Add(time.Duration(6+s.rng.IntN(6)) * s.interval)
 	}
 	s.t += s.interval.Seconds()
 	for i, b := range s.backends {
@@ -221,17 +221,17 @@ func (s *Source) sysSample() core.SysSample {
 
 // genEvent synthesizes one agent event; caller holds s.mu.
 func (s *Source) genEvent(now time.Time) {
-	b := s.backends[s.rng.Intn(len(s.backends))]
+	b := s.backends[s.rng.IntN(len(s.backends))]
 	ev := core.AgentEvent{
 		At:           now,
-		Agent:        agentNames[s.rng.Intn(len(agentNames))],
+		Agent:        agentNames[s.rng.IntN(len(agentNames))],
 		Model:        b.model,
-		Kind:         evKinds[s.rng.Intn(len(evKinds))],
-		PromptTokens: int64(400 + s.rng.Intn(9000)),
-		OutputTokens: int64(30 + s.rng.Intn(1200)),
+		Kind:         evKinds[s.rng.IntN(len(evKinds))],
+		PromptTokens: int64(400 + s.rng.IntN(9000)),
+		OutputTokens: int64(30 + s.rng.IntN(1200)),
 	}
 	if ev.Kind == "note" || ev.Kind == "error" {
-		ev.Note = notes[s.rng.Intn(len(notes))]
+		ev.Note = notes[s.rng.IntN(len(notes))]
 	}
 	s.addAgent(ev)
 }
@@ -303,7 +303,7 @@ func (s *Source) synthProbe(b backend, at time.Time, ttftLo, ttftSpan, durLo, du
 
 // genProbe drops in one background probe; caller holds s.mu.
 func (s *Source) genProbe(now time.Time) {
-	b := s.backends[s.rng.Intn(len(s.backends))]
+	b := s.backends[s.rng.IntN(len(s.backends))]
 	s.addProbe(s.synthProbe(b, now, 80, 140, 0.4, 1.2))
 }
 
@@ -329,13 +329,14 @@ func (s *Source) snapshot(now time.Time) core.Snapshot {
 			InTokPS:  tail(s.histIn[b.label]),
 			KVPct:    clamp(s.kv[i], 0, 100),
 			TTFTms:   90 + 70*math.Abs(math.Sin(s.t/10+float64(i))),
+
+			Running: 1 + i%3 + int(clamp(math.Sin(s.t/7+float64(i))*1.5+1.5, 0, 4)),
+			Waiting: int(clamp(math.Sin(s.t/13+float64(i*2))*3+3, 0, 24)),
+			OutHist: append([]float64(nil), s.histOut[b.label]...),
+			InHist:  append([]float64(nil), s.histIn[b.label]...),
+			OutT0:   s.t0[b.label],
+			InT0:    s.t0[b.label],
 		}
-		ps.Running = 1 + i%3 + int(clamp(math.Sin(s.t/7+float64(i))*1.5+1.5, 0, 4))
-		ps.Waiting = int(clamp(math.Sin(s.t/13+float64(i*2))*3+3, 0, 24))
-		ps.OutHist = append([]float64(nil), s.histOut[b.label]...)
-		ps.InHist = append([]float64(nil), s.histIn[b.label]...)
-		ps.OutT0 = s.t0[b.label]
-		ps.InT0 = s.t0[b.label]
 		snap.Providers = append(snap.Providers, ps)
 	}
 	return snap

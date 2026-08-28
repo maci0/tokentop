@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/maci0/toktop/internal/core"
@@ -27,6 +28,12 @@ func collectOne(t *testing.T, s *Source) core.Snapshot {
 }
 
 func TestDeterministicPerSeed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testDeterministicPerSeed(t)
+	})
+}
+
+func testDeterministicPerSeed(t *testing.T) {
 	a := collectOne(t, NewSource(10*time.Millisecond, 7))
 	b := collectOne(t, NewSource(10*time.Millisecond, 7))
 	if len(a.Providers) == 0 || len(a.Providers) != len(b.Providers) {
@@ -182,26 +189,28 @@ func TestProbeAllProducesSamples(t *testing.T) {
 }
 
 func TestSnapshotCarriesAgentsAndProbes(t *testing.T) {
-	s := NewSource(5*time.Millisecond, 11)
-	ch := make(chan core.Snapshot, 32)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	go s.Run(ctx, ch)
+	synctest.Test(t, func(t *testing.T) {
+		s := NewSource(5*time.Millisecond, 11)
+		ch := make(chan core.Snapshot, 32)
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		go s.Run(ctx, ch)
 
-	var got core.Snapshot
-	deadline := time.Now().Add(2500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		select {
-		case got = <-ch:
-		default:
-			time.Sleep(time.Millisecond)
-			continue
+		var got core.Snapshot
+		deadline := time.Now().Add(2500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			select {
+			case got = <-ch:
+			default:
+				time.Sleep(time.Millisecond)
+				continue
+			}
+			if len(got.Agents) > 0 && len(got.Probes) > 0 {
+				return // success
+			}
 		}
-		if len(got.Agents) > 0 && len(got.Probes) > 0 {
-			return // success
-		}
-	}
-	t.Fatal("no agent/probe activity within deadline")
+		t.Fatal("no agent/probe activity within deadline")
+	})
 }
 
 // Sub-second poll intervals must still anchor t0 correctly; the whole-second
@@ -312,11 +321,9 @@ func TestRecordAgentSameIDKeptOnce(t *testing.T) {
 	ev := core.AgentEvent{At: time.Now(), ID: "turn-1", Agent: "coder", OutputTokens: 50}
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			s.RecordAgent(ev)
-		}()
+		})
 	}
 	wg.Wait()
 	s.mu.Lock()

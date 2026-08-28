@@ -76,8 +76,7 @@ func TestLoadDefinitionsRejectsMalformedFile(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDefinitions) {
 		t.Fatalf("malformed file = %v, want ErrInvalidDefinitions", err)
 	}
-	var syn *json.SyntaxError
-	if !errors.As(err, &syn) {
+	if _, ok := errors.AsType[*json.SyntaxError](err); !ok {
 		t.Fatalf("malformed file = %v, want wrapped json.SyntaxError", err)
 	}
 }

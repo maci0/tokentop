@@ -153,7 +153,7 @@ func noteIOAccel(ok bool, out []byte) {
 // the max utilization percentage. Key spellings drift between macOS
 // releases; unknown lines are simply ignored.
 func parseIOAccelerator(text string) (memUsed uint64, utilPct float64) {
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		k, v, ok := strings.Cut(line, "=")
 		if !ok {
 			continue

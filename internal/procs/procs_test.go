@@ -49,8 +49,8 @@ func TestMatchEngine(t *testing.T) {
 		{"firefox", []string{"firefox"}, "", 0, false},
 	}
 	for _, c := range cases {
-		i := Info{PID: 1, Name: c.name, Args: c.args}
-		i.PortHint = ExtractPort(c.args)
+		i := Info{PID: 1, Name: c.name, Args: c.args,
+			PortHint: ExtractPort(c.args)}
 		eng, def, ok := MatchEngine(i)
 		if ok != c.ok || eng != c.engine || (ok && def != c.port) {
 			t.Errorf("match(%s %v) = %q/%d/%v, want %q/%d/%v",

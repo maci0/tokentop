@@ -25,7 +25,7 @@ func listDarwin() ([]raw, error) {
 		return nil, err
 	}
 	var list []raw
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

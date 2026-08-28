@@ -4,7 +4,6 @@
 package agentwatch
 
 import (
-	"context"
 	"encoding/json"
 	"net"
 	"net/netip"
@@ -176,8 +175,7 @@ func TestPIDReuseRetargetsWatcher(t *testing.T) {
 		defer mu.Unlock()
 		return []agentusage.Process{cur}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	defer w.stopAll()
 
 	w.discover(ctx)
@@ -221,8 +219,7 @@ func TestSamePIDKeepsTracker(t *testing.T) {
 	w := New(&recorder{}, nil)
 	w.readEvery = time.Hour
 	w.listAgents = func() []agentusage.Process { return []agentusage.Process{p} }
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	defer w.stopAll()
 
 	w.discover(ctx)
@@ -452,8 +449,7 @@ func TestEngineTakesPrecedence(t *testing.T) {
 	rec := &recorder{}
 	w := New(rec, func() []string { return []string{engine} })
 	w.discoverEvery, w.readEvery = 150*time.Millisecond, 100*time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go w.Run(ctx)
 
 	waitFor(t, 3*time.Second, func() bool { return w.Following(cmd.Process.Pid) })

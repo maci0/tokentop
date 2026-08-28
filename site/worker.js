@@ -102,13 +102,13 @@ const HTML = htmlForWire(`<!doctype html>
 
 ENGINES  <span class="dim">local + ssh</span>
   ollama    <span class="dim">llama3.1:8b-instruct-q4_K_M</span>
-    kv <span class="warm">80%</span>   <span class="up">▲ 36.4</span> ▼ 115    run 2 wait 5
+    kv <span class="warm">78%</span>   <span class="up">▲ 31.2</span> ▼ 98.4   run 2 wait 5
   vllm      <span class="dim">Qwen/Qwen2.5-32B-Instruct-AWQ</span>
-    kv <span class="warm">73%</span>   <span class="up">▲ 620</span> ▼ 2.6k   run 2 wait 0
+    kv <span class="warm">75%</span>   <span class="up">▲ 589</span> ▼ 2.4k   run 2 wait 0
 
 AGENTS  <span class="dim">read from their own session logs</span>
-  swarm-07     <span class="up">▲ 101 tok/s</span>   ▲2.3k ▼19.1k   <span class="up">● live</span>
-  coder-agent  <span class="dim">no rate yet</span>   ▲1.0k ▼8.8k    <span class="dim">idle 7s</span></code></pre>
+  swarm-07         <span class="up">▲ 91.6 tok/s</span>  ▲1.9k ▼18.8k   <span class="up">● live</span>
+  research-agent   <span class="dim">no rate yet</span>   ▲761 ▼9.0k     <span class="dim">idle 17s</span></code></pre>
 
   <h2>Install</h2>
 <pre tabindex="0"><code>go install -tags sqlite github.com/maci0/toktop/cmd/toktop@latest

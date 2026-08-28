@@ -249,7 +249,7 @@ func TestRunOpenAIStopsAfterProbeTokens(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		f := http.NewResponseController(w)
-		for i := 0; i < probeTokens*8; i++ {
+		for range probeTokens * 8 {
 			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n")
 			f.Flush()
 		}
@@ -269,7 +269,7 @@ func TestRunOllamaStopsAfterProbeTokens(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		f := http.NewResponseController(w)
-		for i := 0; i < probeTokens*8; i++ {
+		for range probeTokens * 8 {
 			fmt.Fprintf(w, `{"response":"x","done":false}`+"\n")
 			f.Flush()
 		}

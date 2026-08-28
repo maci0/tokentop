@@ -32,7 +32,7 @@ so caches never hand a compressed body to a client that cannot decode it.
 ## Performance budget
 
 One request, no JavaScript, no webfonts, inline CSS only. Measured against the
-current source: 6,214 bytes identity / 2,682 gzip / 2,165 brotli - all inside
+current source: 6,223 bytes identity / 2,690 gzip / 2,170 brotli - all inside
 the ~14 KB initial congestion window, so first paint needs a single round
 trip. Anything pulling the page past one window (a script, a font, an image)
 needs a better reason than decoration. The budget is pinned by a test, so

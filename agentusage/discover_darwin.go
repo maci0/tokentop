@@ -28,7 +28,7 @@ func Discover() []Process {
 	}
 
 	var found []Process
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -80,7 +80,7 @@ func cwdOf(pid int) string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		if path, ok := strings.CutPrefix(line, "n"); ok && len(path) > 0 {
 			return path
 		}

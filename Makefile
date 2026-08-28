@@ -18,7 +18,7 @@ export GOARM64 := v8.0
 # Strip paths, omit git stamps (checkout vs tarball would disagree), honor
 # go.sum, produce a PIE.
 GO_BUILDFLAGS := -trimpath -buildvcs=false -mod=readonly -buildmode=pie
-STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck@2026.2.1
+STATICCHECK := $(GO) tool staticcheck
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 # gofmt from the selected toolchain, not a different major on PATH.
 GOFMT = $$($(GO) env GOROOT)/bin/gofmt
@@ -130,12 +130,12 @@ vet: ## run go vet (both halves of the sqlite tag gate)
 
 # Same per-platform gate release.yml runs before shipping; PLATFORMS is the
 # single source of truth so CI and local checks cannot list different targets.
-# staticcheck is built for the host once: `go run` would inherit GOOS and
+# staticcheck is built for the host once: installing with GOOS set would
 # produce a tool binary for the analyzed platform instead of the analyzer.
 .PHONY: vet-cross
 vet-cross: ## vet + staticcheck every release platform from PLATFORMS
 	@mkdir -p $(DIST)/bin
-	@env GOBIN=$(CURDIR)/$(DIST)/bin $(GO) install honnef.co/go/tools/cmd/staticcheck@2026.2.1 || exit 1
+	@env GOBIN=$(CURDIR)/$(DIST)/bin $(GO) install tool || exit 1
 	@for target in $(PLATFORMS); do \
 		goos=$${target%/*}; goarch=$${target#*/}; \
 		echo "checking $$goos/$$goarch"; \
@@ -166,6 +166,8 @@ fmt: ## rewrite all Go files with gofmt (including simplifications)
 .PHONY: fix
 fix: ## apply go fix modernization autofixes, then gofmt
 	$(GO) fix ./...
+	GOOS=darwin $(GO) fix ./...
+	GOOS=windows $(GO) fix ./...
 	$(GOFMT) -s -w .
 
 .PHONY: tidy-check
