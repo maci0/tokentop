@@ -12,8 +12,9 @@ package ui
 // out of header and chart totals so those tokens are not counted twice.
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -92,11 +93,11 @@ func agentRates(events []core.AgentEvent, now time.Time) []agentRate {
 		}
 		out = append(out, r)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].TokPS != out[j].TokPS {
-			return out[i].TokPS > out[j].TokPS
+	slices.SortFunc(out, func(a, b agentRate) int {
+		if c := cmp.Compare(b.TokPS, a.TokPS); c != 0 {
+			return c
 		}
-		return out[i].Agent < out[j].Agent
+		return cmp.Compare(a.Agent, b.Agent)
 	})
 	return out
 }

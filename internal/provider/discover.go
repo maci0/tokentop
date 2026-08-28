@@ -133,11 +133,9 @@ func IdentifyAll(ctx context.Context, bases []string) []string {
 	kinds := make([]string, len(bases))
 	var wg sync.WaitGroup
 	for i, base := range bases {
-		wg.Add(1)
-		go func(i int, base string) {
-			defer wg.Done()
+		wg.Go(func() {
 			kinds[i] = identify(ctx, base)
-		}(i, base)
+		})
 	}
 	wg.Wait()
 	return kinds

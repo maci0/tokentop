@@ -23,11 +23,12 @@ const HTML = htmlForWire(`<!doctype html>
 <meta property="og:url" content="https://toktop.ai">
 <!-- the real dashboard, not a generated stand-in: share cards should show
      the product the page is about -->
-<meta property="og:image" content="https://raw.githubusercontent.com/maci0/toktop/main/docs/images/dashboard.png">
+<meta property="og:image" content="https://toktop.ai/dashboard.png">
 <meta property="og:image:width" content="3240">
 <meta property="og:image:height" content="1900">
 <meta property="og:image:alt" content="toktop running in a terminal: engine rows with throughput and KV-cache pressure beside an agent feed">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://toktop.ai/dashboard.png">
 <!-- the icon is the h1 cursor block in the accent and panel colors, not a placeholder emoji -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20rx='20'%20fill='%2311161d'/%3E%3Crect%20x='37'%20y='25'%20width='26'%20height='50'%20rx='5'%20fill='%234cc38a'/%3E%3C/svg%3E">
 <style>
@@ -49,11 +50,11 @@ const HTML = htmlForWire(`<!doctype html>
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 4rem 1.25rem 5rem;
+    margin: 0; padding: 3rem 1.25rem 5rem;
     background: var(--bg); color: var(--fg);
     font-family: var(--mono); font-size: 15px; line-height: 1.6;
   }
-  main { max-width: 62rem; margin: 0 auto; }
+  main { max-width: 76rem; margin: 0 auto; }
   h1 { font-size: 2.6rem; margin: 0; }
   /* Blinking content that starts automatically must be pausable/stoppable
      (WCAG 2.2.2); honoring prefers-reduced-motion is the static-page remedy,
@@ -90,6 +91,21 @@ const HTML = htmlForWire(`<!doctype html>
      (WCAG 2.2 AA SC 2.5.8); vertical padding makes each footer item a real
      target instead of leaning on the spacing exception. */
   footer > * { padding: .3rem 0; }
+  /* The screenshot is the product, not a decoration: a dark terminal
+     frame so the capture never sits on the light-scheme paper. */
+  .shot {
+    margin: 0 0 2.6rem; border: 1px solid var(--line);
+    background: #0d1117; overflow: hidden;
+  }
+  .shot figcaption {
+    margin: 0; padding: .55rem 1rem; font-size: 13px;
+    color: #7d8895; background: #11161d; border-bottom: 1px solid #222b36;
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+  @media (max-width: 640px) {
+    body { padding: 2rem .85rem 4rem; }
+    h1 { font-size: 2rem; }
+  }
 </style>
 </head>
 <body>
@@ -98,17 +114,15 @@ const HTML = htmlForWire(`<!doctype html>
   <p class="tag"><code>btop</code> for AI: a terminal dashboard for LLM inference
   engines and the coding agents hammering them.</p>
 
-<pre tabindex="0"><code><span class="dim">$</span> toktop --demo
-
-ENGINES  <span class="dim">local + ssh</span>
-  ollama    <span class="dim">llama3.1:8b-instruct-q4_K_M</span>
-    kv <span class="warm">80%</span>   <span class="up">▲ 36.4</span> ▼ 115    run 2 wait 5
-  vllm      <span class="dim">Qwen/Qwen2.5-32B-Instruct-AWQ</span>
-    kv <span class="warm">73%</span>   <span class="up">▲ 620</span> ▼ 2.6k   run 2 wait 0
-
-AGENTS  <span class="dim">read from their own session logs</span>
-  swarm-07     <span class="up">▲ 101 tok/s</span>   ▲2.3k ▼19.1k   <span class="up">● live</span>
-  coder-agent  <span class="dim">no rate yet</span>   ▲1.0k ▼8.8k    <span class="dim">idle 7s</span></code></pre>
+  <figure class="shot">
+    <figcaption><span class="dim">$</span> toktop --demo</figcaption>
+    <picture>
+      <source type="image/webp" srcset="/dashboard.webp">
+      <img src="/dashboard.png" width="1920" height="1126"
+           alt="toktop dashboard: five local engines with throughput and KV-cache pressure, GPU vitals, two answered probes, and three coding agents"
+           decoding="async" fetchpriority="high">
+    </picture>
+  </figure>
 
   <h2>Install</h2>
 <pre tabindex="0"><code>go install -tags sqlite github.com/maci0/toktop/cmd/toktop@latest
@@ -288,7 +302,7 @@ const SECURITY_HEADERS = {
   "strict-transport-security": "max-age=31536000",
   "referrer-policy": "strict-origin-when-cross-origin",
   "content-security-policy":
-    "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
 
 // Every page answer (200 any encoding, 304) carries these; the security
@@ -301,9 +315,29 @@ const PAGE_HEADERS = {
   ...SECURITY_HEADERS,
 };
 
+const IMAGE_PATHS = new Set(["/dashboard.png", "/dashboard.webp"]);
+const IMAGE_CACHE = "public, max-age=86400, stale-while-revalidate=604800";
+
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url = new URL(request.url);
+    if (IMAGE_PATHS.has(url.pathname) && env?.ASSETS) {
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        return new Response("method not allowed", {
+          status: 405,
+          headers: { allow: "GET, HEAD", ...SECURITY_HEADERS },
+        });
+      }
+      const asset = await env.ASSETS.fetch(request);
+      const headers = new Headers(asset.headers);
+      headers.set("cache-control", IMAGE_CACHE);
+      headers.set("x-content-type-options", "nosniff");
+      headers.set("referrer-policy", "strict-origin-when-cross-origin");
+      if (request.method === "HEAD") {
+        return new Response(null, { status: asset.status, headers });
+      }
+      return new Response(asset.body, { status: asset.status, headers });
+    }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("method not allowed", {
         status: 405,

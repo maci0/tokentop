@@ -55,13 +55,12 @@ jobs:
         run: go mod tidy -diff
       # staticcheck resolves build tags per GOOS, so every runner analyzes its
       # own platform-specific files; the linux pass plus the matrix below
-      # together cover all of them. Install once: `go run @version` would
-      # rebuild the analyzer for each of the two tag halves.
+      # together cover all of them. The module pins the analyzer via a tool
+      # directive; `go tool` runs that pin without a second version string.
       - name: staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@2026.2.1
-          staticcheck ./...
-          staticcheck -tags sqlite ./agentusage/...
+          go tool staticcheck ./...
+          go tool staticcheck -tags sqlite ./agentusage/...
       - name: vet
         run: |
           go vet -mod=readonly ./...

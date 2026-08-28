@@ -179,7 +179,7 @@ func durationFromClock(sec, nsec int64) time.Duration {
 // "total = 2048.00M used = 512.00M free = 1536.00M".
 func parseSwapUsage(s string) (total, used uint64) {
 	last := ""
-	for _, tok := range strings.Fields(strings.ReplaceAll(s, "=", " ")) {
+	for tok := range strings.FieldsSeq(strings.ReplaceAll(s, "=", " ")) {
 		switch strings.ToLower(tok) {
 		case "total":
 			last = "total"

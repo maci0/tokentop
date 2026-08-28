@@ -226,9 +226,7 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	results := make([]result, len(c.providers))
 	var wg sync.WaitGroup
 	for i, p := range c.providers {
-		wg.Add(1)
-		go func(i int, p provider.Provider) {
-			defer wg.Done()
+		wg.Go(func() {
 			// Bound by PollTimeout and by the Run context so shutdown does
 			// not wait out a stalled scrape the way ProbeAll already
 			// cancels in-flight generations.
@@ -236,7 +234,7 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 			defer cancel()
 			m, err := p.Poll(pctx)
 			results[i] = result{m, err}
-		}(i, p)
+		})
 	}
 	wg.Wait()
 

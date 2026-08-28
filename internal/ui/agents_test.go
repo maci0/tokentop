@@ -67,11 +67,11 @@ func TestAgentRowsAlignRateColumn(t *testing.T) {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
 	rateCol := func(row string) int {
-		i := strings.Index(row, "▲")
-		if i < 0 {
+		before, _, ok := strings.Cut(row, "▲")
+		if !ok {
 			t.Fatalf("row lacks a rate cell: %q", strip(row))
 		}
-		return lipgloss.Width(row[:i])
+		return lipgloss.Width(before)
 	}
 	if got := rateCol(rows[0]); got != rateCol(rows[1]) {
 		t.Errorf("rate columns misaligned: %d vs %d cells\n%s\n%s",

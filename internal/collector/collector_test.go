@@ -10,10 +10,12 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/maci0/toktop/internal/core"
@@ -302,36 +304,38 @@ func TestRecordAgentZeroAtUsesClock(t *testing.T) {
 // emit one snapshot per interval (including the immediate first frame) and
 // stop promptly on ctx cancellation without stranding the emit goroutine.
 func TestRunEmitsUntilCancel(t *testing.T) {
-	fp := &fakeProvider{label: "run", m: &provider.Metrics{
-		OutTotal: 1, Models: []core.ModelInfo{{Name: "m"}},
-	}}
-	ch := make(chan core.Snapshot)
-	ctx, cancel := context.WithCancel(context.Background())
-	c := New([]provider.Provider{fp}, 5*time.Millisecond)
-	c.SetSysFn(func() core.SysSample { return core.SysSample{MemTotal: 9} })
+	synctest.Test(t, func(t *testing.T) {
+		fp := &fakeProvider{label: "run", m: &provider.Metrics{
+			OutTotal: 1, Models: []core.ModelInfo{{Name: "m"}},
+		}}
+		ch := make(chan core.Snapshot)
+		ctx, cancel := context.WithCancel(t.Context())
+		c := New([]provider.Provider{fp}, 5*time.Millisecond)
+		c.SetSysFn(func() core.SysSample { return core.SysSample{MemTotal: 9} })
 
-	done := make(chan struct{})
-	go func() { defer close(done); c.Run(ctx, ch) }()
+		done := make(chan struct{})
+		go func() { defer close(done); c.Run(ctx, ch) }()
 
-	for i := range 2 {
-		select {
-		case snap := <-ch:
-			if len(snap.Providers) != 1 || snap.Providers[0].Label != "run" {
-				t.Fatalf("snapshot %d = %+v", i, snap.Providers)
+		for i := range 2 {
+			select {
+			case snap := <-ch:
+				if len(snap.Providers) != 1 || snap.Providers[0].Label != "run" {
+					t.Fatalf("snapshot %d = %+v", i, snap.Providers)
+				}
+				if snap.Sys == nil || snap.Sys.MemTotal != 9 {
+					t.Fatalf("snapshot %d missing sys vitals: %+v", i, snap.Sys)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("Run stopped emitting snapshots")
 			}
-			if snap.Sys == nil || snap.Sys.MemTotal != 9 {
-				t.Fatalf("snapshot %d missing sys vitals: %+v", i, snap.Sys)
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("Run stopped emitting snapshots")
 		}
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not return after cancel")
-	}
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Run did not return after cancel")
+		}
+	})
 }
 
 // Run warms the vitals cache before its first emit, so the (potentially
@@ -455,11 +459,9 @@ func TestRecordAgentSameIDKeptOnce(t *testing.T) {
 	ev := core.AgentEvent{At: time.Now(), ID: "turn-1", Agent: "coder", OutputTokens: 50}
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			c.RecordAgent(ev)
-		}()
+		})
 	}
 	wg.Wait()
 	if len(c.agents) != 1 {
@@ -478,12 +480,39 @@ func TestRecordAgentSameIDKeptOnce(t *testing.T) {
 	}
 }
 
+// emit launches one goroutine per provider and waits; they must all return
+// so the leak profile stays empty. A leaked poll goroutine would show up
+// here after GC, the same way a production dashboard would accumulate them.
+func TestEmitDoesNotLeakGoroutines(t *testing.T) {
+	fp := &fakeProvider{label: "x", m: &provider.Metrics{
+		OutTotal: 1, Models: []core.ModelInfo{{Name: "m"}},
+	}}
+	c := New([]provider.Provider{fp}, time.Hour)
+	c.SetSysFn(func() core.SysSample { return core.SysSample{MemTotal: 1} })
+	ch := make(chan core.Snapshot, 1)
+	c.emit(context.Background(), ch)
+	<-ch
+	runtime.GC()
+	runtime.GC()
+	p := pprof.Lookup("goroutineleak")
+	if p == nil {
+		t.Fatal("goroutineleak profile not available")
+	}
+	var buf strings.Builder
+	if err := p.WriteTo(&buf, 1); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "goroutine ") {
+		t.Fatalf("leaked goroutines after emit:\n%s", buf.String())
+	}
+}
+
 // The id window is the retained ring: once an event is evicted, its id may
 // be reused rather than pinning a key forever.
 func TestRecordAgentReusesEvictedID(t *testing.T) {
 	c := New(nil, time.Second)
 	c.RecordAgent(core.AgentEvent{At: time.Now(), ID: "old", Agent: "a"})
-	for i := 0; i < core.AgentHistoryLen; i++ {
+	for i := range core.AgentHistoryLen {
 		c.RecordAgent(core.AgentEvent{At: time.Now(), ID: fmt.Sprintf("n%d", i), Agent: "a"})
 	}
 	if core.HasAgentID(c.agents, "old") {
@@ -606,10 +635,8 @@ func TestConcurrentRecordProbeEmit(t *testing.T) {
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(3)
 
-	go func() { // ingest server handlers appending events and probes
-		defer wg.Done()
+	wg.Go(func() { // ingest server handlers appending events and probes
 		for {
 			select {
 			case <-stop:
@@ -620,9 +647,8 @@ func TestConcurrentRecordProbeEmit(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 		}
-	}()
-	go func() { // UI 'p' keypresses; ProbeAll reads lastModel under mu
-		defer wg.Done()
+	})
+	wg.Go(func() { // UI 'p' keypresses; ProbeAll reads lastModel under mu
 		for {
 			select {
 			case <-stop:
@@ -632,11 +658,10 @@ func TestConcurrentRecordProbeEmit(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 		}
-	}()
+	})
 
 	emitDone := make(chan struct{})
-	go func() { // poll loop emitting snapshots
-		defer wg.Done()
+	wg.Go(func() { // poll loop emitting snapshots
 		defer close(emitDone)
 		for {
 			select {
@@ -646,7 +671,7 @@ func TestConcurrentRecordProbeEmit(t *testing.T) {
 				c.emit(context.Background(), ch)
 			}
 		}
-	}()
+	})
 
 	time.Sleep(200 * time.Millisecond)
 	close(stop)

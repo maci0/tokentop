@@ -535,13 +535,47 @@ func dirSpellings(dir string) []string {
 	return out
 }
 
+// openTranscript opens path only if it still lives under one of this
+// watcher's roots. A symlink swapped to point outside is refused, so a
+// writable store cannot pull in a file from elsewhere.
+func (w *Watcher) openTranscript(path string) (*os.File, error) {
+	for _, root := range w.ad.roots(w.dir) {
+		if root == "" {
+			continue
+		}
+		f, err := openUnder(root, path)
+		if err == nil {
+			return f, nil
+		}
+	}
+	return nil, os.ErrNotExist
+}
+
+func openUnder(root, path string) (*os.File, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsLocal(rel) {
+		return nil, errOutsideRoot
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.Open(rel)
+}
+
+var errOutsideRoot = errors.New("path is outside the transcript root")
+
 // baselineTailBytes bounds the seed read. Cumulative values only grow, so the
 // last one in the file is the baseline, and the tail always holds it.
 const baselineTailBytes = 256 << 10
 
 // seedBaseline records what a pre-existing session had already spent.
 func (w *Watcher) seedBaseline(path string) {
-	f, err := os.Open(path)
+	f, err := w.openTranscript(path)
 	if err != nil {
 		return
 	}
@@ -768,18 +802,26 @@ func listTranscripts(root, suffix string, cutoff time.Time, force bool) []string
 		}
 	}
 	var out []string
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		rootListMu.Lock()
+		rootLists[key] = rootListing{files: out, at: time.Now()}
+		rootListMu.Unlock()
+		return nil
+	}
+	defer r.Close()
+	_ = fs.WalkDir(r.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
+		if err != nil || rel == "." {
 			return nil
 		}
-		if d.IsDir() || !strings.HasSuffix(path, suffix) {
+		if d.IsDir() || !strings.HasSuffix(rel, suffix) {
 			return nil
 		}
 		info, err := d.Info()
 		if err != nil || info.ModTime().Before(cutoff) {
 			return nil
 		}
-		out = append(out, path)
+		out = append(out, filepath.Join(root, filepath.FromSlash(rel)))
 		return nil
 	})
 	rootListMu.Lock()
@@ -911,7 +953,7 @@ func (w *Watcher) readNew(path string) {
 		w.stamps[path] = stamp
 		return
 	}
-	f, err := os.Open(path)
+	f, err := w.openTranscript(path)
 	if err != nil {
 		return // unstamped: the next poll retries instead of treating this as done
 	}
@@ -1076,7 +1118,7 @@ func (w *Watcher) owns(path string) (mine, decided bool) {
 	if mine, known := w.owner[path]; known {
 		return mine, true
 	}
-	f, err := os.Open(path)
+	f, err := w.openTranscript(path)
 	if err != nil {
 		return false, false // transient: retry next poll
 	}

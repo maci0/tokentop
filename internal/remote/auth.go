@@ -36,8 +36,7 @@ func loadSigner(path string) (ssh.Signer, error) {
 		return nil, err
 	}
 	s, err := ssh.ParsePrivateKey(b)
-	var pme *ssh.PassphraseMissingError
-	if errors.As(err, &pme) {
+	if _, ok := errors.AsType[*ssh.PassphraseMissingError](err); ok {
 		return nil, fmt.Errorf("%s: encrypted; use a passphrase-less key or ssh-agent", filepath.Base(path))
 	}
 	return s, err

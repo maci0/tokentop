@@ -314,8 +314,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 				fail(http.StatusRequestTimeout, "request stalled")
 				return
 			}
-			var maxBytes *http.MaxBytesError
-			if errors.As(err, &maxBytes) {
+			if maxBytes, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				// A size failure is not a JSON failure; senders need the
 				// distinction to know trimming (not re-encoding) is the fix.
 				fail(http.StatusRequestEntityTooLarge,
@@ -474,8 +473,7 @@ var errBadTS = errors.New("must be an RFC 3339 string")
 // clientJSONError turns an encoding/json decode failure into a sender-facing
 // reason: JSON field names, no Go type names.
 func clientJSONError(err error) string {
-	var ut *json.UnmarshalTypeError
-	if errors.As(err, &ut) {
+	if ut, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 		if ut.Field != "" {
 			return fmt.Sprintf("bad json: %s must be %s, not %s", ut.Field, wantJSONType(ut), ut.Value)
 		}

@@ -3,10 +3,11 @@
 package sysmon
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -266,11 +267,14 @@ func scanTemps(hwmonRoot, thermalRoot string) []core.TempReading {
 	if len(temps) == 0 {
 		temps = readSensors(sensorLayout("thermal\x00"+thermalRoot, thermalRoot, listThermalZones))
 	}
-	sort.SliceStable(temps, func(i, j int) bool {
-		if temps[i].IsGPU != temps[j].IsGPU {
-			return temps[i].IsGPU
+	slices.SortStableFunc(temps, func(a, b core.TempReading) int {
+		if a.IsGPU != b.IsGPU {
+			if a.IsGPU {
+				return -1
+			}
+			return 1
 		}
-		return temps[i].MilliC > temps[j].MilliC
+		return cmp.Compare(b.MilliC, a.MilliC)
 	})
 	if len(temps) > 16 { // keep the frame cheap on sensor-farm machines
 		temps = temps[:16]

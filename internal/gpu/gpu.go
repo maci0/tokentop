@@ -101,9 +101,7 @@ func Sample(ctx context.Context) []core.GPUDevice {
 		mu.Unlock()
 	}
 
-	wg.Add(3)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if p, ok := lookup("nvidia-smi"); ok {
 			if out, ok2 := run(ctx, p,
 				"--query-gpu=index,name,temperature.gpu,memory.used,memory.total,utilization.gpu,power.draw,driver_version",
@@ -111,17 +109,15 @@ func Sample(ctx context.Context) []core.GPUDevice {
 				add(ParseNvidiaSMI(out))
 			}
 		}
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		add(sampleAMD(ctx))
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		if p, ok := lookup("xpu-smi"); ok {
 			add(sampleXPU(ctx, p))
 		}
-	}()
+	})
 	wg.Wait()
 
 	slices.SortStableFunc(devs, func(a, b core.GPUDevice) int {

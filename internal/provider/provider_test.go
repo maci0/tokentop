@@ -400,10 +400,10 @@ func TestExtractVersionField(t *testing.T) {
 // cached as a permanent miss: later polls retry, and the first success is
 // memoized so healthy engines are asked only once.
 func TestVersionCacheRetriesUntilResolved(t *testing.T) {
-	var failing, reqs int32
+	var failing, reqs atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&reqs, 1)
-		if atomic.LoadInt32(&failing) == 1 { // every version endpoint dark: engine starting up
+		reqs.Add(1)
+		if failing.Load() == 1 { // every version endpoint dark: engine starting up
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
@@ -413,11 +413,11 @@ func TestVersionCacheRetriesUntilResolved(t *testing.T) {
 
 	var vc versionCache
 	ctx := context.Background()
-	atomic.StoreInt32(&failing, 1)
+	failing.Store(1)
 	if got := vc.fetch(ctx, srv.URL); got != "" {
 		t.Fatalf("first fetch during outage = %q, want empty", got)
 	}
-	atomic.StoreInt32(&failing, 0)
+	failing.Store(0)
 	if got := vc.fetch(ctx, srv.URL); got != "2.7.1" {
 		t.Fatalf("fetch after recovery = %q, want 2.7.1", got)
 	}
@@ -426,7 +426,7 @@ func TestVersionCacheRetriesUntilResolved(t *testing.T) {
 			t.Fatalf("cached fetch = %q, want 2.7.1", got)
 		}
 	}
-	if n := atomic.LoadInt32(&reqs); n != 4 { // outage sweep of 3 paths, then one resolving request, then cache silence
+	if n := reqs.Load(); n != 4 { // outage sweep of 3 paths, then one resolving request, then cache silence
 		t.Errorf("server hit %d times, want 4", n)
 	}
 }

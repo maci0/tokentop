@@ -10,6 +10,26 @@ support channel (see SECURITY.md).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-28
+
+Latest tagged release. Binaries, checksums, and a CycloneDX SBOM are on
+[GitHub Releases](https://github.com/maci0/toktop/releases/tag/v0.6.1).
+
+### Changed
+
+- Source builds and `go install` require Go 1.27, the version in `go.mod`.
+- `--demo` uses `math/rand/v2`. The same `--seed` no longer matches a 1.26 frame.
+
+### Fixed
+
+- `--agents` refuses a symlink that points outside a transcript root, so a
+  writable store cannot pull in another project's session as usage.
+
+## [0.6.0] - 2026-08-27
+
+Binaries, checksums, and a CycloneDX SBOM are on
+[GitHub Releases](https://github.com/maci0/toktop/releases/tag/v0.6.0).
+
 ### Added
 
 - Agent rows whose traffic is already counted by a watched engine are labelled
@@ -82,5 +102,5 @@ support channel (see SECURITY.md).
 
 ## [0.5.0] - 2026-08-26
 
-Latest tagged release. Binaries, checksums, and a CycloneDX SBOM are on
+Binaries, checksums, and a CycloneDX SBOM are on
 [GitHub Releases](https://github.com/maci0/toktop/releases/tag/v0.5.0).

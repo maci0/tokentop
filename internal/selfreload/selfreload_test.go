@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -23,13 +24,18 @@ func writeExe(t *testing.T, path, body string) {
 // image over the running one and the dashboard must notice exactly once,
 // never for its own first sight of the file.
 func TestWatchFiresOncePerReplace(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		testWatchFiresOncePerReplace(t)
+	})
+}
+
+func testWatchFiresOncePerReplace(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "toktop")
 	writeExe(t, exe, "v1")
 
 	fired := make(chan struct{}, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	done := make(chan struct{})
 	go func() { defer close(done); Watch(ctx, exe, 5*time.Millisecond, func() { fired <- struct{}{} }) }()
 
@@ -66,46 +72,50 @@ func TestWatchFiresOncePerReplace(t *testing.T) {
 // not fire: the first successful stat becomes the baseline, it is not a
 // change.
 func TestWatchToleratesMissingBinary(t *testing.T) {
-	dir := t.TempDir()
-	exe := filepath.Join(dir, "not-yet")
+	synctest.Test(t, func(t *testing.T) {
+		dir := t.TempDir()
+		exe := filepath.Join(dir, "not-yet")
 
-	fired := make(chan struct{}, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	watching := make(chan struct{})
-	go func() {
-		close(watching)
-		Watch(ctx, exe, 5*time.Millisecond, func() { fired <- struct{}{} })
-	}()
-	<-watching
-	time.Sleep(100 * time.Millisecond) // polls run against the absent file
+		fired := make(chan struct{}, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		watching := make(chan struct{})
+		go func() {
+			close(watching)
+			Watch(ctx, exe, 5*time.Millisecond, func() { fired <- struct{}{} })
+		}()
+		<-watching
+		time.Sleep(100 * time.Millisecond) // polls run against the absent file
 
-	writeExe(t, exe, "first sighting") // still not a change: this is the baseline
-	select {
-	case <-fired:
-		t.Fatal("fired on first successful stat")
-	case <-time.After(150 * time.Millisecond):
-	}
+		writeExe(t, exe, "first sighting") // still not a change: this is the baseline
+		select {
+		case <-fired:
+			t.Fatal("fired on first successful stat")
+		case <-time.After(150 * time.Millisecond):
+		}
 
-	cancel()
+		cancel()
+	})
 }
 
 // Cancellation must end the poll loop promptly instead of leaking a ticker
 // goroutine for the life of the dashboard.
 func TestWatchStopsOnCancel(t *testing.T) {
-	exe := filepath.Join(t.TempDir(), "toktop")
-	writeExe(t, exe, "v1")
+	synctest.Test(t, func(t *testing.T) {
+		exe := filepath.Join(t.TempDir(), "toktop")
+		writeExe(t, exe, "v1")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); Watch(ctx, exe, time.Millisecond, func() {}) }()
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan struct{})
+		go func() { defer close(done); Watch(ctx, exe, time.Millisecond, func() {}) }()
 
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Watch outlived its context")
-	}
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Watch outlived its context")
+		}
+	})
 }
 
 // statIdentity must distinguish two files that share a size and mtime: a

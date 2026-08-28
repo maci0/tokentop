@@ -113,6 +113,25 @@ func TestClaudeIgnoresOtherProjects(t *testing.T) {
 	}
 }
 
+// A symlink in the store that points outside must not be followed: the
+// transcript roots are writable by the agent, so a planted link could
+// otherwise pull in another project's session (or any file) as usage.
+func TestTranscriptSymlinkOutsideRootIsIgnored(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.jsonl")
+	append_(t, outside, claudeLine(work, 9999))
+	link := filepath.Join(store, "session.jsonl")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skip("symlinks:", err)
+	}
+	w := Watch("claude", work, time.Now())
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("followed a symlink out of the store: %d", got)
+	}
+}
+
 func TestExistingContentIsNotCounted(t *testing.T) {
 	store := withStore(t, "claude")
 	work := t.TempDir()
@@ -556,7 +575,7 @@ func TestHeaderlessFilePastScanCapIsRefusedDurably(t *testing.T) {
 	}
 
 	w := Watch("copilot", work, time.Now())
-	for i := 0; i < ownerScanLines; i++ {
+	for range ownerScanLines {
 		append_(t, path, `{"type":"other.event"}`)
 	}
 	append_(t, path, `{"type":"assistant.message","data":{"usage":{"completion_tokens":999}}}`)
