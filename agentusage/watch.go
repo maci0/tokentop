@@ -101,6 +101,9 @@ type adapter struct {
 	roots func(dir string) []string
 	// suffix filters transcript files under a root by literal suffix match.
 	suffix string
+	// suffixes, when set, replaces suffix: dsh writes `.jsonl.zstd` by
+	// default and `.jsonl` when compression is off, so both must match.
+	suffixes []string
 	// kind says how to combine the parsed values.
 	kind valueKind
 	// parse extracts usage and the recorded working directory from one line.
@@ -169,15 +172,16 @@ var adapters = map[string]adapter{
 		parse:  parseQwen,
 	},
 	// dsh (DeepSeek Harness) writes one session log per run under
-	// ~/.dsh/sessions/--<normalized-cwd>--/<id>/session.jsonl, with the cwd in
-	// an opening header record. The default spelling is zstd-compressed and
-	// unreadable here, which is why the launcher must ask dsh for
-	// compression: none.
+	// ~/.dsh/sessions/--<normalized-cwd>--/<id>/session.jsonl.zstd (or
+	// session.jsonl when compression is off), with the cwd in an opening
+	// header record. Default encoding is concatenated zstd frames; the
+	// counts are the provider's, on the completed assistant/message record.
 	"dsh": {
 		roots:      func(string) []string { return []string{home(".dsh", "sessions")} },
-		suffix:     ".jsonl",
+		suffix:     dshZstdSuffix,
+		suffixes:   []string{dshZstdSuffix, ".jsonl"},
 		kind:       perMessage,
-		parse:      parseGeneric,
+		parse:      parseDsh,
 		sessionCwd: genericSessionCwd,
 	},
 
@@ -783,6 +787,13 @@ var (
 
 func rootListKey(root, suffix string) string { return root + "\x00" + suffix }
 
+func (a adapter) fileSuffixes() []string {
+	if len(a.suffixes) > 0 {
+		return a.suffixes
+	}
+	return []string{a.suffix}
+}
+
 // listTranscripts returns recent files under root matching suffix. force
 // bypasses the shared cache so a final Poll cannot miss a file created
 // inside the last rescan window.
@@ -846,7 +857,9 @@ func (w *Watcher) candidates() []string {
 		if root == "" {
 			continue
 		}
-		out = append(out, listTranscripts(root, w.ad.suffix, cutoff, force)...)
+		for _, suffix := range w.ad.fileSuffixes() {
+			out = append(out, listTranscripts(root, suffix, cutoff, force)...)
+		}
 	}
 	w.forgetIdle(out)
 	w.cached, w.scanned = out, time.Now()
@@ -966,7 +979,16 @@ func (w *Watcher) readNew(path string) {
 	if _, err := f.Seek(off, 0); err != nil {
 		return
 	}
-	recs, complete, ok := w.consumeAppend(f, off)
+	var (
+		recs     []values
+		complete int64
+		ok       bool
+	)
+	if isDshZstd(path) {
+		recs, complete, ok = w.consumeZstd(f, off)
+	} else {
+		recs, complete, ok = w.consumeAppend(f, off)
+	}
 	if !ok {
 		return // read failed: nothing counted, offset and stamp unchanged, retried next poll
 	}
@@ -1123,6 +1145,9 @@ func (w *Watcher) owns(path string) (mine, decided bool) {
 		return false, false // transient: retry next poll
 	}
 	defer f.Close()
+	if isDshZstd(path) {
+		return w.ownsZstd(path, f)
+	}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	lines := 0

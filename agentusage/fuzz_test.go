@@ -9,7 +9,7 @@ import (
 )
 
 // FuzzParseAgentLines drives every per-agent transcript line parser
-// (parseClaude, parseQwen, parseCodex and the two session-cwd readers) with
+// (parseClaude, parseQwen, parseCodex, parseDsh and the two session-cwd readers) with
 // arbitrary bytes. Transcripts are files on disk whose records embed whatever
 // the model and its tools ingested, so a corrupted or hostile line must not be
 // able to poison a review: no counter is ever negative (they are summed
@@ -21,6 +21,8 @@ func FuzzParseAgentLines(f *testing.F) {
 		`{"type":"assistant","cwd":"/home/dev/proj","message":{"usage":{"input_tokens":900,"output_tokens":120,"cache_read_input_tokens":10,"cache_creation_input_tokens":5,"output_tokens_details":{"thinking_tokens":40}}}}`,
 		`{"type":"assistant","usageMetadata":{"candidatesTokenCount":17,"thoughtsTokenCount":9,"totalTokenCount":76},"cwd":"/tmp"}`,
 		`{"type":"assistant","payload":{"type":"token_count","info":{"total_token_usage":{"output_tokens":310,"reasoning_output_tokens":22,"total_tokens":9000}}}}`,
+		`{"type":"assistant/message","usage":{"inputTokens":9245,"outputTokens":276,"reasoningTokens":144,"cacheReadTokens":0}}`,
+		`{"type":"assistant/chunk","data":{"chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":4,"reasoningTokens":2}}}}`,
 		`{"type":"session_meta","payload":{"cwd":"/home/dev"}}`,
 		`{"type":"assistant","message":{"usage":{"input_tokens":-100,"output_tokens":-50,"cache_read_input_tokens":-3,"thinking_tokens":-9}}}`,
 		`{"type":"assistant","message":{"usage":{"input_tokens":9223372036854775807,"output_tokens":9223372036854775807,"cache_read_input_tokens":9223372036854775807,"cache_creation_input_tokens":9223372036854775807}}}`,
@@ -73,6 +75,12 @@ func FuzzParseAgentLines(f *testing.F) {
 		}
 		if s, ok := genericSessionCwd(line); ok && s == "" {
 			t.Fatalf("genericSessionCwd: accepted empty cwd for %q", line)
+		}
+
+		d, _, dok := parseDsh(line)
+		assertUsage("dsh", d, dok)
+		if d2, _, dok2 := parseDsh(line); dok2 != dok || d2 != d {
+			t.Fatalf("parseDsh not deterministic for %q", line)
 		}
 	})
 }
