@@ -5,7 +5,7 @@ with file references so each claim can be re-verified against code. Individual
 vulnerabilities and their fixes belong to sec-review; this file records where
 they live and what already stands in their way.
 
-- **Last reviewed:** 2026-08-28 (commit fd61deb)
+- **Last reviewed:** 2026-08-30
 - **Owner:** none assigned in this repository
 - **Review cadence:** none scheduled organizationally; re-run whenever an entry
   point, auth path, or bind default changes
@@ -62,13 +62,16 @@ What is worth stealing, corrupting, or denying:
   (engine model names, remote vitals, event fields) into a TTY; escape-sequence
   injection would hijack clipboard, cursor, or title.
 - **Agent session stores** (only with `--agents`): JSONL transcripts under
-  agent home dirs, crush's project database `.crush/crush.db`
+  agent home dirs, dsh's default `session.jsonl.zstd` (concatenated zstd
+  frames, agentusage/dsh.go), crush's project database `.crush/crush.db`
   (agentusage/crush_sqlite.go:17-41, gated by the `sqlite` build tag and
   no extra flag), and opencode's `~/.local/share/opencode/opencode.db` or
   `$XDG_DATA_HOME/opencode/opencode.db` (agentusage/opencode_sqlite.go:19-66,
   gated by `--opencode-db`). Contents are token counts and working-directory
   paths, not prompt text, but they are still the operator's local session
-  metadata.
+  metadata. The zstd decoder is a parser of untrusted bytes from a writable
+  agent store; frame size is capped (`zstdMaxFrameBytes`) and decompressed
+  output is capped (`WithDecoderMaxMemory`).
 - **Remote engine access via loopback relays**: any local process that finds
   the ephemeral listeners can send traffic to the remote engines the ssh
   session discovered (client.go:312-353). Typical engines on those hosts
@@ -131,7 +134,8 @@ Every externally reachable input, with its code location:
 8. **Agent transcript and session-store reading** (local disk, `--agents`
    only): `/proc` (Linux) or `ps`/`lsof` (Darwin) finds coding-agent
    processes; their JSONL transcripts are read every second via `agentusage`
-   (internal/agentwatch/agentwatch.go:92-113). With the `sqlite` build tag,
+   (internal/agentwatch/agentwatch.go:92-113), including dsh's default
+   concatenated-zstd logs (agentusage/dsh.go). With the `sqlite` build tag,
    crush's `.crush/crush.db` is opened automatically for each watched
    working directory (agentusage/crush_sqlite.go:39-41,70-94). opencode's
    machine-wide SQLite store is a second gate: the tag plus `--opencode-db`
@@ -370,7 +374,8 @@ ports that are then exposed on local loopback (client.go:334-353).
 - *Denial of service*: a huge transcript or database is opened read-only and
   queried with bounds (crush maxPlausibleCount 1<<40, crush_sqlite.go:50,
   117); JSONL is tailed from the attach point rather than replayed in full
-  (agentusage/watch.go:14-19).
+  (agentusage/watch.go:14-19). dsh zstd frames are size-capped
+  (`zstdMaxFrameBytes`, `WithDecoderMaxMemory` in agentusage/dsh.go).
 
 ## Existing mitigations map
 

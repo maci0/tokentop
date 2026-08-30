@@ -10,9 +10,22 @@ support channel (see SECURITY.md).
 
 ## [Unreleased]
 
-## [0.6.1] - 2026-08-28
+## [0.7.0] - 2026-08-30
 
 Latest tagged release. Binaries, checksums, and a CycloneDX SBOM are on
+[GitHub Releases](https://github.com/maci0/toktop/releases/tag/v0.7.0).
+
+### Added
+
+- `agentusage` reads dsh's default session log (`session.jsonl.zstd`):
+  concatenated independent Zstandard frames, with the provider's
+  `inputTokens` / `outputTokens` / `reasoningTokens` on each completed
+  `assistant/message`. Uncompressed `.jsonl` still works. The streaming
+  usage chunk is not counted; it repeats the message.
+
+## [0.6.1] - 2026-08-28
+
+Binaries, checksums, and a CycloneDX SBOM are on
 [GitHub Releases](https://github.com/maci0/toktop/releases/tag/v0.6.1).
 
 ### Changed

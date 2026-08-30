@@ -61,8 +61,9 @@ added on top of the engine's own numbers.
 
 Once asked for, nothing else has to be configured and the agent does not have
 to cooperate: claude, codex, qwen, copilot, pi, prime-agent, feynman, clanker,
-and dsh all keep transcripts that carry the provider's own counts. Agents that
-report nothing show no rate rather than a zero.
+and dsh all keep transcripts that carry the provider's own counts. dsh's
+default log is concatenated zstd frames; uncompressed JSONL is read too.
+Agents that report nothing show no rate rather than a zero.
 
 Two agents keep databases instead of transcripts, and both need the `sqlite`
 build tag, which decides whether a driver is compiled in at all (released

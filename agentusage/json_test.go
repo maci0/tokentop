@@ -167,8 +167,9 @@ func TestCursorAgentResultShape(t *testing.T) {
 }
 
 func TestDshSessionRecordsCarryUsageAndCwd(t *testing.T) {
-	// dsh writes a session header naming the directory, then events whose
-	// usage comes straight from the provider response.
+	// dsh writes a session header naming the directory. Completed
+	// assistant/message records carry the provider's usage; the generic
+	// walker still sees those keys (the adapter uses parseDsh).
 	header := `{"type":"session","version":1,"id":"abc","cwd":"/home/dev/project","createdAt":1}`
 	ev, ok := parseJSON([]byte(header))
 	if !ok || ev.Cwd != "/home/dev/project" {
