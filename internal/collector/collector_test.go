@@ -633,15 +633,28 @@ func TestEmitDoesNotLeakGoroutines(t *testing.T) {
 // The id window is the retained ring: once an event is evicted, its id may
 // be reused rather than pinning a key forever.
 func TestRecordAgentReusesEvictedID(t *testing.T) {
+	// Explicit timestamps, not time.Now(): a coarse clock (Windows ticks at
+	// milliseconds) hands out the same instant to the whole run, and equal
+	// timestamps order by id, which would sort "old" newest and pin it.
+	base := time.Unix(1_700_000_000, 0).UTC()
 	c := New(nil, time.Second)
-	c.RecordAgent(core.AgentEvent{At: time.Now(), ID: "old", Agent: "a"})
+	c.RecordAgent(core.AgentEvent{At: base, ID: "old", Agent: "a"})
 	for i := range core.AgentHistoryLen {
-		c.RecordAgent(core.AgentEvent{At: time.Now(), ID: fmt.Sprintf("n%d", i), Agent: "a"})
+		c.RecordAgent(core.AgentEvent{
+			At:    base.Add(time.Duration(i+1) * time.Millisecond),
+			ID:    fmt.Sprintf("n%d", i),
+			Agent: "a",
+		})
 	}
 	if core.HasAgentID(c.agents, "old") {
 		t.Fatal("old id still retained after eviction")
 	}
-	c.RecordAgent(core.AgentEvent{At: time.Now(), ID: "old", Agent: "a", OutputTokens: 7})
+	c.RecordAgent(core.AgentEvent{
+		At:           base.Add((core.AgentHistoryLen + 1) * time.Millisecond),
+		ID:           "old",
+		Agent:        "a",
+		OutputTokens: 7,
+	})
 	if !core.HasAgentID(c.agents, "old") {
 		t.Fatal("evicted id must be reusable")
 	}

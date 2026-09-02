@@ -12,10 +12,16 @@ import (
 	"time"
 )
 
-// writeExe creates a stand-in binary image.
+// writeExe creates a stand-in binary image. The final path appears whole:
+// a create-then-write would leave a zero-byte window a concurrent poll can
+// stat, which reads as a size change the next tick.
 func writeExe(t *testing.T, path, body string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+	tmp := path + ".partial"
+	if err := os.WriteFile(tmp, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
 		t.Fatal(err)
 	}
 }

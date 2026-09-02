@@ -13,6 +13,9 @@ import (
 	"github.com/maci0/toktop/internal/core"
 )
 
+// firstTokenDelay is one Windows clock tick plus slack.
+const firstTokenDelay = 25 * time.Millisecond
+
 func TestRunOpenAIStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
@@ -20,6 +23,10 @@ func TestRunOpenAIStream(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		f := http.NewResponseController(w)
+		// Windows' clock ticks at 15.6ms; an instant reply lands the whole
+		// exchange inside one tick and TTFT reads as 0. Outlast a tick so
+		// the timing assertions below measure something.
+		time.Sleep(firstTokenDelay)
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"He\"}}]}\n\n"))
 		f.Flush()
 		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"llo\"}}]}\n\n"))

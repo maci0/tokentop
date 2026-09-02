@@ -78,8 +78,10 @@ def resolve_fonts() -> tuple[str, str]:
 
     TOKTOP_SCREENSHOT_FONT pins an explicit regular-weight face; its Bold
     sibling is used when present. Otherwise the standard font roots are
-    searched, preferring a Nerd Font build of Meslo. Exits when neither
-    turns up a usable face.
+    searched, preferring a Nerd Font build of Meslo.
+
+    Raises:
+        SystemExit: no usable regular-weight face was found.
     """
     if override := os.environ.get("TOKTOP_SCREENSHOT_FONT"):
         if not os.path.isfile(override):
