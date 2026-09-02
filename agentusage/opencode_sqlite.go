@@ -130,5 +130,5 @@ func (o openCodeDBSource) read(dirs []string, since time.Time) (values, bool) {
 		total:    counter64(total.Int64),
 		input:    counter64(input.Int64),
 	}
-	return v, v.output > 0 || v.total > 0 || v.input > 0
+	return v, v.present()
 }

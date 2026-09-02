@@ -514,7 +514,7 @@ func TestAttributedAgentKeepsReporting(t *testing.T) {
 	wantOut := []int64{100, 150, 180}
 	wantVia := []string{"http://127.0.0.1:11434", "http://127.0.0.1:11434", "http://127.0.0.1:8080"}
 	for i, ev := range evs {
-		if ev.Kind != "turn" {
+		if ev.Kind != core.AgentKindTurn {
 			t.Fatalf("event %d kind = %q, want turn: %+v", i, ev.Kind, ev)
 		}
 		if ev.OutputTokens != wantOut[i] {

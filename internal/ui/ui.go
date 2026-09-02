@@ -992,7 +992,12 @@ func (m Model) feedEmptyLines(w int) []string {
 	}
 }
 
-var kindIcons = map[string]string{"turn": "▸", "tool": "⚙", "error": "✗", "note": "✎"}
+var kindIcons = map[string]string{
+	core.AgentKindTurn:  "▸",
+	core.AgentKindTool:  "⚙",
+	core.AgentKindError: "✗",
+	core.AgentKindNote:  "✎",
+}
 
 // feedLines renders the newest n events oldest-first, so a feed panel reads
 // top down like a log tail with the newest line at the bottom.
@@ -1014,13 +1019,13 @@ func feedLine(ev core.AgentEvent) string {
 	}
 	st := styleDim
 	switch ev.Kind {
-	case "turn":
+	case core.AgentKindTurn:
 		st = styleOK
-	case "tool":
+	case core.AgentKindTool:
 		st = styleInfo
-	case "error":
+	case core.AgentKindError:
 		st = styleBad
-	case "note":
+	case core.AgentKindNote:
 		st = styleWarn
 	}
 	name := shorten(core.SanitizeText(ev.Agent), 16)

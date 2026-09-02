@@ -7,7 +7,16 @@ const HistoryLen = 180 // rolling samples per provider (~3 min at 1s poll)
 
 // Rolling history caps for snapshot payloads.
 const (
-	AgentHistoryLen = 64  // agent events kept per snapshot
+	// AgentRateWindow is how far back per-agent tok/s looks. Long enough
+	// that a pause between turns does not read as a stall, short enough to
+	// track a real change.
+	AgentRateWindow = 30 * time.Second
+	// AgentHistoryLen is the retained event cap. --agents emits at most one
+	// event per agent per second, so a cap smaller than (agents ×
+	// AgentRateWindow) lets busy agents evict quieter ones before that
+	// window elapses. 512 covers ~15 concurrent agents at 1 Hz for 30s;
+	// ingest floods still cannot grow without bound.
+	AgentHistoryLen = 512
 	ProbeHistoryLen = 128 // probe samples kept per snapshot
 )
 
@@ -75,6 +84,15 @@ func (p *ProviderSnapshot) PrimaryModel() string {
 	return "-"
 }
 
+// Agent event kinds. Unknown values are accepted on the wire (forward
+// compatible with a harness that invents one) and render as a generic event.
+const (
+	AgentKindTurn  = "turn"
+	AgentKindTool  = "tool"
+	AgentKindError = "error"
+	AgentKindNote  = "note"
+)
+
 // AgentEvent is a token-usage event pushed by an agent or harness. The HTTP
 // wire shape is defined separately by ingest's agentEventWire.
 type AgentEvent struct {
@@ -82,7 +100,7 @@ type AgentEvent struct {
 	ID             string // caller-chosen; a repeat still in the retained feed is ignored
 	Agent          string
 	Model          string
-	Kind           string // turn | tool | error | note
+	Kind           string // AgentKindTurn/Tool/Error/Note, or a sanitized unknown
 	PromptTokens   int64
 	OutputTokens   int64
 	ThinkingTokens int64  // reasoning share of OutputTokens, when the agent says so

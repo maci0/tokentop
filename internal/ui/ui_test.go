@@ -781,6 +781,18 @@ func TestKindStylesCoverCoreKinds(t *testing.T) {
 	}
 }
 
+// Every documented agent-event kind must have a feed icon; a missing entry
+// silently falls through to the generic dot.
+func TestKindIconsCoverAgentKinds(t *testing.T) {
+	for _, k := range []string{
+		core.AgentKindTurn, core.AgentKindTool, core.AgentKindError, core.AgentKindNote,
+	} {
+		if _, ok := kindIcons[k]; !ok {
+			t.Errorf("kindIcons missing %q", k)
+		}
+	}
+}
+
 // Sample spacing on the compressed timescale must follow the poll cadence,
 // not an assumed 1s: --interval 2s covers twice the wall-clock window.
 func TestTimedSeriesHonorsCadence(t *testing.T) {

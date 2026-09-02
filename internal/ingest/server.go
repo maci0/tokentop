@@ -392,12 +392,12 @@ func eventFromWire(wire agentEventWire) (core.AgentEvent, error) {
 	ev.OutputTokens = clampTokens(ev.OutputTokens)
 	ev.ThinkingTokens = clampTokens(ev.ThinkingTokens)
 	switch ev.Kind {
-	case "turn", "tool", "error", "note":
+	case core.AgentKindTurn, core.AgentKindTool, core.AgentKindError, core.AgentKindNote:
 	default:
 		ev.Kind = clampField(core.SanitizeText(strings.ToLower(ev.Kind)), 24)
 	}
 	if ev.Kind == "" {
-		ev.Kind = "turn"
+		ev.Kind = core.AgentKindTurn
 	}
 	return ev, nil
 }

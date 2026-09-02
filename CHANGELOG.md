@@ -10,6 +10,17 @@ support channel (see SECURITY.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- `agentusage` counts a thinking-only reading (opencode SQLite, and Claude /
+  Qwen / Codex transcript lines that carry reasoning with no billed output)
+  instead of reporting nothing until the first completion token.
+
+### Changed
+
+- The agent event ring keeps 512 events so several agents over the 30s rate
+  window are not evicted by a shared 64-slot cap.
+
 ## [0.7.0] - 2026-08-30
 
 Latest tagged release. Binaries, checksums, and a CycloneDX SBOM are on

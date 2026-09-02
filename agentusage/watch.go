@@ -67,7 +67,7 @@ type Sample struct {
 // count: an agent that reports reasoning without a billed output is still a
 // reading, and callers that skip Empty samples must not drop it.
 func (s Sample) Empty() bool {
-	return s.Output == 0 && s.Thinking == 0 && s.Total == 0 && s.Input == 0
+	return !values{output: s.Output, thinking: s.Thinking, total: s.Total, input: s.Input}.present()
 }
 
 // Rate returns output tokens per second between two samples, and whether it
@@ -127,6 +127,13 @@ type values struct {
 	thinking int
 	total    int
 	input    int
+}
+
+// present is the same rule as Sample.Empty inverted: any counter is a
+// reading. Sources and parsers that skip "empty" records must use this, or
+// a thinking-only line is dropped before it can become a Sample.
+func (v values) present() bool {
+	return v.output > 0 || v.thinking > 0 || v.total > 0 || v.input > 0
 }
 
 // maxSaneTokens bounds one counter a transcript line may contribute. Real
@@ -294,12 +301,16 @@ func parseGeneric(line []byte) (values, string, bool) {
 	if tot == 0 && in > 0 {
 		tot = satAdd(in, out)
 	}
-	return values{
+	v := values{
 		output:   out,
 		thinking: counter(ev.Usage.Thinking),
 		total:    tot,
 		input:    in,
-	}, ev.Cwd, true
+	}
+	if !v.present() {
+		return values{}, "", false
+	}
+	return v, ev.Cwd, true
 }
 
 // genericSessionCwd finds the working directory in a session header, whatever
@@ -661,9 +672,8 @@ func (w *Watcher) readSessionSource(ss sessionSource) (values, bool) {
 			}
 		}
 	}
-	out := counter64(outN)
-	in := counter64(inN)
-	return values{output: out, input: in}, out > 0 || in > 0
+	v := values{output: counter64(outN), input: counter64(inN)}
+	return v, v.present()
 }
 
 // Poll reads whatever the transcripts have gained since the last read and
@@ -1184,12 +1194,17 @@ func parseClaude(line []byte) (values, string, bool) {
 	u := rec.Message.Usage
 	out := counter(u.OutputTokens)
 	in := counter(u.InputTokens)
-	if out == 0 && in == 0 {
+	prompt := satAdd(in, satAdd(counter(u.CacheReadInputTokens), counter(u.CacheCreationInputTokens)))
+	v := values{
+		output:   out,
+		thinking: counter(u.Details.ThinkingTokens),
+		total:    satAdd(prompt, out),
+		input:    prompt,
+	}
+	if !v.present() {
 		return values{}, "", false
 	}
-	prompt := satAdd(in, satAdd(counter(u.CacheReadInputTokens), counter(u.CacheCreationInputTokens)))
-	sum := satAdd(prompt, out)
-	return values{output: out, thinking: counter(u.Details.ThinkingTokens), total: sum, input: prompt}, rec.Cwd, true
+	return v, rec.Cwd, true
 }
 
 // parseQwen reads one line of a qwen-code chat transcript. Usage is recorded
@@ -1209,18 +1224,17 @@ func parseQwen(line []byte) (values, string, bool) {
 		return values{}, "", false
 	}
 	u := rec.Usage
-	total := counter(u.TotalTokenCount)
-	cand := counter(u.CandidatesTokenCount)
-	if total == 0 && cand == 0 {
+	thoughts := counter(u.ThoughtsTokenCount)
+	v := values{
+		output:   satAdd(counter(u.CandidatesTokenCount), thoughts),
+		thinking: thoughts,
+		total:    counter(u.TotalTokenCount),
+		input:    counter(u.PromptTokenCount),
+	}
+	if !v.present() {
 		return values{}, "", false
 	}
-	thoughts := counter(u.ThoughtsTokenCount)
-	return values{
-		output:   satAdd(cand, thoughts),
-		thinking: thoughts,
-		total:    total,
-		input:    counter(u.PromptTokenCount),
-	}, rec.Cwd, true
+	return v, rec.Cwd, true
 }
 
 // codexSessionCwd reads the working directory from a codex session header.
@@ -1266,19 +1280,20 @@ func parseCodex(line []byte) (values, string, bool) {
 		u := rec.Payload.Info.TotalTokenUsage
 		total := counter(u.TotalTokens)
 		out := counter(u.OutputTokens)
-		if total == 0 && out == 0 {
-			return values{}, "", false
-		}
 		in := counter(u.InputTokens)
 		if remain := satSub(total, out); remain > in {
 			in = remain
 		}
-		return values{
+		v := values{
 			output:   out,
 			thinking: counter(u.ReasoningOutputTokens),
 			total:    total,
 			input:    in,
-		}, "", true
+		}
+		if !v.present() {
+			return values{}, "", false
+		}
+		return v, "", true
 	}
 	return values{}, "", false
 }

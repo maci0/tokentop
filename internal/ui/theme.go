@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/maci0/toktop/internal/core"
 )
 
 // Palette matches the toktop.ai tokens in site/worker.js (cool dark, green
@@ -43,24 +45,24 @@ var (
 	dotWarn = styleWarn.Render("●")
 
 	kindStyles = map[string]lipgloss.Style{
-		"ollama":    lipgloss.NewStyle().Foreground(cYellow),
-		"vllm":      lipgloss.NewStyle().Foreground(cGreen),
-		"llama.cpp": lipgloss.NewStyle().Foreground(cCyan),
-		"openai":    lipgloss.NewStyle().Foreground(cBlue),
-		"sglang":    lipgloss.NewStyle().Foreground(cBlue),
-		"trt-llm":   lipgloss.NewStyle().Foreground(cGreen),
-		"mlx":       lipgloss.NewStyle().Foreground(cCyan),
-		"lmstudio":  lipgloss.NewStyle().Foreground(cBlue),
-		"koboldcpp": lipgloss.NewStyle().Foreground(cYellow),
-		"localai":   lipgloss.NewStyle().Foreground(cCyan),
-		"tgi":       lipgloss.NewStyle().Foreground(cGreen),
-		"litellm":   lipgloss.NewStyle().Foreground(cBlue),
-		"gpustack":  lipgloss.NewStyle().Foreground(cGreen),
-		"lemonade":  lipgloss.NewStyle().Foreground(cYellow),
+		core.KindOllama:    lipgloss.NewStyle().Foreground(cYellow),
+		core.KindVLLM:      lipgloss.NewStyle().Foreground(cGreen),
+		core.KindLlamaCPP:  lipgloss.NewStyle().Foreground(cCyan),
+		core.KindOpenAI:    lipgloss.NewStyle().Foreground(cBlue),
+		core.KindSGLang:    lipgloss.NewStyle().Foreground(cBlue),
+		core.KindTRTLLM:    lipgloss.NewStyle().Foreground(cGreen),
+		core.KindMLX:       lipgloss.NewStyle().Foreground(cCyan),
+		core.KindLMStudio:  lipgloss.NewStyle().Foreground(cBlue),
+		core.KindKoboldCPP: lipgloss.NewStyle().Foreground(cYellow),
+		core.KindLocalAI:   lipgloss.NewStyle().Foreground(cCyan),
+		core.KindTGI:       lipgloss.NewStyle().Foreground(cGreen),
+		core.KindLiteLLM:   lipgloss.NewStyle().Foreground(cBlue),
+		core.KindGPUStack:  lipgloss.NewStyle().Foreground(cGreen),
+		core.KindLemonade:  lipgloss.NewStyle().Foreground(cYellow),
 		// Routing proxies share blue (litellm); OmniRoute is detected
 		// via its X-OmniRoute-Route-Class header and must not fall through
 		// to the dim unknown-kind badge.
-		"omnirouter": lipgloss.NewStyle().Foreground(cBlue),
+		core.KindOmniRoute: lipgloss.NewStyle().Foreground(cBlue),
 	}
 
 	panelStyle = lipgloss.NewStyle().

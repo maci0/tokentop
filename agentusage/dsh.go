@@ -103,14 +103,15 @@ func parseDsh(line []byte) (values, string, bool) {
 	if think == 0 {
 		think = counter(u.ReasoningSnake)
 	}
-	if out == 0 && in == 0 && think == 0 {
-		return values{}, "", false
-	}
 	tot := in
 	if in > 0 {
 		tot = satAdd(in, out)
 	}
-	return values{output: out, thinking: think, total: tot, input: in}, "", true
+	v := values{output: out, thinking: think, total: tot, input: in}
+	if !v.present() {
+		return values{}, "", false
+	}
+	return v, "", true
 }
 
 // consumeZstd reads newly appended concatenated frames from off, counts

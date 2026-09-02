@@ -313,7 +313,7 @@ func TestIngestDefaultsAndBadJSON(t *testing.T) {
 		t.Fatalf("anonymous event rejected: %d", resp)
 	}
 	awaitEvents(t, rec, 1)
-	if rec.evs[0].Agent != "anonymous" || rec.evs[0].Kind != "turn" || rec.evs[0].PromptTokens != 1 {
+	if rec.evs[0].Agent != "anonymous" || rec.evs[0].Kind != core.AgentKindTurn || rec.evs[0].PromptTokens != 1 {
 		t.Errorf("defaults not applied: %+v", rec.evs[0])
 	}
 

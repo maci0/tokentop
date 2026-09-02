@@ -405,7 +405,7 @@ func (w *Watcher) report(t *tracked, cur agentusage.Sample) {
 	rec.RecordAgent(core.AgentEvent{
 		At:             w.instant(),
 		Agent:          proc.Tool,
-		Kind:           "turn",
+		Kind:           core.AgentKindTurn,
 		PromptTokens:   int64(max(prompt, 0)),
 		OutputTokens:   int64(max(out, 0)),
 		ThinkingTokens: int64(max(think, 0)),

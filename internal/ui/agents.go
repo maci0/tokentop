@@ -23,10 +23,6 @@ import (
 	"github.com/maci0/toktop/internal/core"
 )
 
-// agentWindow is how far back a rate looks. Long enough that a pause between
-// turns does not read as a stall, short enough to track a real change.
-const agentWindow = 30 * time.Second
-
 // agentRate is one agent's measured throughput.
 type agentRate struct {
 	Agent     string
@@ -54,7 +50,7 @@ func agentRates(events []core.AgentEvent, now time.Time) []agentRate {
 		n        int
 	}
 	by := map[string]*acc{}
-	cutoff := now.Add(-agentWindow)
+	cutoff := now.Add(-core.AgentRateWindow)
 	for _, ev := range events {
 		if ev.At.Before(cutoff) {
 			continue

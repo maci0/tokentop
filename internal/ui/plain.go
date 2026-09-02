@@ -347,13 +347,13 @@ func writeAgentsPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 // feed's dot glyph does.
 func kindWord(kind string) string {
 	switch kind {
-	case "turn":
+	case core.AgentKindTurn:
 		return "turn"
-	case "tool":
+	case core.AgentKindTool:
 		return "tool"
-	case "error":
+	case core.AgentKindError:
 		return "error"
-	case "note":
+	case core.AgentKindNote:
 		return "note"
 	default:
 		k := core.SanitizeText(kind)

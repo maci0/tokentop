@@ -32,7 +32,9 @@ type jsonUsage struct {
 	Input    int
 }
 
-func (u jsonUsage) Has() bool { return u.Output > 0 || u.Total > 0 || u.Input > 0 || u.Thinking > 0 }
+func (u jsonUsage) Has() bool {
+	return values{output: u.Output, thinking: u.Thinking, total: u.Total, input: u.Input}.present()
+}
 
 // Keys recognized as token counters, mapped onto the fields above. These are
 // the names used by the Anthropic, OpenAI, and Gemini shaped APIs, which every

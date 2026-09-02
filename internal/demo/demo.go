@@ -68,7 +68,7 @@ func NewSource(interval time.Duration, seed int64) *Source {
 }
 
 var agentNames = []string{"coder-agent", "ops-agent", "research-agent", "swarm-07"}
-var evKinds = []string{"turn", "tool", "tool", "note", "error"}
+var evKinds = []string{core.AgentKindTurn, core.AgentKindTool, core.AgentKindTool, core.AgentKindNote, core.AgentKindError}
 var notes = []string{
 	"planning patch series",
 	"shell(git status)",
@@ -230,7 +230,7 @@ func (s *Source) genEvent(now time.Time) {
 		PromptTokens: int64(400 + s.rng.IntN(9000)),
 		OutputTokens: int64(30 + s.rng.IntN(1200)),
 	}
-	if ev.Kind == "note" || ev.Kind == "error" {
+	if ev.Kind == core.AgentKindNote || ev.Kind == core.AgentKindError {
 		ev.Note = notes[s.rng.IntN(len(notes))]
 	}
 	s.addAgent(ev)

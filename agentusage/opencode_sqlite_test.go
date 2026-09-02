@@ -112,6 +112,34 @@ func TestOpenCodeDBCountsThisReviewOnly(t *testing.T) {
 	}
 }
 
+// Reasoning without billed output is still a reading: Sample.Empty says so,
+// and an agent that thinks before it writes must show a rate rather than
+// nothing until the first completion token lands.
+func TestOpenCodeDBCountsThinkingOnly(t *testing.T) {
+	path := opencodeDB(t)
+	work := t.TempDir()
+	addSession(t, path, "s1", work)
+	start := time.Now()
+	addMessage(t, path, "m1", "s1", start.Add(time.Second),
+		`{"role":"assistant","tokens":{"reasoning":52}}`)
+	withOpenCodeDB(t, path)
+	w := Watch("opencode", work, start)
+	if w == nil {
+		t.Fatal("opencode should be readable once the database is enabled")
+	}
+	w.poll(nil)
+	s := w.Sample()
+	if s.Empty() {
+		t.Fatal("thinking-only message reported as nothing")
+	}
+	if s.Thinking != 52 {
+		t.Fatalf("thinking tokens %d, want 52", s.Thinking)
+	}
+	if s.Output != 0 || s.Input != 0 {
+		t.Fatalf("invented billed tokens: %+v", s)
+	}
+}
+
 // A SUM past maxSaneTokens is a misread, not a measurement.
 func TestOpenCodeDBDropsAbsurdCounts(t *testing.T) {
 	path := opencodeDB(t)

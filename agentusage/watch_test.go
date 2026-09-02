@@ -409,6 +409,62 @@ func TestSampleEmptyIncludesThinking(t *testing.T) {
 	}
 }
 
+func TestClaudeThinkingOnlyIsAReading(t *testing.T) {
+	store := withStore(t, "claude")
+	work := t.TempDir()
+	w := Watch("claude", work, time.Now())
+	if w == nil {
+		t.Fatal("claude should be supported")
+	}
+	path := filepath.Join(store, "session.jsonl")
+	append_(t, path, `{"type":"assistant","cwd":`+jsonPath(work)+`,"message":{"usage":{"input_tokens":0,"output_tokens":0,"output_tokens_details":{"thinking_tokens":40}}}}`)
+	w.poll(nil)
+	s := w.Sample()
+	if s.Empty() || s.Thinking != 40 {
+		t.Fatalf("got %+v, want thinking 40", s)
+	}
+	if s.Output != 0 || s.Input != 0 {
+		t.Fatalf("invented billed tokens: %+v", s)
+	}
+}
+
+func TestQwenThinkingOnlyIsAReading(t *testing.T) {
+	store := withStore(t, "qwen")
+	work := t.TempDir()
+	w := Watch("qwen", work, time.Now())
+	if w == nil {
+		t.Fatal("qwen should be supported")
+	}
+	path := filepath.Join(store, "chat.jsonl")
+	append_(t, path, `{"type":"assistant","cwd":`+jsonPath(work)+`,"usageMetadata":{"thoughtsTokenCount":9}}`)
+	w.poll(nil)
+	s := w.Sample()
+	// qwen's thoughts are output tokens too, so both counters move.
+	if s.Thinking != 9 || s.Output != 9 {
+		t.Fatalf("got %+v, want thinking 9 and output 9", s)
+	}
+}
+
+func TestCodexThinkingOnlyIsAReading(t *testing.T) {
+	store := withStore(t, "codex")
+	work := t.TempDir()
+	w := Watch("codex", work, time.Now())
+	if w == nil {
+		t.Fatal("codex should be supported")
+	}
+	path := filepath.Join(store, "rollout.jsonl")
+	append_(t, path, codexMeta(work),
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"reasoning_output_tokens":12}}}}`)
+	w.poll(nil)
+	s := w.Sample()
+	if s.Empty() || s.Thinking != 12 {
+		t.Fatalf("got %+v, want thinking 12", s)
+	}
+	if s.Output != 0 {
+		t.Fatalf("invented output tokens: %+v", s)
+	}
+}
+
 func TestClaudeUsageMatchesFoldedDirectorySpelling(t *testing.T) {
 	if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
 		t.Skip("directory folding is a Windows/macOS filesystem rule")
