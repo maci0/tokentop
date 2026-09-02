@@ -3,6 +3,7 @@ package procs
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -68,6 +69,8 @@ func TestMatchEngine(t *testing.T) {
 		{"LM Studio Helper", []string{"/opt/LM Studio Helper"}, "lmstudio", 1234, true},
 		{"bash", []string{"bash", "-c", "janitor --clean"}, "", 0, false}, // 'jan' false-positive guard
 		{"firefox", []string{"firefox"}, "", 0, false},
+		{"ollama behind huge flags", append([]string{"ollama", "serve"}, hugeArgs(64, 1024)...), "ollama", 11434, true},
+		{"vllm behind huge flags", append([]string{"python3", "-m", "vllm.entrypoints.openai.api_server"}, hugeArgs(64, 1024)...), "vllm", 8000, true},
 	}
 	for _, c := range cases {
 		i := Info{PID: 1, Name: c.name, Args: c.args,
@@ -77,6 +80,28 @@ func TestMatchEngine(t *testing.T) {
 			t.Errorf("match(%s %v) = %q/%d/%v, want %q/%d/%v",
 				c.name, c.args, eng, def, ok, c.engine, c.port, c.ok)
 		}
+	}
+}
+
+func hugeArgs(n, each int) []string {
+	a := make([]string, n)
+	pad := strings.Repeat("x", each)
+	for i := range a {
+		a[i] = pad
+	}
+	return a
+}
+
+func TestLowerJoinedArgsCapsSize(t *testing.T) {
+	got := lowerJoinedArgs(hugeArgs(100, 10_000))
+	if len(got) > matchJoinBytes {
+		t.Fatalf("joined command is %d bytes, cap is %d", len(got), matchJoinBytes)
+	}
+	if got := lowerJoinedArgs(nil); got != "" {
+		t.Fatalf("empty argv joined to %q", got)
+	}
+	if got := lowerJoinedArgs([]string{"Ollama", "Serve"}); got != "ollama serve" {
+		t.Fatalf("short argv = %q, want lowercased join", got)
 	}
 }
 

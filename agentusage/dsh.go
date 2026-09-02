@@ -39,6 +39,12 @@ const (
 	zstdMaxDecodeMemory = 32 << 20
 )
 
+// zstdTailBytes is the most newly-appended compressed bytes one poll will
+// read. Complete frames inside the window are counted; a torn frame at the
+// end is retried next poll. Without a cap, a session that grew by hundreds
+// of megabytes between polls would pin that whole tail in one buffer.
+var zstdTailBytes int64 = zstdMaxFrameBytes
+
 // RFC 8878 block types in the 3-byte block header.
 const (
 	zstdBlockRaw        = 0
@@ -116,9 +122,11 @@ func parseDsh(line []byte) (values, string, bool) {
 
 // consumeZstd reads newly appended concatenated frames from off, counts
 // complete ones, and leaves a torn last frame uncommitted so the next poll
-// re-reads it whole.
+// re-reads it whole. The read is capped at zstdTailBytes so a large append
+// batch cannot pin an unbounded buffer; leftover complete frames are
+// picked up on the next poll.
 func (w *Watcher) consumeZstd(f *os.File, off int64) (recs []values, complete int64, ok bool) {
-	src, err := io.ReadAll(f)
+	src, err := io.ReadAll(io.LimitReader(f, zstdTailBytes))
 	if err != nil {
 		return nil, 0, false
 	}

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/maci0/toktop/internal/core"
 )
@@ -37,13 +38,6 @@ func tolerantKind(kind string) bool {
 
 func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 	m := &Metrics{}
-	text, merr := getText(ctx, httpClient, o.base+"/metrics")
-	if merr != nil && o.kind == core.KindVLLM {
-		return nil, merr // vLLM without metrics is not worth showing
-	}
-	if merr == nil {
-		classify(parseProm(text), m)
-	}
 	var lm struct {
 		Data []struct {
 			ID            string `json:"id"`
@@ -51,7 +45,29 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 			MaxContextLen int64  `json:"max_context_length"` // LM Studio shape
 		} `json:"data"`
 	}
-	haveModels := getJSON(ctx, o.base+"/v1/models", &lm) == nil
+	// /metrics and /v1/models are independent GETs against the same host;
+	// waiting out one before starting the other doubles poll latency on
+	// the collector's critical path (every backend, every interval).
+	var (
+		text      string
+		merr      error
+		modelsErr error
+	)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		text, merr = getText(ctx, httpClient, o.base+"/metrics")
+	})
+	wg.Go(func() {
+		modelsErr = getJSON(ctx, o.base+"/v1/models", &lm)
+	})
+	wg.Wait()
+	if merr != nil && o.kind == core.KindVLLM {
+		return nil, merr // vLLM without metrics is not worth showing
+	}
+	if merr == nil {
+		classify(parseProm(text), m)
+	}
+	haveModels := modelsErr == nil
 	if haveModels {
 		for _, d := range lm.Data {
 			if d.ID != "" {

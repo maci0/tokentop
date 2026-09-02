@@ -222,9 +222,10 @@ func TestPollCarriesBearerAndContextLength(t *testing.T) {
 	defer bearer.Set(old)
 	bearer.Set("sk-live")
 
-	var gotAuth string
+	var gotAuth atomic.Value
+	gotAuth.Store("")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
+		gotAuth.Store(r.Header.Get("Authorization"))
 		w.Write([]byte(`{"data":[{"id":"auto/big","context_length":200000}]}`))
 	}))
 	defer srv.Close()
@@ -235,8 +236,8 @@ func TestPollCarriesBearerAndContextLength(t *testing.T) {
 	if _, err := p.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if gotAuth != "" {
-		t.Errorf("Authorization = %q before Allow, want unset", gotAuth)
+	if a := gotAuth.Load().(string); a != "" {
+		t.Errorf("Authorization = %q before Allow, want unset", a)
 	}
 
 	bearer.Allow(srv.URL)
@@ -244,14 +245,55 @@ func TestPollCarriesBearerAndContextLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotAuth != "Bearer sk-live" {
-		t.Errorf("Authorization = %q", gotAuth)
+	if a := gotAuth.Load().(string); a != "Bearer sk-live" {
+		t.Errorf("Authorization = %q", a)
 	}
 	if len(m.Models) != 1 || m.Models[0].Name != "auto/big" {
 		t.Fatalf("models = %+v", m.Models)
 	}
 	if m.Models[0].CtxMax != 200000 {
 		t.Errorf("CtxMax = %d, want 200000", m.Models[0].CtxMax)
+	}
+}
+
+func TestPollFetchesMetricsAndModelsTogether(t *testing.T) {
+	both := make(chan struct{})
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/metrics", "/v1/models":
+			if n.Add(1) == 2 {
+				close(both)
+			}
+			select {
+			case <-both:
+			case <-r.Context().Done():
+				return
+			case <-time.After(2 * time.Second):
+				t.Errorf("%s started without the other request in flight", r.URL.Path)
+				return
+			}
+			if r.URL.Path == "/metrics" {
+				w.Write([]byte("vllm:generation_tokens_total 9\n"))
+				return
+			}
+			w.Write([]byte(`{"data":[{"id":"qwen"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(srv.URL, "vllm", core.KindOpenAI)
+	m, err := p.Poll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.OutTotal != 9 {
+		t.Errorf("OutTotal = %v, want 9", m.OutTotal)
+	}
+	if len(m.Models) != 1 || m.Models[0].Name != "qwen" {
+		t.Fatalf("models = %+v", m.Models)
 	}
 }
 

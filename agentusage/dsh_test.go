@@ -160,6 +160,36 @@ func TestDshPlainJSONLStillWorks(t *testing.T) {
 	}
 }
 
+func TestDshZstdTailCapContinuesNextPoll(t *testing.T) {
+	store := withStore(t, "dsh")
+	work := t.TempDir()
+	path := filepath.Join(store, "session.jsonl.zstd")
+	w := Watch("dsh", work, time.Now())
+
+	header := zstdFrame(t, dshHeader(work)+"\n")
+	first := zstdFrame(t, dshMessage(11, 0, 1)+"\n")
+	second := zstdFrame(t, dshMessage(22, 0, 1)+"\n")
+	appendBytes(t, path, header)
+	appendBytes(t, path, first)
+	appendBytes(t, path, second)
+
+	old := zstdTailBytes
+	// Big enough for the header and first message frame, too small for
+	// the second: the leftover must be picked up on the next poll rather
+	// than dropped or forcing a full-file buffer.
+	zstdTailBytes = int64(len(header) + len(first) + len(second)/2)
+	t.Cleanup(func() { zstdTailBytes = old })
+
+	w.poll(nil)
+	if got := w.Sample().Output; got != 11 {
+		t.Fatalf("first poll output %d, want 11 (only the frames inside the cap)", got)
+	}
+	w.poll(nil)
+	if got := w.Sample().Output; got != 33 {
+		t.Fatalf("second poll output %d, want 33 after reading the leftover frame", got)
+	}
+}
+
 func TestZstdFrameLenMatchesEncodeAll(t *testing.T) {
 	a := zstdFrame(t, "one\n")
 	b := zstdFrame(t, "two\n")

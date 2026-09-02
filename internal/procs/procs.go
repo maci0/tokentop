@@ -205,7 +205,7 @@ func baseName(n string) string {
 
 func anyArgContains(args []string, subs ...string) bool {
 	for _, a := range args {
-		la := strings.ToLower(a)
+		la := strings.ToLower(clipArg(a))
 		for _, sub := range subs {
 			if strings.Contains(la, sub) {
 				return true
@@ -213,6 +213,50 @@ func anyArgContains(args []string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+// matchJoinArgs / matchJoinBytes bound the command-line string MatchEngine
+// builds. Engine names sit in the first arguments; browsers and Electron
+// apps trail tens to hundreds of kilobytes of flags, and joining those on
+// every /proc poll was a large alloc per process per interval.
+const (
+	matchJoinArgs  = 12
+	matchJoinBytes = 4096
+)
+
+// clipArg keeps the prefix of a single argument that engine matchers look
+// at. A Chrome --disable-features blob is tens of kilobytes and never an
+// engine module path.
+func clipArg(a string) string {
+	if len(a) > matchJoinBytes {
+		return a[:matchJoinBytes]
+	}
+	return a
+}
+
+// lowerJoinedArgs is the command line engine matchers search, lowercased,
+// capped so a process with a huge argv cannot force a huge allocation.
+func lowerJoinedArgs(args []string) string {
+	var b strings.Builder
+	n := len(args)
+	if n > matchJoinArgs {
+		n = matchJoinArgs
+	}
+	for i := 0; i < n; i++ {
+		if b.Len() >= matchJoinBytes {
+			break
+		}
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		a := args[i]
+		remain := matchJoinBytes - b.Len()
+		if len(a) > remain {
+			a = a[:remain]
+		}
+		b.WriteString(strings.ToLower(a))
+	}
+	return b.String()
 }
 
 var engineMatchers = []engineMatcher{
@@ -279,7 +323,7 @@ func baseNameEq(args []string, want string) bool {
 // remote ssh path, which matches command lines gathered from another host.
 func MatchEngine(i Info) (engine string, defPort int, ok bool) {
 	name := baseName(i.Name)
-	lowerCmd := strings.ToLower(strings.Join(i.Args, " "))
+	lowerCmd := lowerJoinedArgs(i.Args)
 	for _, m := range engineMatchers {
 		if m.match(name, lowerCmd, i.Args) {
 			return m.engine, m.defPort, true
