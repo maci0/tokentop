@@ -7,7 +7,7 @@
 # combinations still install.
 -r requirements.txt
 black==26.5.1
-ruff==0.16.4
+ruff==0.16.5
 mypy==2.3.1
 ast-serialize==0.8.0
 click==8.5.0 \
