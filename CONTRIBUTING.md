@@ -136,8 +136,10 @@ That is `make ci` (gofmt, tidy, staticcheck, vet, govulncheck, race tests for
 both sqlite tag halves), `make site-check` (`bun test site/`), and
 `make scripts-check`. `scripts-check` installs the exact versions in
 `scripts/requirements-dev.txt` into an isolated env (black, ruff, mypy, plus
-the renderer deps). Do not run unpinned `uvx black` / `uvx ruff` / `uvx mypy`:
-those resolve to whatever PyPI returns today. Platform-specific files also
+the renderer deps and their transitives). Pure-Python pins carry a wheel
+sha256; bumping one of those lines means updating the hash too. Do not run
+unpinned `uvx black` / `uvx ruff` / `uvx mypy`: those resolve to whatever
+PyPI returns today. Platform-specific files also
 need `make vet-cross` (the same gate `release.yml` runs before shipping).
 
 Keep platform-specific code behind build tags or runtime checks; the

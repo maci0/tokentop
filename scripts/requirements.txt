@@ -3,6 +3,11 @@
 # Exact pins: a newer release must arrive as a reviewed bump, not an implicit install.
 # pyte is LGPLv3 (wcwidth and pillow are MIT). This renderer is a local developer
 # tool and is not linked into the toktop binary.
-pyte==0.8.2
-wcwidth==0.8.2
+# Wheel sha256 on the pure-Python packages: a registry swap of those files
+# fails the install. Pillow ships per-platform wheels, so it stays a version
+# pin only; hashing one wheel would refuse every other OS/arch/CPython.
+pyte==0.8.2 \
+    --hash=sha256:85db42a35798a5aafa96ac4d8da78b090b2c933248819157fc0e6f78876a0135
+wcwidth==0.8.2 \
+    --hash=sha256:d63947694a0539a1d51e01eda7caf800c291020e6cdd7e28ad7b14dd33ad4f85
 pillow==12.3.0
