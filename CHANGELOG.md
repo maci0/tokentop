@@ -36,6 +36,14 @@ support channel (see SECURITY.md).
 - Ingest `GET /v1/events` names NDJSON in the schema hint, matching what
   `POST /v1/events` accepts. Unknown paths answer 404 naming the three
   endpoints instead of Go's generic 404 page.
+- The header session duration says `session`, matching `--once --plain`,
+  instead of `up` next to the engine count.
+- ENGINE STATE shows the context window as a token count (`ctx 8.2k tok`)
+  rather than a byte estimate with a `tok` suffix.
+- The compact dashboard's empty hint lists `--demo`, `--add URL`, or
+  `--agents` as alternatives, not one command with every flag.
+- Help on a pane too small for the full dashboard lists only the keys that
+  work there (`q`, space, `?`).
 - The agent event ring keeps 512 events so several agents over the 30s rate
   window are not evicted by a shared 64-slot cap. Duplicate `id` values are
   ignored only while that event is still in the ring.
@@ -45,6 +53,13 @@ support channel (see SECURITY.md).
 
 ### Fixed
 
+- The compact dashboard clips long engine rows to the pane width and keeps
+  the key hint on the last line, so a crowded or narrow strip no longer
+  wraps or hides `q` / space / `?`.
+- Help on a small pane is clipped to the pane instead of overflowing.
+- Empty PROBES copy says `q quit, then --probe N`, matching the setup card.
+- Host-strip NPU names pass the same terminal sanitizer as CPU and driver
+  strings.
 - Ingest `ErrorLog` lines redact the peer address the same way the POST
   audit line does: loopback keeps the port, any other IP is dropped.
 - `agentusage` does not walk `prompt`, `messages`, `choices`, `system`, or

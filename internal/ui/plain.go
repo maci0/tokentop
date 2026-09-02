@@ -196,7 +196,11 @@ func writeSystemPlain(b *strings.Builder, sy *core.SysSample) {
 			ident = append(ident, core.SanitizeText(k)+" "+core.SanitizeText(sy.Drivers[k]))
 		}
 		if len(sy.NPUs) > 0 {
-			ident = append(ident, "npu "+strings.Join(sy.NPUs, ","))
+			names := make([]string, len(sy.NPUs))
+			for i, n := range sy.NPUs {
+				names[i] = core.SanitizeText(n)
+			}
+			ident = append(ident, "npu "+strings.Join(names, ","))
 		}
 		b.WriteString(strings.Join(ident, " · ") + "\n")
 	}

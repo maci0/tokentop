@@ -853,12 +853,19 @@ func TestGPUSegmentSanitizesName(t *testing.T) {
 }
 
 func TestHostSegmentsSanitizeDrivers(t *testing.T) {
-	sy := &core.SysSample{Drivers: map[string]string{"nv\x1b]0;title": "5\x1b[35m50"}}
+	sy := &core.SysSample{
+		Drivers: map[string]string{"nv\x1b]0;title": "5\x1b[35m50"},
+		NPUs:    []string{"ane\x1b]52;c;QUJD\x07"},
+	}
 	segs := hostSegments(sy)
 	for _, s := range segs {
-		if strings.ContainsRune(strip(s), '\x1b') {
+		if strings.ContainsRune(strip(s), '\x1b') || strings.ContainsRune(strip(s), '\x07') {
 			t.Errorf("hostSegments leaked escape bytes: %q", strip(s))
 		}
+	}
+	joined := strip(strings.Join(segs, " "))
+	if !strings.Contains(joined, "ane") {
+		t.Errorf("hostSegments lost NPU name: %q", joined)
 	}
 }
 
@@ -954,8 +961,18 @@ func TestProbePressAcknowledgesUntilResult(t *testing.T) {
 	}
 }
 
-// All backends down: ENGINE STATE must say so instead of promising telemetry
-// that will never arrive.
+func TestProcLineContextIsTokenCount(t *testing.T) {
+	got := strip(procLine(core.ProviderSnapshot{
+		Models: []core.ModelInfo{{Name: "llama", CtxMax: 8192}},
+	}))
+	if !strings.Contains(got, "8.2k") || !strings.Contains(got, "tok") {
+		t.Errorf("ctx = %q, want a token count like 8.2k tok", got)
+	}
+	if strings.Contains(got, "Mtok") || strings.Contains(got, "0M") {
+		t.Errorf("ctx still uses the byte estimate: %q", got)
+	}
+}
+
 // Engine rows used a bare bar and "r1 w2": first-timers could not tell the
 // bar was KV cache or that r/w were running/waiting queues.
 func TestEnginesPanelLabelsKVAndQueue(t *testing.T) {
@@ -975,6 +992,8 @@ func TestEnginesPanelLabelsKVAndQueue(t *testing.T) {
 	}
 }
 
+// All backends down: ENGINE STATE must say so instead of promising telemetry
+// that will never arrive.
 func TestEngineStateNamesAllDownEngines(t *testing.T) {
 	m := New(Config{Version: "t"}, nil)
 	m.snap = core.Snapshot{Providers: []core.ProviderSnapshot{
@@ -1037,6 +1056,48 @@ func TestMinimalViewGuidesRecovery(t *testing.T) {
 	}
 	if strings.Contains(out, "no inference engines detected") {
 		t.Errorf("minimal view hid agents behind the engines-empty message:\n%s", out)
+	}
+}
+
+// Long engine labels and a crowded strip must not wrap (bubbletea then
+// scrambles later rows) or push the key hint off the pane.
+func TestMinimalViewFitsPane(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	ps := make([]core.ProviderSnapshot, 20)
+	for i := range ps {
+		ps[i] = core.ProviderSnapshot{
+			Label:    "engine-" + strings.Repeat("x", 40),
+			OK:       true,
+			OutTokPS: 1,
+			Err:      strings.Repeat("connection refused elsewhere", 3),
+		}
+	}
+	m.snap = core.Snapshot{Providers: ps}
+	m.w, m.h, m.ready = 40, 10, true
+	out := m.View()
+	if got := lipgloss.Height(out); got > 10 {
+		t.Errorf("compact frame is %d lines, overflows pane 10", got)
+	}
+	for i, ln := range strings.Split(out, "\n") {
+		if lw := lipgloss.Width(ln); lw > 40 {
+			t.Fatalf("line %d renders %d cells, want <= 40:\n%s", i, lw, ln)
+		}
+	}
+	if !strings.Contains(strip(out), "q quit") {
+		t.Errorf("key hint lost when engines overflow the pane:\n%s", strip(out))
+	}
+}
+
+// Recovery flags are alternatives, not one command with every switch.
+func TestMinimalViewRecoveryAreAlternatives(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.w, m.h, m.ready = 40, 12, true
+	out := strip(m.View())
+	if strings.Contains(out, "toktop --demo --add") {
+		t.Errorf("compact empty state mashes flags into one command:\n%s", out)
+	}
+	if !strings.Contains(out, "or --agents") && !strings.Contains(out, "or --add") {
+		t.Errorf("compact empty state does not mark flags as alternatives:\n%s", out)
 	}
 }
 
@@ -1313,6 +1374,59 @@ func TestFooterOmitsDeadKeys(t *testing.T) {
 	got = strip(full.renderFooter())
 	if !strings.Contains(got, "probe") || !strings.Contains(got, "timescale") {
 		t.Errorf("engine footer lost live keys: %q", got)
+	}
+}
+
+func TestHeaderSessionMatchesPlain(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.snap = core.Snapshot{
+		Uptime:    90 * time.Second,
+		Providers: []core.ProviderSnapshot{{Label: "ollama", OK: true}},
+	}
+	m.w, m.h, m.ready = 110, 36, true
+	out := strip(m.renderHeader())
+	if !strings.Contains(out, "session 1m30s") {
+		t.Errorf("header missing session duration: %q", out)
+	}
+	if strings.Contains(out, "up 1m30s") {
+		t.Errorf("header still says up instead of session: %q", out)
+	}
+}
+
+func TestProbeKeyNoopsWithoutEngines(t *testing.T) {
+	var probes atomic.Int32
+	m := New(Config{Version: "t", Prober: proberFunc(func() { probes.Add(1) })}, nil)
+	nm, _ := m.Update(keyMsg("p"))
+	m = nm.(Model)
+	time.Sleep(20 * time.Millisecond)
+	if probes.Load() != 0 {
+		t.Error("p fired probes with no engines attached")
+	}
+	if !m.probeReq.IsZero() {
+		t.Error("p set the probing marker with no engines attached")
+	}
+}
+
+func TestHelpFitsCompactPane(t *testing.T) {
+	m := New(Config{Version: "t"}, nil)
+	m.help, m.w, m.h, m.ready = true, 40, 10, true
+	out := m.View()
+	if got := lipgloss.Height(out); got > 10 {
+		t.Errorf("help is %d lines, overflows pane 10", got)
+	}
+	for i, ln := range strings.Split(out, "\n") {
+		if lw := lipgloss.Width(ln); lw > 40 {
+			t.Fatalf("help line %d renders %d cells, want <= 40:\n%s", i, lw, ln)
+		}
+	}
+	plain := strip(out)
+	for _, want := range []string{"quit", "pause", "help"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("compact help missing %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "--demo") || strings.Contains(plain, "real generation") {
+		t.Errorf("compact help still lists full-dashboard keys/flags:\n%s", plain)
 	}
 }
 

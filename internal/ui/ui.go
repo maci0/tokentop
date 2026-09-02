@@ -175,11 +175,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.paused = !m.paused
 			return m, nil
 		case "p", "P":
-			if m.cfg.Prober != nil {
+			// No engines: ProbeAll is a silent no-op and the PROBES panel
+			// (where "probing…" lives) is absent. Skip rather than look dead.
+			if m.cfg.Prober != nil && len(m.snap.Providers) > 0 {
 				go m.cfg.Prober.ProbeAll()
-				if len(m.snap.Providers) > 0 {
-					m.probeReq = m.clock
-				}
+				m.probeReq = m.clock
 			}
 			return m, nil
 		case "t", "T":
@@ -204,15 +204,6 @@ func (m Model) View() string {
 	if m.help {
 		return m.renderHelp()
 	}
-	// minDashH is the shortest pane where the full layout still covers its own
-	// chrome (header, titles, borders, footer, one system strip row) plus the
-	// smallest panel split from sectionHeights. Below it - or narrower than
-	// minDashW - a squeezed full frame overflows and bubbletea clips it from
-	// the top, hiding the header; the compact view stays honest instead.
-	const (
-		minDashW = 62
-		minDashH = 30
-	)
 	if m.w < minDashW || m.h < minDashH {
 		return m.renderMinimal()
 	}
@@ -283,7 +274,9 @@ func (m Model) renderHeader() string {
 	)
 
 	if up > 0 || tot > 0 {
-		segs = append(segs, headerSeg{text: dim("up " + fmtDur(m.snap.Uptime)), shed: 50})
+		// "session", matching --once --plain: "up 5m" next to "2/3 engines"
+		// reads as engine uptime.
+		segs = append(segs, headerSeg{text: dim("session " + fmtDur(m.snap.Uptime)), shed: 50})
 	}
 	if m.snap.Sys != nil && m.snap.Sys.RemoteHost != "" {
 		segs = append(segs, headerSeg{text: styleInfo.Render("via ssh:" + core.SanitizeText(m.snap.Sys.RemoteHost))})
@@ -349,6 +342,17 @@ func fitSegments(segs []headerSeg, avail int) string {
 	}
 	return line
 }
+
+// minDashW / minDashH are the shortest pane where the full layout still
+// covers its own chrome (header, titles, borders, footer, one system strip
+// row) plus the smallest panel split from sectionHeights. Below either, a
+// squeezed full frame overflows and bubbletea clips it from the top, hiding
+// the header; the compact view stays honest instead. Help uses the same
+// gate so a pane that advertises "?" does not open a box taller than itself.
+const (
+	minDashW = 62
+	minDashH = 30
+)
 
 // minIdentH is the shortest pane that still affords a second system strip
 // row; below it identity and sensors yield rather than pushing the frame
@@ -694,7 +698,11 @@ func hostSegments(sy *core.SysSample) []string {
 		segs = append(segs, styleInfo.Render(shorten(strings.Join(parts, " · "), 40)))
 	}
 	if len(sy.NPUs) > 0 {
-		segs = append(segs, styleInfo.Render("npu: "+strings.Join(sy.NPUs, ",")))
+		names := make([]string, len(sy.NPUs))
+		for i, n := range sy.NPUs {
+			names[i] = core.SanitizeText(n)
+		}
+		segs = append(segs, styleInfo.Render("npu: "+strings.Join(names, ",")))
 	}
 	return segs
 }
@@ -851,8 +859,7 @@ func procLine(p core.ProviderSnapshot) string {
 	if bytes > 0 {
 		parts = append(parts, "mem "+humanBytes(bytes))
 	} else if len(p.Models) > 0 && p.Models[0].CtxMax > 0 {
-		// CtxMax is a token count; ~2 bytes/token turns it into a KV-byte estimate.
-		parts = append(parts, "ctx "+humanBytesShort(satMulU64(p.Models[0].CtxMax, 2))+"tok")
+		parts = append(parts, "ctx "+fmtCount(int64(p.Models[0].CtxMax))+" tok")
 	}
 	if p.ProcRSS > 0 {
 		rss := "rss " + humanBytesShort(p.ProcRSS)
@@ -934,7 +941,7 @@ func (m Model) probesBody(w, h int) string {
 	}
 	if len(m.snap.Probes) == 0 {
 		out.WriteString(dim("press ") + styleInfo.Render("p") + dim(" to fire a probe") + "\n")
-		out.WriteString(dim("--probe N: quit and re-run"))
+		out.WriteString(dim("q quit, then --probe N to auto-probe"))
 	}
 	return out.String()
 }
@@ -1149,7 +1156,35 @@ func (m Model) renderEmpty() string {
 }
 
 func (m Model) renderHelp() string {
-	rows := [][2]string{
+	var b strings.Builder
+	for _, r := range m.helpRows() {
+		key := styleInfo.Render(padTo(r[0], 12))
+		b.WriteString(key + dim(r[1]) + "\n")
+	}
+	box := helpStyle.Render(strings.TrimSuffix(b.String(), "\n"))
+	// A pane that advertises "?" may be smaller than this box. Centering a
+	// too-tall box pads the top and overflows the bottom; clip in place.
+	if lipgloss.Width(box) > m.w || lipgloss.Height(box) > m.h {
+		return clipBlock(box, m.w, m.h)
+	}
+	placed := lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, box)
+	return clipFrame(placed, m.w)
+}
+
+// helpRows is the in-app key reference. Compact panes already hide p and t
+// (their effects live on panels the compact strip does not draw) and have
+// no room for the restart-flag list; matching that list here keeps help
+// from advertising keys that appear to do nothing.
+func (m Model) helpRows() [][2]string {
+	if m.w < minDashW || m.h < minDashH {
+		return [][2]string{
+			{"q / ctrl+c", "quit"},
+			{"esc", "close help / quit"},
+			{"space", "pause / resume"},
+			{"? / h", "toggle this help"},
+		}
+	}
+	return [][2]string{
 		{"q / ctrl+c", "quit"},
 		{"esc", "close help / quit"},
 		{"space", "pause / resume streaming"},
@@ -1166,41 +1201,32 @@ func (m Model) renderHelp() string {
 		{"--once", "print one frame and exit"},
 		{"--plain", "with --once: linear text report"},
 	}
-	var b strings.Builder
-	for _, r := range rows {
-		key := styleInfo.Render(padTo(r[0], 12))
-		b.WriteString(key + dim(r[1]) + "\n")
-	}
-	box := helpStyle.Render(strings.TrimSuffix(b.String(), "\n"))
-	placed := lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Center, box)
-	// The minimal view advertises ? on panes far narrower than this box: an
-	// over-wide help line wraps and drags every row below it out of alignment.
-	return clipFrame(placed, m.w)
 }
 
 // renderMinimal is the degraded view for panes too small for the dashboard:
 // one line per engine, plus orientation the compact layout must carry on its
 // own because the footer and header are not rendered here.
 func (m Model) renderMinimal() string {
-	var b strings.Builder
-	b.WriteString(dim(clip("enlarge window for the full dashboard", m.w)) + "\n")
+	var lines []string
+	lines = append(lines, dim(clip("enlarge window for the full dashboard", m.w)))
 	// space pauses here too: without a badge a frozen strip is
 	// indistinguishable from a feed that stalled.
 	if m.paused {
-		b.WriteString(styleWarn.Render("‖ PAUSED") + "\n")
+		lines = append(lines, clip(styleWarn.Render("‖ PAUSED"), m.w))
 	}
 	if len(m.snap.Providers) == 0 {
 		rates := agentRates(m.snap.Agents, m.snapNow())
 		if len(rates) == 0 {
-			b.WriteString(styleWarn.Render("no inference engines detected") + "\n")
+			lines = append(lines, clip(styleWarn.Render("no inference engines detected"), m.w))
 			if m.cfg.Agents {
-				b.WriteString(dim(clip("watching local agents…", m.w)) + "\n")
+				lines = append(lines, dim(clip("watching local agents…", m.w)))
 			} else {
-				b.WriteString(dim(clip("try toktop --demo --add URL --agents", m.w)) + "\n")
+				// "or" so this is not read as one command with every flag.
+				lines = append(lines, dim(clip("try --demo, --add URL, or --agents", m.w)))
 			}
 		}
 		for _, r := range rates {
-			b.WriteString(clip(agentMiniLine(r), m.w) + "\n")
+			lines = append(lines, clip(agentMiniLine(r), m.w))
 		}
 	}
 	for _, p := range m.snap.Providers {
@@ -1217,18 +1243,23 @@ func (m Model) renderMinimal() string {
 				line += " " + dim(shorten(msg, 32))
 			}
 		}
-		b.WriteString(line + "\n")
+		lines = append(lines, clip(line, m.w))
 	}
 	if len(m.snap.Providers) > 0 {
 		for _, r := range agentRates(m.snap.Agents, m.snapNow()) {
-			b.WriteString(clip(agentMiniLine(r), m.w) + "\n")
+			lines = append(lines, clip(agentMiniLine(r), m.w))
 		}
 	}
-	// Only keys with a visible effect in this layout are advertised: p and t
-	// still work, but their results (probe rows, chart timescale) render only
-	// in the full dashboard, where ? help points to them.
-	keys := "q quit · space pause · ? help"
-	return b.String() + dim(clip(keys, m.w))
+	// Only keys with a visible effect in this layout are advertised. p and t
+	// still work, but their results render only in the full dashboard; compact
+	// help matches this list.
+	foot := dim(clip("q quit · space pause · ? help", m.w))
+	bodyH := max(m.h-lipgloss.Height(foot)-1, 0)
+	body := clipBlock(strings.Join(lines, "\n"), m.w, bodyH)
+	if bodyH == 0 {
+		return clipBlock(foot, m.w, m.h)
+	}
+	return composeFrame(body, foot, m.w, m.h)
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -1245,7 +1276,20 @@ func composeFrame(body, footer string, w, h int) string {
 }
 
 func clipFrame(s string, w int) string {
+	return clipBlock(s, w, -1)
+}
+
+// clipBlock clips s to at most w visible columns and, when h >= 0, at most
+// h rows. h < 0 means no row cap (clipFrame). Extra rows are dropped from
+// the bottom so a header or title already on screen stays put.
+func clipBlock(s string, w, h int) string {
+	if h == 0 || w < 0 {
+		return ""
+	}
 	lines := strings.Split(s, "\n")
+	if h > 0 && len(lines) > h {
+		lines = lines[:h]
+	}
 	for i, ln := range lines {
 		lines[i] = clip(ln, w)
 	}
