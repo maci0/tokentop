@@ -184,7 +184,7 @@ Event fields are all optional; anything omitted gets the default:
 
 | field | type | default | notes |
 |---|---|---|---|
-| `id` | string | - | caller-chosen key, capped at 128 runes; a repeat of a key still in the retained feed (last 64 events) is ignored. When omitted, a request `Idempotency-Key` header is used (`key:1`, `key:2`, and so on per line in the POST) |
+| `id` | string | - | caller-chosen key, capped at 128 runes; a repeat of a key still in the retained feed (last 512 events) is ignored. When omitted, a request `Idempotency-Key` header is used (`key:1`, `key:2`, and so on per line in the POST) |
 | `ts` | RFC 3339 string | arrival instant | offset-less stamps decode as UTC; a space instead of `T` is accepted, as is a colon-less numeric offset (`-0700`); stamps more than two minutes ahead of arrival are clamped to the arrival instant |
 | `agent` | string | `anonymous` | capped at 64 runes |
 | `model` | string | - | capped at 128 runes |
@@ -331,7 +331,7 @@ technology:
 ```
 toktop update     subcommand: install the latest release (--check to only
                   report it, --repo owner/name for a fork)
-toktop help       same as --help; `toktop help update` for the updater
+toktop help       same as --help; `toktop help update` / `toktop help version`
 toktop version    same as --version
 --demo            simulated fleet, zero setup
 --add URL         attach an openai-compatible http(s) endpoint (repeatable;

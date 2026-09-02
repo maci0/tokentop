@@ -26,11 +26,16 @@ support channel (see SECURITY.md).
   way transcript adapters already do on default APFS.
 - `toktop ssh://host` on Windows uses the OpenSSH named pipe agent when
   `$SSH_AUTH_SOCK` is unset, matching ssh.exe.
+- `toktop help version` prints the same usage as `toktop --help`.
 
 ### Changed
 
 - The agent event ring keeps 512 events so several agents over the 30s rate
-  window are not evicted by a shared 64-slot cap.
+  window are not evicted by a shared 64-slot cap. Duplicate `id` values are
+  ignored only while that event is still in the ring.
+- dsh zstd session reads cap newly-appended compressed bytes per poll so a
+  huge append cannot pin an unbounded buffer; leftover frames count on the
+  next poll.
 
 ### Fixed
 
@@ -51,6 +56,14 @@ support channel (see SECURITY.md).
   Discover reports.
 - `agentusage` compiles on GOOS values other than linux, darwin, and windows:
   `Discover` reports nothing there, matching `Peers`.
+- `POST /v1/events` rejects a non-object root (`null`, a bool, a number) with
+  400 instead of recording it as an empty anonymous turn.
+- `--demo --agents` stamps transcript-derived events on the simulated clock
+  so rates stay on the seeded timeline.
+- A probe with no model id reports `no model` instead of POSTing an empty id
+  (some engines treat that as load-default).
+- LM Studio listings omit unloaded catalog entries, so a probe cannot
+  JIT-load a cold model.
 
 ## [0.7.0] - 2026-08-30
 
@@ -159,3 +172,9 @@ Binaries, checksums, and a CycloneDX SBOM are on
 
 Binaries, checksums, and a CycloneDX SBOM are on
 [GitHub Releases](https://github.com/maci0/toktop/releases/tag/v0.5.0).
+
+[Unreleased]: https://github.com/maci0/toktop/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/maci0/toktop/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/maci0/toktop/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/maci0/toktop/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/maci0/toktop/compare/v0.4.5...v0.5.0

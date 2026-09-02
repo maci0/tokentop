@@ -389,7 +389,7 @@ Controls verified in code, with the threats they cover:
 | M2: Terminal escape/control-char sanitizer applied both at ingest and at render time (C0/C1 including UTF-8-encoded C1) | OSC/CSI clipboard-cursor-title injection from engines, remotes, and events (asset: terminal integrity) | internal/core/sanitize.go:14-19; ingest side server.go:315-341; render side internal/ui/ui.go, internal/ui/plain.go, internal/ui/format.go:136, internal/ui/agents.go |
 | M3: Ingest body cap 1 MiB + MaxBytesReader | unbounded upload into decode loop (B1 DoS) | server.go:176,244 |
 | M4: Ingest read deadlines: 10 min absolute lifetime, 1 min idle extension, 5 s header timeout, 2 min idle reap | slowloris/drip DoS (B1) | server.go:43,68-69,196-198,204-217,241-244 |
-| M5: Event field clamps (agent 64, model 128, note 512, kind 24 runes) + retention caps (64 agents, 128 probes per snapshot) | memory pinning via oversized or numerous events (B1 DoS) | server.go:315-341; core.HistoryLen constants internal/core/core.go:6-12; collector.go:399-404,415-416 |
+| M5: Event field clamps (agent 64, model 128, note 512, kind 24 runes) + retention caps (512 events, 128 probes per snapshot) | memory pinning via oversized or numerous events (B1 DoS) | server.go:315-341; core.AgentHistoryLen / ProbeHistoryLen internal/core/core.go:8-21; collector.go:428-440,446-453 |
 | M6: Event timestamp skew clamp: stamps >2 min in the future reset to arrival time | forged-future stamps pinning the live marker and feed ordering (B1 spoofing) | server.go:185,336-341 |
 | M7: Negative token counts clamped to zero; unknown kinds defaulted | junk values entering retained state (B1 tampering) | server.go:325-335 |
 | M8: Engine response caps: 4 MiB JSON, 8 MiB text, 256-rune error snippets | memory blowup and log flooding from hostile engines (B2 DoS/disclosure) | provider/provider.go:68,90; httperr/httperr.go:17,21-38 |
@@ -445,7 +445,7 @@ high-impact threats alone.
    `--ingest 0.0.0.0` start) POSTs NDJSON naming agent "claude" with huge
    token rates and a plausible note; a browser cannot do this (M21) but any
    script or agent on the host can, without authenticating. Enabling path:
-   ingest handlePost -> collector.RecordAgent (collector.go:399-404) -> UI
+   ingest handlePost -> collector.RecordAgent (collector.go:428-440) -> UI
    agents feed. The operator's view of "which agent is burning tokens" is now
    attacker-chosen; nothing distinguishes forged rows from agentwatch-sourced
    ones.

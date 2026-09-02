@@ -57,10 +57,14 @@ func TestURLPort(t *testing.T) {
 		want int
 	}{
 		{"http://127.0.0.1:11434", 11434},
+		{"http://127.0.0.1:8081", 8081},
 		{"https://example:8443", 8443},
+		{"https://example.com:8443", 8443},
 		{"http://127.0.0.1", 80},
+		{"http://example.com", 80},
 		{"https://example.com", 443},
 		{"http://[::1]:8080", 8080},
+		{"http://[::1]:11434", 11434},
 		{"https://[::1]", 443},
 		{"", 0},
 		{"fake://x", 0},
@@ -678,25 +682,6 @@ func TestPerProviderStateKeyedByEndpoint(t *testing.T) {
 	}
 	if rates["http://127.0.0.1:8081"] != 0 {
 		t.Fatalf(":8081 rate = %v, want 0 (its counter did not move)", rates)
-	}
-}
-
-func TestURLPort(t *testing.T) {
-	cases := []struct {
-		addr string
-		want int
-	}{
-		{"http://127.0.0.1:11434", 11434},
-		{"http://127.0.0.1:8081", 8081},
-		{"https://example.com:8443", 8443},
-		{"https://example.com", 443},
-		{"http://example.com", 80},
-		{"http://[::1]:11434", 11434},
-	}
-	for _, c := range cases {
-		if got := urlPort(c.addr); got != c.want {
-			t.Errorf("urlPort(%q) = %d, want %d", c.addr, got, c.want)
-		}
 	}
 }
 
