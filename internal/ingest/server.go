@@ -76,6 +76,7 @@ func newServer(addr string, rec Recorder, lg *slog.Logger) (*Server, error) {
 		Handler:           withSecurityHeaders(withRequestID(withRecover(s, withUnhandledLog(s, mux)))),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    16 << 10, // default 1 MiB; this endpoint has no large headers
 		// net/http interpolates conn.RemoteAddr into panic and handshake
 		// lines. That is the same peer address logPost redacts: personal
 		// data when --ingest is bound off loopback.
@@ -95,6 +96,7 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		h.Set("Cache-Control", "no-store")
 		h.Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
@@ -569,6 +571,11 @@ func eventFromWire(wire agentEventWire) (core.AgentEvent, error) {
 	// (pure escape sequences) must not slip past the fallback.
 	ev.ID = clampField(core.SanitizeText(ev.ID), 128)
 	ev.Agent = clampField(core.SanitizeText(ev.Agent), 64)
+	// Mixed Latin+Cyrillic/Greek names spoof a real agent in the feed
+	// ("сlaude" vs "claude"). Collapse them to the anonymous default.
+	if core.MixedScriptIdentity(ev.Agent) {
+		ev.Agent = ""
+	}
 	if ev.Agent == "" {
 		ev.Agent = "anonymous"
 	}

@@ -312,6 +312,7 @@ const VARY = "Accept-Encoding";
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
   "strict-transport-security": "max-age=31536000",
   "referrer-policy": "strict-origin-when-cross-origin",
   "content-security-policy":

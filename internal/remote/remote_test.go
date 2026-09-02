@@ -3,6 +3,7 @@ package remote
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -270,6 +271,28 @@ func TestTOFUStore(t *testing.T) {
 	}
 }
 
+func TestFingerprintOfMatchesKeyType(t *testing.T) {
+	check := func(t *testing.T, pk ssh.PublicKey) {
+		t.Helper()
+		line := "h:22 " + strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pk)))
+		got := fingerprintOf(line)
+		want := ssh.FingerprintSHA256(pk)
+		if got != want {
+			t.Errorf("fingerprintOf = %q, want %q (type %s)", got, want, pk.Type())
+		}
+	}
+	check(t, fakePublicKey("ed25519-fp"))
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pk, err := ssh.NewPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(t, pk)
+}
+
 // Two Connects writing different hosts must both persist. A snapshot-then-
 // WriteFile race drops whichever host finished first.
 func TestTOFUConcurrentHostsPersist(t *testing.T) {
@@ -405,6 +428,23 @@ func TestPasswordSourceHeadlessFailureCached(t *testing.T) {
 	_, err = ps.get(tgt)
 	if err == nil {
 		t.Fatal("cached failure must persist across calls")
+	}
+}
+
+func TestAnswerPasswordPromptSingleSecret(t *testing.T) {
+	get := func() (string, error) { return "sekrit", nil }
+	got, err := answerPasswordPrompt([]string{"Password:"}, []bool{false}, get)
+	if err != nil || len(got) != 1 || got[0] != "sekrit" {
+		t.Fatalf("single password prompt = %q, %v", got, err)
+	}
+	if _, err := answerPasswordPrompt([]string{"Password:", "OTP:"}, []bool{false, false}, get); err == nil {
+		t.Fatal("multiple prompts must be refused")
+	}
+	if _, err := answerPasswordPrompt([]string{"Username:"}, []bool{true}, get); err == nil {
+		t.Fatal("echoing prompt must be refused")
+	}
+	if _, err := answerPasswordPrompt(nil, nil, get); err == nil {
+		t.Fatal("empty challenge must be refused")
 	}
 }
 

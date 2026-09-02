@@ -118,16 +118,8 @@ func (p *passwordSource) get(t Target) (string, error) {
 func (p *passwordSource) authCallbacks(t Target) []ssh.AuthMethod {
 	get := func() (string, error) { return p.get(t) }
 	pw := ssh.PasswordCallback(get)
-	ki := ssh.KeyboardInteractive(func(_ string, _ string, questions []string, _ []bool) ([]string, error) {
-		s, err := get()
-		if err != nil {
-			return nil, err
-		}
-		ans := make([]string, len(questions))
-		for i := range ans {
-			ans[i] = s
-		}
-		return ans, nil
+	ki := ssh.KeyboardInteractive(func(_ string, _ string, questions []string, echos []bool) ([]string, error) {
+		return answerPasswordPrompt(questions, echos, get)
 	})
 	return []ssh.AuthMethod{pw, ki}
 }
@@ -142,6 +134,24 @@ func agentSock() string {
 		return s
 	}
 	return platformAgentSock()
+}
+
+// answerPasswordPrompt fills one keyboard-interactive challenge with the
+// SSH password. A hostile or 2FA server can ask several questions; answering
+// all of them with the same secret would send the password to every prompt
+// (and fail real OTP). An echoing prompt is not a password field.
+func answerPasswordPrompt(questions []string, echos []bool, get func() (string, error)) ([]string, error) {
+	if len(questions) != 1 {
+		return nil, fmt.Errorf("keyboard-interactive: refusing %d prompts (want a single password prompt)", len(questions))
+	}
+	if len(echos) > 0 && echos[0] {
+		return nil, errors.New("keyboard-interactive: refusing an echoing prompt")
+	}
+	s, err := get()
+	if err != nil {
+		return nil, err
+	}
+	return []string{s}, nil
 }
 
 // dialAgent is swappable in tests.

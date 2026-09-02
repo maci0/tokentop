@@ -148,6 +148,16 @@ func Connect(ctx context.Context, t Target) (*Client, error) {
 		HostKeyCallback: hk,
 		Timeout:         8 * time.Second,
 	}
+	// Library defaults still offer ssh-rsa (SHA-1) and DSA host keys, and
+	// hmac-sha1-96, for old servers. SupportedAlgorithms is the same
+	// preference list without those, and already leads with
+	// mlkem768x25519-sha256. Using the library's set (not a pinned string
+	// list) keeps new host-key and KEX algorithms as the package adds them.
+	algs := ssh.SupportedAlgorithms()
+	cfg.KeyExchanges = algs.KeyExchanges
+	cfg.Ciphers = algs.Ciphers
+	cfg.MACs = algs.MACs
+	cfg.HostKeyAlgorithms = algs.HostKeys
 
 	addr := net.JoinHostPort(t.Host, strconv.Itoa(t.Port))
 	var d net.Dialer

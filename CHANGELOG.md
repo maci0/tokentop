@@ -44,6 +44,18 @@ support channel (see SECURITY.md).
 - `agentusage` does not walk `prompt`, `messages`, `choices`, `system`, or
   `text` trees for counters or a working directory; those keys hold user
   or model text, not usage.
+- `--agents` refuses a crush `.crush/crush.db` (or `.crush` directory) that
+  is a symlink pointing outside the project, matching the JSONL transcript
+  rule, so a writable store cannot pull in another project's sessions.
+- Ingest `POST /v1/events` treats mixed Latin+Cyrillic/Greek agent names as
+  anonymous, so a lookalike cannot sit next to a real agent in the feed.
+- SSH host-key change messages fingerprint RSA and ECDSA keys the same way
+  as ed25519, instead of hashing the raw stored line.
+- SSH keyboard-interactive auth answers only a single non-echoing prompt,
+  so a server cannot harvest the password by asking extra questions.
+- SSH connections use the library's supported algorithms, so ssh-rsa
+  (SHA-1) and DSA host keys are not accepted.
+- Ingest responses include `Cross-Origin-Resource-Policy: same-origin`.
 - `agentusage` counts a thinking-only reading (opencode SQLite, and Claude /
   Qwen / Codex transcript lines that carry reasoning with no billed output)
   instead of reporting nothing until the first completion token.

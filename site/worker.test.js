@@ -124,6 +124,7 @@ test("HEAD with Accept-Encoding matches GET's coding and length, with no body", 
 const SECURITY_HEADER_NAMES = [
   "content-security-policy",
   "x-content-type-options",
+  "x-frame-options",
   "strict-transport-security",
   "referrer-policy",
 ];

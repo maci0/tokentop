@@ -761,11 +761,12 @@ func TestHealthzHEADHasNoBody(t *testing.T) {
 func TestIngestSecurityHeaders(t *testing.T) {
 	s := startIngest(t, &memRecorder{})
 	want := map[string]string{
-		"X-Content-Type-Options":  "nosniff",
-		"X-Frame-Options":         "DENY",
-		"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-		"Cache-Control":           "no-store",
-		"Referrer-Policy":         "no-referrer",
+		"X-Content-Type-Options":       "nosniff",
+		"X-Frame-Options":              "DENY",
+		"Content-Security-Policy":      "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+		"Cross-Origin-Resource-Policy": "same-origin",
+		"Cache-Control":                "no-store",
+		"Referrer-Policy":              "no-referrer",
 	}
 	for _, path := range []string{"/healthz", "/v1/events"} {
 		resp, err := http.Get("http://" + s.Addr() + path)
@@ -915,6 +916,21 @@ func TestIngestStripsBidiFromAgent(t *testing.T) {
 	awaitEvents(t, rec, 1)
 	if rec.evs[0].Agent != "claude" {
 		t.Errorf("agent = %q, want claude with bidi/zwsp stripped", rec.evs[0].Agent)
+	}
+}
+
+func TestIngestRejectsMixedScriptAgentName(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"\u0441laude","output_tokens":1}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 1)
+	if rec.evs[0].Agent != "anonymous" {
+		t.Errorf("agent = %q, want anonymous for mixed-script spoof of claude", rec.evs[0].Agent)
 	}
 }
 

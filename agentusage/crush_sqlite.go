@@ -65,20 +65,19 @@ func crushDBPaths(dirs []string) []string {
 // crushDBPath finds the database crush would use for a directory, walking up
 // to the project root as crush does. It returns "" when there is none, which
 // is the common case: most machines have never run crush. The path is
-// returned with symlinks resolved, so the spellings one directory is watched
-// under (on macOS always more than one) name it identically.
+// returned with directory-path symlinks resolved, so the spellings one
+// directory is watched under (on macOS always more than one) name it
+// identically. A crush.db (or .crush directory) that is a symlink out of
+// the project is refused: the store is writable by the agent, the same
+// class of planted link the JSONL adapters already reject.
 func crushDBPath(dir string) string {
 	cur, err := filepath.Abs(dir)
 	if err != nil {
 		return ""
 	}
 	for range crushMaxWalkUp {
-		candidate := filepath.Join(cur, ".crush", "crush.db")
-		if fi, err := os.Stat(candidate); err == nil && fi.Mode().IsRegular() {
-			if resolved, err := filepath.EvalSymlinks(candidate); err == nil {
-				return resolved
-			}
-			return candidate
+		if path := crushDBIn(cur); path != "" {
+			return path
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
@@ -96,6 +95,34 @@ const (
 	// strftime('%s','now') (seconds), and Go writers use milliseconds.
 	crushMillisCutoff int64 = 100_000_000_000
 )
+
+const crushDBRel = ".crush/crush.db"
+
+// crushDBIn returns the crush database under root when OpenRoot can open it
+// as a regular file. That refuses a crush.db or .crush directory whose
+// symlink target leaves the project, while still allowing the project path
+// itself to be a symlink (macOS /var).
+func crushDBIn(root string) string {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return ""
+	}
+	defer r.Close()
+	f, err := r.Open(crushDBRel)
+	if err != nil {
+		return ""
+	}
+	fi, err := f.Stat()
+	f.Close()
+	if err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	resolved := root
+	if p, err := filepath.EvalSymlinks(root); err == nil {
+		resolved = p
+	}
+	return filepath.Join(resolved, filepath.FromSlash(crushDBRel))
+}
 
 const crushSessionsQuery = `
 	SELECT id, completion_tokens, prompt_tokens

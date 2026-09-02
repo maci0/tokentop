@@ -264,6 +264,43 @@ func TestCrushSourceSumsOneDatabaseOnce(t *testing.T) {
 	}
 }
 
+// A crush.db (or .crush directory) that is a symlink out of the project
+// must not be followed: the store is writable by the agent, so a planted
+// link could otherwise pull in another project's sessions as usage.
+func TestCrushDBSymlinkOutsideProjectIsIgnored(t *testing.T) {
+	outside := t.TempDir()
+	crushDB(t, outside, map[string][3]int64{
+		"stolen": {9999, 0, time.Now().UnixMilli()},
+	})
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".crush"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(
+		filepath.Join(outside, ".crush", "crush.db"),
+		filepath.Join(dir, ".crush", "crush.db"),
+	); err != nil {
+		t.Skip("symlinks:", err)
+	}
+	if path := crushDBPath(dir); path != "" {
+		t.Fatalf("followed a crush.db symlink out of the project: %s", path)
+	}
+	if out, _, ok := crushSessionSum([]string{dir}, time.Time{}); ok || out != 0 {
+		t.Fatalf("read outside crush store via file symlink: output=%d ok=%v", out, ok)
+	}
+
+	dir2 := t.TempDir()
+	if err := os.Symlink(filepath.Join(outside, ".crush"), filepath.Join(dir2, ".crush")); err != nil {
+		t.Fatal(err)
+	}
+	if path := crushDBPath(dir2); path != "" {
+		t.Fatalf("followed a .crush directory symlink out of the project: %s", path)
+	}
+	if out, _, ok := crushSessionSum([]string{dir2}, time.Time{}); ok || out != 0 {
+		t.Fatalf("read outside crush store via dir symlink: output=%d ok=%v", out, ok)
+	}
+}
+
 // crushSessionSum is the sessions snapshot flattened to totals, for tests
 // that care about what was recorded rather than per-session identity.
 func crushSessionSum(dirs []string, since time.Time) (output, input int, ok bool) {

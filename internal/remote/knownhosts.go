@@ -145,14 +145,15 @@ func short(s string) string {
 }
 
 // fingerprintOf renders the stored key's SHA-256 fingerprint; unknown shapes
-// degrade to a short hash of the raw text.
+// degrade to a short hash of the raw text. The line is hostname plus an
+// authorized-keys blob (any key type): parsing it as written is what
+// ssh-keygen -lf would show, so a changed RSA or ECDSA key is comparable
+// instead of a hash of the raw line.
 func fingerprintOf(line string) string {
-	fields := strings.FieldsSeq(line)
-	for f := range fields {
-		if strings.HasPrefix(f, "AAAA") {
-			if k, _, _, _, err := ssh.ParseAuthorizedKey([]byte("ssh-ed25519 " + f)); err == nil {
-				return ssh.FingerprintSHA256(k)
-			}
+	_, rest, ok := strings.Cut(strings.TrimSpace(line), " ")
+	if ok {
+		if k, _, _, _, err := ssh.ParseAuthorizedKey([]byte(rest)); err == nil {
+			return ssh.FingerprintSHA256(k)
 		}
 	}
 	sum := sha256.Sum256([]byte(line))

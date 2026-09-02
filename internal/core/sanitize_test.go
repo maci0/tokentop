@@ -123,6 +123,28 @@ func TestSanitizeTextStripsBidiAndZeroWidth(t *testing.T) {
 	}
 }
 
+func TestMixedScriptIdentity(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"ascii agent", "claude", false},
+		{"hyphenated ascii", "prime-agent", false},
+		{"cyrillic-only", "модель", false},
+		{"japanese-only", "日本語", false},
+		{"cyrillic s in claude", "сlaude", true}, // U+0441 CYRILLIC SMALL LETTER ES
+		{"greek o in codex", "cοdex", true},      // U+03BF GREEK SMALL LETTER OMICRON
+		{"digits and hyphen", "gpt-4", false},
+		{"empty", "", false},
+	}
+	for _, tc := range cases {
+		if got := MixedScriptIdentity(tc.in); got != tc.want {
+			t.Errorf("%s: MixedScriptIdentity(%q) = %v, want %v", tc.name, tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestSanitizeTextDropsInvalidUTF8(t *testing.T) {
 	// A truncated 2-byte sequence and a lone 0xFF are not UTF-8; leaving
 	// them in an identity field or a terminal line is the same class of

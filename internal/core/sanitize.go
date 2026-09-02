@@ -93,6 +93,27 @@ func unsafeRune(r rune) bool {
 	return false
 }
 
+// MixedScriptIdentity reports a name that mixes Latin letters with Cyrillic
+// or Greek. Those alphabets supply lookalikes for Latin (Cyrillic с vs c),
+// so "сlaude" would render next to a real "claude" as the same agent.
+// Homoglyphs inside one script are left alone; this is the mixed-script
+// impersonation that ingest and similar identity fields can actually use.
+func MixedScriptIdentity(s string) bool {
+	var latin, lookalike bool
+	for _, r := range s {
+		switch {
+		case r <= unicode.MaxASCII && unicode.IsLetter(r):
+			latin = true
+		case unicode.Is(unicode.Cyrillic, r) || unicode.Is(unicode.Greek, r):
+			lookalike = true
+		}
+		if latin && lookalike {
+			return true
+		}
+	}
+	return false
+}
+
 // needsSanitize reports whether s contains any byte that SanitizeText would
 // remove. ASCII controls (except newline/tab) and DEL are one class; any
 // non-ASCII byte takes the slow path because bidi and zero-width marks are
