@@ -5,14 +5,19 @@
 - Go, at the version pinned in `go.mod`. `make` sets `GOTOOLCHAIN` to that
   exact version so a newer compiler on the host cannot change the artifact.
   CI installs the same version via `go-version-file: go.mod`.
+- GNU Make and bash (`SHELL := /bin/bash` in the Makefile). On Windows, Git
+  Bash plus `make`, or WSL.
 - A C compiler (`gcc` or `clang`) for `go test -race`. `make test` and
-  `make test-pkg` force `CGO_ENABLED=1` even if the environment has it off.
-  Everything else (`make build`, `make vet`, `make lint`, cross-compiles)
-  keeps cgo off so analysis matches the released artifacts. Plain builds
-  and cross-compiles are pure Go and need nothing else.
+  `make test-pkg` default to `-race` and `CGO_ENABLED=1`. `RACE=0` skips
+  both (no C compiler needed). Everything else (`make build`, `make vet`,
+  `make lint`, cross-compiles) keeps cgo off so analysis matches the
+  released artifacts. Plain builds and cross-compiles are pure Go and need
+  nothing else.
 - `bun` at the version in `.bun-version` for `make site-check`. The target
   refuses a different version on PATH, matching CI's `bun-version-file`.
-- `uv` for `make scripts-check` (tool pins in `scripts/requirements-dev.txt`).
+- `uv` >= 0.12.6 for `make scripts-check` (CI installs 0.12.6; tool pins
+  in `scripts/requirements-dev.txt`). The target names a too-old uv rather
+  than failing on an unknown flag.
 - No services or databases: everything is stdlib plus the modules in
   `go.mod`.
 
@@ -28,10 +33,10 @@ make demo        # build and run against a simulated fleet
 
 Run one package or one test while iterating (drop `RUN` for a whole package).
 `make` pins the `go.mod` compiler, `-mod=readonly`, `-race`, and `-shuffle=on`,
-and turns cgo on, matching CI. `RACE=0` skips the race detector when you want
-a faster cycle; `make test` still uses `-race`. For `./agentusage`, omitting
-`TESTTAGS` runs both halves of the sqlite tag gate; `TESTTAGS=sqlite` is one
-half only:
+and turns cgo on, matching CI. `RACE=0` skips the race detector (and the C
+compiler) for a faster cycle on `make test` and `make test-pkg`. For
+`./agentusage`, omitting `TESTTAGS` runs both halves of the sqlite tag gate;
+`TESTTAGS=sqlite` is one half only:
 
 ```
 make test-pkg PKG=./internal/ui
@@ -39,6 +44,7 @@ make test-pkg PKG=./internal/core RUN=TestSanitizeTextPreservesUTF8
 make test-pkg PKG=./agentusage
 make test-pkg PKG=./agentusage TESTTAGS=sqlite
 make test-pkg PKG=./internal/ui RACE=0
+make test RACE=0
 ```
 
 To see the dashboard render without an interactive terminal:
@@ -107,7 +113,7 @@ byte ceilings, so a recapture that blows the budget fails there.
 |---|---|
 | `make build` | host binary with version stamping |
 | `make demo` / `make run` | build, then launch |
-| `make test` | all tests, `-race -shuffle=on` (same flags as CI) |
+| `make test` | all tests, `-race -shuffle=on` (same flags as CI); `RACE=0` skips `-race` |
 | `make test-pkg` | one package or test: `PKG=./internal/ui` `[RUN=TestName]` `[TESTTAGS=sqlite]` `[RACE=0]` |
 | `make cover` | coverage summary per package into `dist/` |
 | `make check` | go.mod tidy-diff + gofmt -s + staticcheck + vet |

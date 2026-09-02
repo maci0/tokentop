@@ -1,6 +1,12 @@
 # Analyzers for scripts/ (the screenshot renderer). Go analysis lives in
 # staticcheck.conf and the Makefile.
 
+[tool.uv]
+# Floor matching CI's setup-uv pin (.github/workflows/ci.yml). `make scripts-check`
+# also enforces it so an older uv fails with a named message instead of an
+# unknown-flag traceback.
+required-version = ">=0.12.6"
+
 [tool.black]
 line-length = 88
 target-version = ["py310"]

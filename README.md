@@ -435,6 +435,7 @@ make help                          # every task, one line each
 make build                         # host binary, version-stamped
 make demo                          # build, then run the simulated fleet
 make test                          # all tests, -race -shuffle=on
+make test RACE=0                   # full suite, no race detector
 make pr                            # every PR merge gate except the OS matrix
 make test-pkg PKG=./internal/ui    # one package while iterating
 make test-pkg PKG=./internal/core RUN=TestSanitizeTextPreservesUTF8

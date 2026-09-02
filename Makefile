@@ -57,6 +57,9 @@ GOTAGS  := $(if $(TAGS),-tags $(TAGS),)
 # RACE=0 skips it (and the C compiler) for a faster edit cycle.
 RACE    ?= 1
 race_flag = $(if $(filter 0,$(RACE)),,-race )
+# Lower bound for `make scripts-check`. CI installs this exact version
+# (.github/workflows/ci.yml setup-uv); a newer uv on PATH is fine.
+UV_MIN := 0.12.6
 
 # Pin locale and timezone for every recipe: glob expansion order and formatted
 # dates must not follow the invoking shell's environment into artifacts
@@ -129,10 +132,10 @@ NEED_CC = cc="$${CC:-}"; \
 	fi
 
 .PHONY: test
-test: ## run all tests with the race detector, shuffled order (both halves of the sqlite tag gate)
-	@$(NEED_CC)
-	CGO_ENABLED=1 $(GO) test -mod=readonly -race -shuffle=on ./...
-	CGO_ENABLED=1 $(GO) test -mod=readonly -tags sqlite -race -shuffle=on ./agentusage/...
+test: ## run all tests shuffled (both sqlite tag halves); RACE=0 skips -race
+	@if [ "$(RACE)" != "0" ]; then $(NEED_CC); fi
+	CGO_ENABLED=$(if $(filter 0,$(RACE)),0,1) $(GO) test -mod=readonly $(race_flag)-shuffle=on ./...
+	CGO_ENABLED=$(if $(filter 0,$(RACE)),0,1) $(GO) test -mod=readonly -tags sqlite $(race_flag)-shuffle=on ./agentusage/...
 
 # Same flags and toolchain as `make test`. PKG is required; RUN and TESTTAGS
 # are optional. Unset TESTTAGS on ./agentusage runs both halves of the sqlite
@@ -158,9 +161,9 @@ test-pkg: ## one package/test: PKG=./internal/ui [RUN=TestName] [TESTTAGS=sqlite
 
 .PHONY: cover
 cover: ## test coverage summary per package into dist/
-	@$(NEED_CC)
+	@if [ "$(RACE)" != "0" ]; then $(NEED_CC); fi
 	mkdir -p $(DIST)
-	CGO_ENABLED=1 $(GO) test -mod=readonly $(GOTAGS) -race -shuffle=on -coverprofile=$(DIST)/coverage.out ./...
+	CGO_ENABLED=$(if $(filter 0,$(RACE)),0,1) $(GO) test -mod=readonly $(GOTAGS) $(race_flag)-shuffle=on -coverprofile=$(DIST)/coverage.out ./...
 	$(GO) tool cover -func=$(DIST)/coverage.out | tail -1
 
 .PHONY: sbom
@@ -233,9 +236,14 @@ tidy-check: ## fail if go.mod or go.sum would change
 .PHONY: scripts-check
 scripts-check: ## black, ruff and mypy over scripts/ (same pins as CI)
 	@command -v uv >/dev/null 2>&1 || { \
-		echo "make scripts-check: uv is not on PATH (pins are scripts/requirements-dev.txt)" >&2; \
+		echo "make scripts-check: uv is not on PATH (need >= $(UV_MIN); pins are scripts/requirements-dev.txt)" >&2; \
 		exit 1; \
 	}
+	@have=$$(uv --version | awk '{print $$2}'); \
+		if [ "$$(printf '%s\n%s\n' "$(UV_MIN)" "$$have" | sort -V | head -1)" != "$(UV_MIN)" ]; then \
+			echo "make scripts-check: uv $$have on PATH, need >= $(UV_MIN) (CI installs $(UV_MIN))" >&2; \
+			exit 1; \
+		fi
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt black --check scripts/
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt ruff check scripts/
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt mypy scripts/
@@ -254,7 +262,7 @@ check: ## verify go.mod, gofmt -s formatting, vet and staticcheck (CI parity)
 ci: ## Go merge gates: tidy-diff, fmt, lint, vet, govulncheck, race tests
 	@$(MAKE) check
 	@$(MAKE) govulncheck
-	@$(MAKE) test
+	@$(MAKE) test RACE=1
 
 .PHONY: pr
 pr: ## every PR merge gate except the OS matrix: ci + site-check + scripts-check
