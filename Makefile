@@ -11,6 +11,9 @@ GO          ?= go
 # host toolchain (and its GOEXPERIMENT defaults), so two machines would emit
 # different binaries from the same source.
 GO_VERSION  := $(shell awk '/^go / { print $$2; exit }' go.mod)
+ifeq ($(GO_VERSION),)
+$(error go.mod has no 'go' line; cannot pin GOTOOLCHAIN)
+endif
 export GOTOOLCHAIN := go$(GO_VERSION)
 # Instruction-set baselines: an ambient GOAMD64=v3 would change amd64 artifacts.
 export GOAMD64 := v1
@@ -19,13 +22,23 @@ export GOARM64 := v8.0
 # released artifacts, including vet/staticcheck so they analyze the same
 # net resolver the binaries ship.
 export CGO_ENABLED := 0
+# Drop ambient GOFLAGS/GOEXPERIMENT so a developer's shell cannot change
+# the artifact (GOFLAGS=-race on make build, extra experiments on codegen).
+export GOFLAGS :=
+export GOEXPERIMENT :=
 # Strip paths, omit git stamps (checkout vs tarball would disagree), honor
-# go.sum, produce a PIE.
+# go.sum, produce a PIE. Empty -buildid= so the GNU build-id note is not a
+# second, toolchain-hash-shaped input to the bytes.
 GO_BUILDFLAGS := -trimpath -buildvcs=false -mod=readonly -buildmode=pie
 STATICCHECK := $(GO) tool staticcheck
-LDFLAGS     := -s -w -X main.version=$(VERSION)
+LDFLAGS     := -s -w -buildid= -X main.version=$(VERSION)
 # gofmt from the selected toolchain, not a different major on PATH.
 GOFMT = $$($(GO) env GOROOT)/bin/gofmt
+
+# nounset/errexit/pipefail on every recipe. bash because Debian's /bin/sh
+# is dash, which has no pipefail; macOS /bin/bash 3.2 does.
+SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
 
 # crush and opencode keep sessions in SQLite rather than JSONL, so reading
 # them means linking a database driver. Released binaries carry it (pure Go,
@@ -41,17 +54,23 @@ GOTAGS  := $(if $(TAGS),-tags $(TAGS),)
 # (reproducible-builds.org practice).
 export LC_ALL := C
 export TZ := UTC
+# gzip concatenates $GZIP with argv (a user's -9 would change the tarball);
+# GNU tar does the same with $TAR_OPTIONS.
+export GZIP :=
+export TAR_OPTIONS :=
 
 # One timestamp for archive metadata: SOURCE_DATE_EPOCH when the caller sets
 # it, otherwise this commit's time, so two builds of the same source agree.
 # Exported so gzip/tar/any honoring tool sees the same value, not only Make.
 export SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || echo 0)
 
-# Normalizing tar metadata (--sort/--mtime/--owner) needs GNU tar; bsdtar
-# cannot express it. Where the system tar is bsdtar (macOS) GNU tar is often
-# installed as gtar, so prefer that name when it exists.
+# Normalizing tar metadata (--sort/--mtime/--owner/--mode) needs GNU tar;
+# bsdtar cannot express it. Where the system tar is bsdtar (macOS) GNU tar
+# is often installed as gtar, so prefer that name when it exists.
+# --mode=0644: checksums.txt mode otherwise follows the builder's umask.
+# --pax-option: drop atime/ctime PAX headers GNU tar may emit.
 TAR       := $(shell command -v gtar >/dev/null 2>&1 && echo gtar || echo tar)
-TAR_REPRO := --sort=name --mtime="@$(SOURCE_DATE_EPOCH)" --owner=0 --group=0 --numeric-owner
+TAR_REPRO := --sort=name --mtime="@$(SOURCE_DATE_EPOCH)" --owner=0 --group=0 --numeric-owner --mode=0644 --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime
 
 PLATFORMS := \
 	linux/amd64 linux/arm64 \
@@ -94,7 +113,7 @@ NEED_CC = cc="$${CC:-}"; \
 		elif command -v clang >/dev/null 2>&1; then cc=clang; \
 		fi; \
 	fi; \
-	if [ -z "$$cc" ] || ! command -v $$cc >/dev/null 2>&1; then \
+	if [ -z "$$cc" ] || ! command -v "$$cc" >/dev/null 2>&1; then \
 		echo "make: go test -race needs a C compiler (gcc or clang) on PATH" >&2; \
 		echo "  CGO stays off for make build; only the race tests need it." >&2; \
 		exit 1; \
@@ -166,6 +185,11 @@ site-check: ## bun test the Cloudflare Worker in site/ (CI parity)
 		echo "make site-check: bun is not on PATH (see .bun-version)" >&2; \
 		exit 1; \
 	}
+	@want=$$(tr -d ' \t\r\n' < .bun-version); have=$$(bun --version); \
+		if [ "$$have" != "$$want" ]; then \
+			echo "make site-check: bun $$have on PATH, .bun-version pins $$want"; \
+			exit 1; \
+		fi
 	bun test site/
 
 .PHONY: fmt
@@ -227,13 +251,17 @@ checksums: test-dist ## checksum the dist/ binaries into a byte-reproducible tar
 	@$(TAR) --sort=name --version >/dev/null 2>&1 || \
 		{ echo "$(TAR) rejects --sort: deterministic packaging needs GNU tar (install it as gtar)" >&2; exit 1; }
 	@cd $(DIST) && \
-		files=$$(printf '%s\n' $(BINARY)_* | sort) && \
+		set -- $(BINARY)_* && \
+		if [ "$$1" = "$(BINARY)_*" ]; then \
+			echo "make: no $(BINARY)_* binaries in $(DIST)" >&2; exit 1; \
+		fi && \
+		set -- $$(printf '%s\n' "$$@" | sort) && \
 		if command -v sha256sum >/dev/null 2>&1; then \
-			sha256sum $$files > checksums.txt && sha256sum -c checksums.txt; \
+			sha256sum "$$@" > checksums.txt && sha256sum -c checksums.txt; \
 		else \
-			shasum -a 256 $$files > checksums.txt && shasum -a 256 -c checksums.txt; \
+			shasum -a 256 "$$@" > checksums.txt && shasum -a 256 -c checksums.txt; \
 		fi
-	@cd $(DIST) && $(TAR) $(TAR_REPRO) -c checksums.txt | gzip -n > toktop_$(VERSION)_checksums.tar.gz && rm checksums.txt
+	@cd $(DIST) && $(TAR) $(TAR_REPRO) -c checksums.txt | gzip -n -6 > toktop_$(VERSION)_checksums.tar.gz && rm checksums.txt
 
 # Binaries of any earlier version are dropped first: leftovers would
 # otherwise ride the toktop_* glob into checksums.txt and the release.

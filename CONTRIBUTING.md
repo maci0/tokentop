@@ -166,7 +166,9 @@ for `--version` and for the sqlite driver actually being linked. Locally,
 checksums tarball is built deterministically: members are sorted,
 checksums.txt lines are sorted by filename, timestamps come from
 `SOURCE_DATE_EPOCH` (defaulting to the commit time), ownership is
-normalized, and gzip's name/mtime header is stripped, so two builds of one
-source produce byte-identical archives. Binaries are built with `-trimpath
+normalized, mode is forced to 0644 (so a builder's umask cannot change
+the archive), atime/ctime PAX headers are dropped, and gzip's name/mtime
+header is stripped at compression level 6, so two builds of one source
+produce byte-identical archives. Binaries are built with `-trimpath
 -buildvcs=false -mod=readonly -buildmode=pie`. This needs GNU tar; where the
 system tar is bsdtar (macOS), install GNU tar as `gtar`.

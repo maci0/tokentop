@@ -17,11 +17,13 @@ toktop ssh://maci@box    # watch engines on another host
 ## Install
 
 ```
-go install -tags sqlite github.com/maci0/toktop/cmd/toktop@latest
+CGO_ENABLED=0 go install -tags sqlite github.com/maci0/toktop/cmd/toktop@latest
 ```
 
 `-tags sqlite` matches the GitHub binaries and `make build`: crush and
-opencode session databases cannot be read without it. Or download a binary
+opencode session databases cannot be read without it. `CGO_ENABLED=0`
+matches those artifacts too (pure-Go net resolver, no libc); a host with
+gcc would otherwise produce a cgo-linked binary. Or download a binary
 for linux, macOS, and Windows (amd64 + arm64) from the
 [releases](https://github.com/maci0/toktop/releases). An installed binary
 updates itself in place:

@@ -15,12 +15,16 @@ concurrency:
 # Match the Makefile: locale/timezone must not follow the runner into
 # formatting, glob order, or timestamps. Instruction-set baselines and
 # CGO_ENABLED=0 match the released artifacts; race-test steps turn cgo on.
+# Empty GOFLAGS/GOEXPERIMENT so a runner-level extra flag cannot change
+# compile or test results relative to `make`.
 env:
   LC_ALL: C
   TZ: UTC
   GOAMD64: v1
   GOARM64: v8.0
   CGO_ENABLED: "0"
+  GOFLAGS: ""
+  GOEXPERIMENT: ""
 
 jobs:
   test:
@@ -155,9 +159,12 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -buildvcs=false -mod=readonly -buildmode=pie -ldflags "-s -w" -o /dev/null ./cmd/toktop
+        # Same flags as `make build` (GO_BUILDFLAGS, ldflags, CGO off). TAGS=
+        # is the no-driver half of the sqlite gate; the next step is the
+        # released default. BINARY=/dev/null is a compile check, not an artifact.
+        run: make build TAGS= BINARY=/dev/null
       - name: compile ${{ matrix.goos }}/${{ matrix.goarch }} with sqlite
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -tags sqlite -trimpath -buildvcs=false -mod=readonly -buildmode=pie -ldflags "-s -w" -o /dev/null ./cmd/toktop
+        run: make build BINARY=/dev/null
