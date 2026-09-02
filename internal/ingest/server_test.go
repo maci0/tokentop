@@ -221,14 +221,24 @@ func TestIngestDoesNotMintEventIDFromRequestID(t *testing.T) {
 func TestDerivedEventIDFitsCap(t *testing.T) {
 	key := strings.Repeat("k", 200)
 	id := derivedEventID(key, 1)
-	if n := utf8.RuneCountInString(id); n > 128 {
-		t.Fatalf("id = %d runes, cap 128", n)
+	if n := uniseg.GraphemeClusterCount(id); n > 128 {
+		t.Fatalf("id = %d characters, cap 128", n)
 	}
 	if !strings.HasSuffix(id, ":1") {
 		t.Fatalf("id %q lost its sequence suffix", id)
 	}
 	if derivedEventID("", 1) != "" || derivedEventID("k", 0) != "" {
 		t.Fatal("empty key or non-positive seq must not mint an id")
+	}
+	// A flag is two runes, one character. Counting runes would reject a
+	// legal id that clampField kept as 126 flags plus ":1".
+	flags := strings.Repeat("\U0001F1E9\U0001F1EA", 80)
+	id = derivedEventID(flags, 1)
+	if n := uniseg.GraphemeClusterCount(id); n > 128 {
+		t.Fatalf("flag id = %d characters, cap 128", n)
+	}
+	if !utf8.ValidString(id) || !strings.HasSuffix(id, ":1") {
+		t.Fatalf("flag id %q is invalid UTF-8 or lost its suffix", id)
 	}
 }
 
@@ -932,6 +942,23 @@ func TestIngestRejectsMixedScriptAgentName(t *testing.T) {
 	awaitEvents(t, rec, 1)
 	if rec.evs[0].Agent != "anonymous" {
 		t.Errorf("agent = %q, want anonymous for mixed-script spoof of claude", rec.evs[0].Agent)
+	}
+}
+
+func TestIngestStripsTagCharsFromAgent(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	// TAG LATIN SMALL LETTER D is invisible; "clau" + TAG-d + "e" must not
+	// be a second agent that looks like "claue".
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		"{\"agent\":\"clau\U000E0064e\"}")
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 1)
+	if rec.evs[0].Agent != "claue" {
+		t.Errorf("agent = %q, want claue with tag character stripped", rec.evs[0].Agent)
 	}
 }
 

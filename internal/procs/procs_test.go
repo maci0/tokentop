@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestExtractPort(t *testing.T) {
@@ -104,6 +105,29 @@ func TestLowerJoinedArgsCapsSize(t *testing.T) {
 	}
 	if got := lowerJoinedArgs([]string{"Ollama", "Serve"}); got != "ollama serve" {
 		t.Fatalf("short argv = %q, want lowercased join", got)
+	}
+}
+
+func TestClipArgDoesNotSplitUTF8(t *testing.T) {
+	// 4095 ASCII bytes plus é (U+00E9, two UTF-8 bytes). A raw s[:4096]
+	// keeps 0xC3 and drops 0xA9, so ToLower would run on invalid UTF-8.
+	a := strings.Repeat("x", matchJoinBytes-1) + "é"
+	got := clipArg(a)
+	if !utf8.ValidString(got) {
+		t.Fatalf("clipArg split a character: %q is not valid UTF-8", got)
+	}
+	if strings.HasSuffix(got, "é") {
+		t.Fatal("clipArg kept a character that does not fit in the byte cap")
+	}
+	if len(got) != matchJoinBytes-1 {
+		t.Fatalf("clipArg length = %d, want %d (ASCII prefix only)", len(got), matchJoinBytes-1)
+	}
+	joined := lowerJoinedArgs([]string{a})
+	if !utf8.ValidString(joined) {
+		t.Fatalf("lowerJoinedArgs split a character: %q", joined)
+	}
+	if len(joined) > matchJoinBytes {
+		t.Fatalf("joined command is %d bytes, cap is %d", len(joined), matchJoinBytes)
 	}
 }
 

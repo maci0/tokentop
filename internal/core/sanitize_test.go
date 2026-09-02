@@ -115,6 +115,11 @@ func TestSanitizeTextStripsBidiAndZeroWidth(t *testing.T) {
 		{"emoji VS16 stripped, base stays", "\u2764\ufe0f", "\u2764"},
 		{"line separator cannot split a row", "foo\u2028bar", "foobar"},
 		{"paragraph separator", "foo\u2029bar", "foobar"},
+		// Tag characters are invisible Cf; a TAG LATIN SMALL LETTER D
+		// inside a name must not create a second agent that looks like claude.
+		{"tag char cannot hide in a name", "clau\U000E0064e", "claue"},
+		{"language tag prefix", "\U000E0001claude", "claude"},
+		{"tag space in a name", "clau\U000E0020de", "claude"},
 	}
 	for _, tc := range cases {
 		if got := SanitizeText(tc.in); got != tc.want {

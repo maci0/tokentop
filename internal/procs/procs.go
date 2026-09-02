@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Info is one sampled process relevant to engine discovery or accounting.
@@ -228,10 +229,22 @@ const (
 // at. A Chrome --disable-features blob is tens of kilobytes and never an
 // engine module path.
 func clipArg(a string) string {
-	if len(a) > matchJoinBytes {
-		return a[:matchJoinBytes]
+	return clipUTF8Prefix(a, matchJoinBytes)
+}
+
+// clipUTF8Prefix keeps at most n bytes of s, ending on a code-point
+// boundary so a cut cannot leave a dangling lead byte (é as 0xC3).
+func clipUTF8Prefix(s string, n int) string {
+	if n <= 0 {
+		return ""
 	}
-	return a
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // lowerJoinedArgs is the command line engine matchers search, lowercased,
@@ -252,7 +265,7 @@ func lowerJoinedArgs(args []string) string {
 		a := args[i]
 		remain := matchJoinBytes - b.Len()
 		if len(a) > remain {
-			a = a[:remain]
+			a = clipUTF8Prefix(a, remain)
 		}
 		b.WriteString(strings.ToLower(a))
 	}

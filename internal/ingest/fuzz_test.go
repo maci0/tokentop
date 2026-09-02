@@ -7,8 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"unicode"
 	"unicode/utf8"
+
+	"github.com/rivo/uniseg"
+
+	"github.com/maci0/toktop/internal/core"
 )
 
 // FuzzHandlePost drives the full POST /v1/events pipeline with arbitrary
@@ -16,7 +19,7 @@ import (
 // recording, including every error path (bad JSON, bad ts, size cap). The
 // event feed is retained for the process lifetime and rendered to the
 // terminal, so anything recorded must obey the boundary guarantees: fields
-// are escape-free and rune-capped, token counts non-negative, defaults
+// are escape-free and character-capped, token counts non-negative, defaults
 // applied, and only documented status codes leave the handler.
 func FuzzHandlePost(f *testing.F) {
 	for _, seed := range [][]byte{
@@ -42,6 +45,8 @@ func FuzzHandlePost(f *testing.F) {
 		[]byte(`{"agent":"foo\u2028bar"}`),
 		[]byte(`{"agent":"` + strings.Repeat("a", 300) + `"}`),
 		[]byte(`{"agent":"` + strings.Repeat("é", 300) + `"}`),
+		[]byte(`{"agent":"` + strings.Repeat("\U0001F1E9\U0001F1EA", 80) + `"}`),
+		[]byte("{\"agent\":\"clau\U000E0064e\"}"),
 		[]byte(`{"prompt_tokens":-500,"output_tokens":-99999999999}`),
 		[]byte(`{"agent":["array"],"note":{"obj":true}}`),
 		[]byte(`{"agent":"x"} trailing garbage`),
@@ -94,23 +99,23 @@ func FuzzHandlePost(f *testing.F) {
 			if ev.PromptTokens < 0 || ev.OutputTokens < 0 || ev.ThinkingTokens < 0 {
 				t.Errorf("event %d: negative token counts retained: %+v", i, ev)
 			}
-			if n := utf8.RuneCountInString(ev.Agent); n > 64 {
-				t.Errorf("event %d: agent = %d runes, cap 64", i, n)
+			if n := uniseg.GraphemeClusterCount(ev.Agent); n > 64 {
+				t.Errorf("event %d: agent = %d characters, cap 64", i, n)
 			}
-			if n := utf8.RuneCountInString(ev.Model); n > 128 {
-				t.Errorf("event %d: model = %d runes, cap 128", i, n)
+			if n := uniseg.GraphemeClusterCount(ev.Model); n > 128 {
+				t.Errorf("event %d: model = %d characters, cap 128", i, n)
 			}
-			if n := utf8.RuneCountInString(ev.Note); n > 512 {
-				t.Errorf("event %d: note = %d runes, cap 512", i, n)
+			if n := uniseg.GraphemeClusterCount(ev.Note); n > 512 {
+				t.Errorf("event %d: note = %d characters, cap 512", i, n)
 			}
-			if n := utf8.RuneCountInString(ev.Kind); n > 24 {
-				t.Errorf("event %d: kind = %d runes, cap 24", i, n)
+			if n := uniseg.GraphemeClusterCount(ev.Kind); n > 24 {
+				t.Errorf("event %d: kind = %d characters, cap 24", i, n)
 			}
-			if n := utf8.RuneCountInString(ev.ID); n > 128 {
-				t.Errorf("event %d: id = %d runes, cap 128", i, n)
+			if n := uniseg.GraphemeClusterCount(ev.ID); n > 128 {
+				t.Errorf("event %d: id = %d characters, cap 128", i, n)
 			}
-			if n := utf8.RuneCountInString(ev.ViaEngine); n > 128 {
-				t.Errorf("event %d: via_engine = %d runes, cap 128", i, n)
+			if n := uniseg.GraphemeClusterCount(ev.ViaEngine); n > 128 {
+				t.Errorf("event %d: via_engine = %d characters, cap 128", i, n)
 			}
 			assertRenderSafe(t, i, "agent", ev.Agent)
 			assertRenderSafe(t, i, "model", ev.Model)
@@ -124,25 +129,13 @@ func FuzzHandlePost(f *testing.F) {
 
 // assertRenderSafe fails if s still holds anything SanitizeText is supposed
 // to strip: ESC bytes, C0 controls other than the preserved newline/tab,
-// DEL, or C1 control runes.
+// DEL, C1 controls, bidi marks, tag characters, or other format runes.
 func assertRenderSafe(t *testing.T, i int, field, s string) {
 	t.Helper()
 	if !utf8.ValidString(s) {
 		t.Fatalf("event %d: %s is not valid UTF-8: %q", i, field, s)
 	}
-	for j := 0; j < len(s); j++ {
-		c := s[j]
-		if c == 0x1b || c == 0x7f || (c < 0x20 && c != '\n' && c != '\t') {
-			t.Fatalf("event %d: %s retains control byte %#02x at %d: %q", i, field, c, j, s)
-		}
-	}
-	for _, r := range s {
-		if r >= 0x80 && r <= 0x9f {
-			t.Fatalf("event %d: %s retains C1 control %U: %q", i, field, r, s)
-		}
-		if unicode.Is(unicode.Bidi_Control, r) || r == '\u200b' || r == '\ufeff' || r == '\u00ad' ||
-			r == '\u2028' || r == '\u2029' || (r >= 0xFE00 && r <= 0xFE0F) {
-			t.Fatalf("event %d: %s retains format/bidi %U: %q", i, field, r, s)
-		}
+	if got := core.SanitizeText(s); got != s {
+		t.Fatalf("event %d: %s retains unsanitized text: %q -> %q", i, field, s, got)
 	}
 }

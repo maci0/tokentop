@@ -71,6 +71,10 @@ support channel (see SECURITY.md).
   `$TOKTOP_SCREENSHOT_FONT` is no longer reported as an unknown variable.
 - `agentusage` resumes after a JSONL record larger than 8MiB instead of
   dropping every later record in that transcript.
+- Ingest sanitization strips Unicode tag characters and other format
+  characters (except ZWJ), so they cannot hide inside agent names.
+- `agentusage` composes agent names to NFC, so a definition of `"café"`
+  spelled with a combining accent is the same agent as the precomposed form.
 - `agentusage` counts a thinking-only reading (opencode SQLite, and Claude /
   Qwen / Codex transcript lines that carry reasoning with no billed output)
   instead of reporting nothing until the first completion token.

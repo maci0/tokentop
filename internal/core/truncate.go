@@ -5,8 +5,10 @@ package core
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
+	"golang.org/x/text/unicode/norm"
 )
 
 // TruncateClusters caps s at n grapheme clusters, cutting only between
@@ -33,4 +35,22 @@ func TruncateClusters(s string, n int) string {
 		b.WriteString(cluster)
 	}
 	return b.String()
+}
+
+// ClampField composes s to NFC and caps it at n grapheme clusters, cutting
+// only between clusters. Identity fields (agent names, event ids) use this
+// so "café" spelled NFD (e + combining acute) and NFC (precomposed) stay one
+// name, and a retained emoji is never sliced in half. n <= 0 yields "".
+func ClampField(s string, n int) string {
+	s = norm.NFC.String(s)
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n { // fast path: ASCII within cap, no scan
+		return s
+	}
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return TruncateClusters(s, n)
 }

@@ -57,11 +57,13 @@ func SanitizeText(s string) string {
 }
 
 // unsafeRune reports a code point that must not reach a terminal or an
-// identity field: C1 controls, bidi overrides/isolates, and the zero-width
-// format characters used to spoof or hide names. U+200D (ZWJ) is kept so
+// identity field: C1 controls, bidi overrides/isolates, and format
+// characters used to spoof or hide names. U+200D (ZWJ) is kept so
 // 👩‍💻-style emoji survive as one cluster. Variation selectors are stripped
 // so "claude" and "claude" + VS1 stay one name; emoji remain as their base
 // characters. Line and paragraph separators would split a single-line field.
+// Tag characters (U+E0001, U+E0020-U+E007F) are Cf and come out here too:
+// "clau" + TAG LATIN SMALL LETTER D + "e" must not be a distinct agent.
 func unsafeRune(r rune) bool {
 	if r >= 0x80 && r <= 0x9f {
 		return true
@@ -69,19 +71,13 @@ func unsafeRune(r rune) bool {
 	if unicode.Is(unicode.Bidi_Control, r) {
 		return true
 	}
+	if unicode.Is(unicode.Cf, r) && r != 0x200D {
+		return true
+	}
 	switch r {
-	case 0x00AD, // soft hyphen
-		0x034F,                         // combining grapheme joiner
+	case 0x034F, // combining grapheme joiner
 		0x180B, 0x180C, 0x180D, 0x180F, // mongolian free variation selectors
-		0x180E,         // mongolian vowel separator
-		0x200B,         // zero-width space
-		0x200C,         // zero-width non-joiner
-		0x2028, 0x2029, // line/paragraph separators
-		0x2060,                         // word joiner
-		0x2061, 0x2062, 0x2063, 0x2064, // invisible math operators
-		0x206A, 0x206B, 0x206C, 0x206D, 0x206E, 0x206F, // deprecated format
-		0xFFF9, 0xFFFA, 0xFFFB, // interlinear annotation
-		0xFEFF: // BOM / ZWNBSP
+		0x2028, 0x2029: // line/paragraph separators
 		return true
 	}
 	if r >= 0xFE00 && r <= 0xFE0F {

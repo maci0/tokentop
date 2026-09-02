@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/rivo/uniseg"
+	"golang.org/x/text/unicode/norm"
 )
 
 func TestTruncateClusters(t *testing.T) {
@@ -70,5 +71,28 @@ func TestTruncateClustersIsWholeClusterPrefix(t *testing.T) {
 		if got := TruncateClusters(hostile, n); got != want {
 			t.Fatalf("n=%d: TruncateClusters = %q, want the first %d whole clusters %q", n, got, n, want)
 		}
+	}
+}
+
+func TestClampFieldComposesToNFCAndCapsClusters(t *testing.T) {
+	if got := ClampField("cafe\u0301", 64); got != "caf\u00e9" {
+		t.Errorf("ClampField(NFD café) = %q, want NFC", got)
+	}
+	if got := ClampField("caf\u00e9", 64); got != "caf\u00e9" {
+		t.Errorf("ClampField(NFC café) = %q, want unchanged", got)
+	}
+	flags := strings.Repeat("\U0001F1E9\U0001F1EA", 80)
+	got := ClampField(flags, 64)
+	if n := uniseg.GraphemeClusterCount(got); n != 64 {
+		t.Errorf("ClampField(80 flags, 64) kept %d clusters", n)
+	}
+	if got != flags[:len(got)] || !utf8.ValidString(got) {
+		t.Errorf("ClampField split a flag or left invalid UTF-8: %q", got)
+	}
+	if !norm.NFC.IsNormalString(got) {
+		t.Errorf("ClampField result is not NFC: %q", got)
+	}
+	if ClampField("abc", 0) != "" || ClampField("abc", -1) != "" {
+		t.Error("ClampField with n <= 0 must be empty")
 	}
 }

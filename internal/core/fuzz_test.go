@@ -2,7 +2,6 @@ package core
 
 import (
 	"testing"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -50,6 +49,8 @@ func FuzzSanitizeText(f *testing.F) {
 		"\xc2\v\xad",
 		"\xc2\xad",
 		"\xc2",
+		"clau\U000E0064e",
+		"\U000E0001claude",
 	} {
 		f.Add(seed)
 	}
@@ -90,12 +91,8 @@ func assertSanitized(t *testing.T, in, out string) {
 		if r >= 0x80 && r <= 0x9f {
 			t.Fatalf("C1 rune %U remains in %q (from %q)", r, out, in)
 		}
-		if unicode.Is(unicode.Bidi_Control, r) ||
-			r == 0x00AD || r == 0x034F || r == 0x180E ||
-			r == 0x200B || r == 0x200C ||
-			r == 0x2060 || r == 0x2061 || r == 0x2062 || r == 0x2063 || r == 0x2064 ||
-			r == 0xFEFF {
-			t.Fatalf("format/bidi %U remains in %q (from %q)", r, out, in)
+		if unsafeRune(r) {
+			t.Fatalf("unsafe rune %U remains in %q (from %q)", r, out, in)
 		}
 		i += size
 	}

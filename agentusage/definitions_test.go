@@ -153,14 +153,57 @@ func TestLoadDefinitionsTrimsNamesAndSkipsBlankRoots(t *testing.T) {
 	if _, ok := definedSpec("trimmed"); !ok {
 		t.Fatal("whitespace name should be stored trimmed")
 	}
-	if _, ok := definedSpec("  trimmed  "); ok {
+	defsMu.RLock()
+	_, storedUntrimmed := defs["  trimmed  "]
+	defsMu.RUnlock()
+	if storedUntrimmed {
 		t.Fatal("untrimmed key should not be stored")
+	}
+	if _, ok := definedSpec("  trimmed  "); !ok {
+		t.Fatal("lookup of the untrimmed name should still find the spec")
 	}
 	if _, ok := definedSpec("blankroots"); ok {
 		t.Fatal("blank-root spec should not be stored")
 	}
 	if Supported("blankroots") {
 		t.Fatal("Supported must not claim a spec Watch would reject")
+	}
+}
+
+// NFD "café" (e + combining acute) and NFC "café" must be one agent: a
+// macOS-typed definitions file and a precomposed JSON key would otherwise
+// register two specs for the same name.
+func TestLoadDefinitionsNormalizesNamesToNFC(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agents.json")
+	body := "{\"cafe\\u0301\": {\"usage\": {\"roots\": [\"~/.cafe/sessions\"]}}}"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := LoadDefinitions(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		defsMu.Lock()
+		delete(defs, "caf\u00e9")
+		delete(defs, "cafe\u0301")
+		defsMu.Unlock()
+	})
+
+	if _, ok := definedSpec("caf\u00e9"); !ok {
+		t.Fatal("NFC lookup missed the NFD-defined agent")
+	}
+	if _, ok := definedSpec("cafe\u0301"); !ok {
+		t.Fatal("NFD lookup should compose to the same agent")
+	}
+	defsMu.RLock()
+	_, nfdKey := defs["cafe\u0301"]
+	nfcKey := defs["caf\u00e9"]
+	defsMu.RUnlock()
+	if nfdKey {
+		t.Fatal("NFD spelling should not be stored as a separate key")
+	}
+	if len(nfcKey.Roots) == 0 {
+		t.Fatal("NFC spelling should be the stored key")
 	}
 }
 

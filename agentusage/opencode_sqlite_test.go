@@ -350,7 +350,6 @@ func TestOpenCodeDBThinkingOnlyIsPresent(t *testing.T) {
 	}
 }
 
-
 // Tokens live on assistant messages. A user prompt that carries the same
 // JSON shape must not be summed in, or a review invents output.
 func TestOpenCodeDBIgnoresNonAssistantTokens(t *testing.T) {

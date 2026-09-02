@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/rivo/uniseg"
 )
 
 func TestSnippetBoundedAndOneLine(t *testing.T) {
@@ -13,8 +15,8 @@ func TestSnippetBoundedAndOneLine(t *testing.T) {
 	if strings.ContainsAny(got, "\n\r\t") {
 		t.Errorf("snippet kept line breaks: %q", got)
 	}
-	if n := len([]rune(got)); n > SnippetCap {
-		t.Errorf("snippet = %d runes, cap is %d", n, SnippetCap)
+	if n := uniseg.GraphemeClusterCount(got); n > SnippetCap {
+		t.Errorf("snippet = %d characters, cap is %d", n, SnippetCap)
 	}
 	if got := Snippet(nil); got != "" {
 		t.Errorf("empty body snippet = %q, want empty", got)
@@ -26,8 +28,8 @@ func TestSnippetBoundedAndOneLine(t *testing.T) {
 func TestSnippetKeepsCharactersWhole(t *testing.T) {
 	body := []byte(strings.Repeat("模型", 200) + " \U0001F1E9\U0001F1EA\U0001F1EB\U0001F1F7")
 	got := Snippet(body)
-	if n := len([]rune(got)); n > SnippetCap {
-		t.Errorf("snippet = %d runes, cap is %d", n, SnippetCap)
+	if n := uniseg.GraphemeClusterCount(got); n > SnippetCap {
+		t.Errorf("snippet = %d characters, cap is %d", n, SnippetCap)
 	}
 	if strings.HasSuffix(got, "\u200d") {
 		t.Errorf("snippet ends with a dangling zero-width joiner: %q", got)

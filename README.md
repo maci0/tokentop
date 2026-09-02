@@ -197,14 +197,14 @@ Event fields are all optional; anything omitted gets the default:
 
 | field | type | default | notes |
 |---|---|---|---|
-| `id` | string | - | caller-chosen key, capped at 128 runes; a repeat of a key still in the retained feed (last 512 events) is ignored. When omitted, a request `Idempotency-Key` header is used (`key:1`, `key:2`, and so on per line in the POST) |
+| `id` | string | - | caller-chosen key, capped at 128 characters; a repeat of a key still in the retained feed (last 512 events) is ignored. When omitted, a request `Idempotency-Key` header is used (`key:1`, `key:2`, and so on per line in the POST) |
 | `ts` | RFC 3339 string | arrival instant | offset-less stamps decode as UTC; a space instead of `T` is accepted, as is a colon-less numeric offset (`-0700`); stamps more than two minutes ahead of arrival are clamped to the arrival instant |
-| `agent` | string | `anonymous` | capped at 64 runes |
-| `model` | string | - | capped at 128 runes |
-| `kind` | string | `turn` | known kinds: `turn`, `tool`, `error`, `note`; custom kinds pass through lowercased, capped at 24 runes |
+| `agent` | string | `anonymous` | capped at 64 characters |
+| `model` | string | - | capped at 128 characters |
+| `kind` | string | `turn` | known kinds: `turn`, `tool`, `error`, `note`; custom kinds pass through lowercased, capped at 24 characters |
 | `prompt_tokens` / `output_tokens` / `thinking_tokens` | integer | `0` | negative values and values above 2^40 clamp to `0`; a whole JSON number such as `100.0` counts; thinking is the reasoning share of output when the agent says so |
-| `via_engine` | string | - | monitored engine already counting this output; aggregates skip the event; capped at 128 runes |
-| `note` | string | - | free-form, capped at 512 runes |
+| `via_engine` | string | - | monitored engine already counting this output; aggregates skip the event; capped at 128 characters |
+| `note` | string | - | free-form, capped at 512 characters |
 
 One POST answers `202` with `{"accepted":N}` once every event in the stream
 is recorded, `400` for malformed JSON or a bad `ts`, `408` when a stream

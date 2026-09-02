@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // knownAgents are the CLIs this package recognizes by name.
@@ -66,9 +68,11 @@ type Spec struct {
 
 // canonicalTool is the map key for an agent name. Surrounding whitespace is
 // not part of the name, and would otherwise make Watch miss a spec registered
-// as "claude " while Discover reports "claude".
+// as "claude " while Discover reports "claude". The name is composed to NFC
+// so "café" spelled NFD (e + combining acute, typical of a macOS-typed
+// definitions file) and NFC (precomposed JSON) are one agent.
 func canonicalTool(tool string) string {
-	return strings.TrimSpace(tool)
+	return norm.NFC.String(strings.TrimSpace(tool))
 }
 
 // specRoots is the usable transcript directories in spec. Blank entries are
@@ -98,6 +102,7 @@ var (
 // definedSpec returns an agent's transcript location, whether compiled in
 // (the pi family) or loaded at runtime by LoadDefinitions.
 func definedSpec(tool string) (Spec, bool) {
+	tool = canonicalTool(tool)
 	defsMu.RLock()
 	defer defsMu.RUnlock()
 	s, ok := defs[tool]

@@ -394,16 +394,20 @@ func (w *Watcher) report(t *tracked, cur agentusage.Sample) {
 	if rec == nil {
 		return
 	}
+	agent := core.ClampField(core.SanitizeText(proc.Tool), 64)
+	if agent == "" {
+		agent = "anonymous"
+	}
 	rec.RecordAgent(core.AgentEvent{
 		At:             w.instant(),
 		ID:             sampleID(proc, cur.At),
-		Agent:          proc.Tool,
+		Agent:          agent,
 		Kind:           core.AgentKindTurn,
 		PromptTokens:   int64(max(prompt, 0)),
 		OutputTokens:   int64(max(out, 0)),
 		ThinkingTokens: int64(max(think, 0)),
-		ViaEngine:      via,
-		Note:           note(proc, think, via),
+		ViaEngine:      core.ClampField(core.SanitizeText(via), 128),
+		Note:           core.ClampField(core.SanitizeText(note(proc, think, via)), 512),
 	})
 }
 
