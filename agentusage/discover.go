@@ -29,19 +29,12 @@ func (p Process) Watch(since time.Time) *Watcher {
 	return Watch(p.Tool, p.Dir, since)
 }
 
-// Discover lists the agent CLIs running on this machine, so a monitor can show
-// what is generating right now without being told. Each platform file owns
-// the function: discover_linux.go walks /proc, discover_darwin.go asks ps(1)
-// and lsof(8), and platforms where a process's working directory cannot be
-// read without native calls (discover_windows.go) report nothing at all.
-//
-// An empty result is not an error. On Windows it means "cannot tell"; on
-// Linux and macOS it usually means nothing matched. Callers should surface
-// either as no local agents.
-//
-// None of these implementations shell out to pgrep-style helpers to find the
-// processes themselves: spawning a process to count processes is how a monitor
-// ends up measuring itself.
+// Process discovery is implemented per GOOS: discover_linux.go walks /proc,
+// discover_darwin.go asks ps(1) and lsof(8), and platforms where a process's
+// working directory cannot be read without native calls (discover_windows.go,
+// discover_other.go) report nothing at all. None of those implementations
+// shell out to pgrep-style helpers to find the processes themselves: spawning
+// a process to count processes is how a monitor ends up measuring itself.
 
 // agentName names the known agent a process is running, or "" when it is not
 // one.

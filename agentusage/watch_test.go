@@ -136,14 +136,14 @@ func TestExistingContentIsNotCounted(t *testing.T) {
 	store := withStore(t, "claude")
 	work := t.TempDir()
 	path := filepath.Join(store, "resumed.jsonl")
-	// A session that already ran before this review started, as
-	// --continue-sessions produces.
+	// A session that already had content when the watcher attached, the way
+	// an agent --continue reuses a transcript across runs.
 	append_(t, path, claudeLine(work, 5000))
 
 	w := Watch("claude", work, time.Now())
 	w.poll(nil)
 	if got := w.Sample().Output; got != 0 {
-		t.Fatalf("counted an earlier review's tokens: %d", got)
+		t.Fatalf("counted tokens from before attach: %d", got)
 	}
 	append_(t, path, claudeLine(work, 42))
 	w.poll(nil)
@@ -157,8 +157,8 @@ func TestCodexCumulativeValuesAreRebased(t *testing.T) {
 	work := t.TempDir()
 	path := filepath.Join(store, "rollout-1.jsonl")
 
-	// A session that was already running before this review began: its earlier
-	// usage belongs to whoever ran it, so it is the baseline.
+	// A session that was already running before the watcher attached: its
+	// earlier usage belongs to whoever ran it, so it is the baseline.
 	append_(t, path, codexMeta(work), codexTokens(1000, 5000))
 
 	w := Watch("codex", work, time.Now())
@@ -180,7 +180,7 @@ func TestCodexCumulativeValuesAreRebased(t *testing.T) {
 
 // A line past maxLineBytes must not abort the attach seed: bufio.Scanner
 // stops there and would keep a too-low baseline, so a later attach-time
-// total looks like this review's growth.
+// total looks like this attach's growth.
 func TestCumulativeBaselineSurvivesOversizedLine(t *testing.T) {
 	store := withStore(t, "codex")
 	work := t.TempDir()
@@ -216,8 +216,8 @@ func TestCumulativeSessionStartedDuringTheReviewCountsInFull(t *testing.T) {
 	work := t.TempDir()
 
 	// Nothing exists yet: the agent creates its session after the watcher
-	// attaches, so every token in it belongs to this review. Baselining it
-	// would throw away the first reading, which on a short review is most of
+	// attaches, so every token in it belongs to this attach. Baselining it
+	// would throw away the first reading, which on a short watch is most of
 	// the tokens and all of the early rate.
 	w := Watch("codex", work, time.Now())
 	path := filepath.Join(store, "rollout-new.jsonl")
@@ -679,7 +679,7 @@ func TestCopilotCliEventsAreRead(t *testing.T) {
 	}
 }
 
-// Another project's Copilot session must not land in this review.
+// Another project's Copilot session must not land in this watcher.
 func TestCopilotCliIgnoresOtherProjects(t *testing.T) {
 	store := withStore(t, "copilot")
 	work, other := t.TempDir(), t.TempDir()
@@ -747,7 +747,7 @@ func TestHeaderlessFilePastScanCapIsRefusedDurably(t *testing.T) {
 		`{"type":"assistant.message","data":{"usage":{"completion_tokens":40}}}`)
 	w.poll(nil)
 	if got := w.Sample().Output; got != 0 {
-		t.Fatalf("output tokens %d, want 0: a headerless file was credited to this review", got)
+		t.Fatalf("output tokens %d, want 0: a headerless file was credited to this watcher", got)
 	}
 }
 

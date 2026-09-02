@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-// usageSource reads usage for one review from somewhere other than an
-// appendable transcript file. opencode keeps sessions in SQLite rather than
+// usageSource reads usage for one working directory from somewhere other than
+// an appendable transcript file. opencode keeps sessions in SQLite rather than
 // JSONL, so it registers as a source instead of a file adapter.
 //
 // The contract is the same as everywhere else here: report what the agent
 // recorded for this directory since this moment, or report nothing.
 //
-// dirs holds the spellings the review's directory can appear under, resolved
+// dirs holds the spellings the process's directory can appear under, resolved
 // and unresolved, because an agent records whichever it was started with and
 // on macOS every temporary path is a symlink to another.
 type usageSource interface {
@@ -43,7 +43,7 @@ type sessionSource interface {
 }
 
 // tokenSource is a non-file usage reader. Exactly one field is set:
-// usageSource (opencode) sums this review's tokens; sessionSource (crush)
+// usageSource (opencode) sums this attach's tokens; sessionSource (crush)
 // snapshots per-session counters so a continued session contributes only
 // growth.
 type tokenSource struct {

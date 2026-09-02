@@ -84,7 +84,7 @@ func TestOpenCodeDBCountsThisReviewOnly(t *testing.T) {
 	addSession(t, path, "s-theirs", other)
 
 	start := time.Now()
-	// Everything an earlier review spent in the same directory.
+	// Everything spent in the same directory before this attach.
 	addMessage(t, path, "m0", "s-mine", start.Add(-time.Hour),
 		`{"role":"assistant","tokens":{"output":9000,"reasoning":100,"total":50000}}`)
 	withOpenCodeDB(t, path)
@@ -95,14 +95,14 @@ func TestOpenCodeDBCountsThisReviewOnly(t *testing.T) {
 	}
 	w.poll(nil)
 	if got := w.Sample().Output; got != 0 {
-		t.Fatalf("counted an earlier review's tokens: %d", got)
+		t.Fatalf("counted tokens from before attach: %d", got)
 	}
 
 	addMessage(t, path, "m1", "s-mine", start.Add(time.Second),
 		`{"role":"assistant","tokens":{"output":324,"reasoning":52,"total":131769,"input":900}}`)
 	addMessage(t, path, "m2", "s-mine", start.Add(2*time.Second),
 		`{"role":"assistant","tokens":{"output":120,"reasoning":8,"total":131900,"input":40}}`)
-	// A concurrent review in another directory, which must not be counted.
+	// A concurrent session in another directory, which must not be counted.
 	addMessage(t, path, "m3", "s-theirs", start.Add(time.Second),
 		`{"role":"assistant","tokens":{"output":7777,"total":900000}}`)
 
@@ -351,7 +351,7 @@ func TestOpenCodeDBThinkingOnlyIsPresent(t *testing.T) {
 }
 
 // Tokens live on assistant messages. A user prompt that carries the same
-// JSON shape must not be summed in, or a review invents output.
+// JSON shape must not be summed in, or a watcher invents output.
 func TestOpenCodeDBIgnoresNonAssistantTokens(t *testing.T) {
 	path := opencodeDB(t)
 	dir := t.TempDir()

@@ -46,10 +46,10 @@ func Agents() []string {
 }
 
 // Spec describes where a defined agent keeps its transcripts, so live usage
-// works for agents gauntlet was not compiled to know about (pi and the CLIs
-// built on it, in-house wrappers). The records are parsed generically: any
-// JSONL whose objects carry recognizable token counters works, and one whose
-// objects do not simply reports nothing.
+// works for agents this package was not compiled to know about (pi and the
+// CLIs built on it, in-house wrappers). The records are parsed generically:
+// any JSONL whose objects carry recognizable token counters works, and one
+// whose objects do not simply reports nothing.
 type Spec struct {
 	// Roots are directories to search, with ~ expanded.
 	Roots []string `json:"roots"`

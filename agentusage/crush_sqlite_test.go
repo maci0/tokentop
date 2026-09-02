@@ -63,7 +63,7 @@ func putCrushSession(t *testing.T, dir, id string, output, input, updatedAt int6
 	}
 }
 
-// What crush spent on a review is what it wrote while the review ran: rows
+// What crush spent after attach is what it wrote while the watcher ran: rows
 // from before it belong to whatever ran earlier.
 func TestCrushSourceCountsOnlyThisReview(t *testing.T) {
 	dir := t.TempDir()
@@ -79,12 +79,12 @@ func TestCrushSourceCountsOnlyThisReview(t *testing.T) {
 		t.Fatalf("sessions output %d (ok=%v), want 1500 output tokens", out, ok)
 	}
 	if in != 500 {
-		t.Fatalf("input %d, want 500 prompt tokens written during the review", in)
+		t.Fatalf("input %d, want 500 prompt tokens written after attach", in)
 	}
 }
 
 // The rows carry two units: crush writes milliseconds, and the table's own
-// update trigger writes seconds. Both must count, or a review reads zero.
+// update trigger writes seconds. Both must count, or a watcher reads zero.
 func TestCrushSourceAcceptsSecondsAndMilliseconds(t *testing.T) {
 	dir := t.TempDir()
 	since := time.Now()
@@ -95,7 +95,7 @@ func TestCrushSourceAcceptsSecondsAndMilliseconds(t *testing.T) {
 		"old millis":  {80, 0, since.Add(-time.Hour).UnixMilli()},
 	})
 	if out, _, ok := crushSessionSum([]string{dir}, since); !ok || out != 30 {
-		t.Fatalf("sessions output %d (ok=%v), want the 30 written during the review in either unit", out, ok)
+		t.Fatalf("sessions output %d (ok=%v), want the 30 written after attach in either unit", out, ok)
 	}
 }
 
@@ -134,7 +134,7 @@ func TestCrushSourceWithoutADatabase(t *testing.T) {
 
 // Watch routes crush through this source, which is what makes the counts
 // reach a caller without it knowing where they came from. Tokens already in
-// the database at attach belong to an earlier review, the same rule the file
+// the database at attach belong to a previous run, the same rule the file
 // adapters apply, so the session is written after Watch.
 func TestWatchUsesTheCrushSource(t *testing.T) {
 	dir := t.TempDir()
@@ -155,7 +155,7 @@ func TestWatchUsesTheCrushSource(t *testing.T) {
 
 // completion_tokens is cumulative for a session's life. A session that
 // already had tokens when the watcher attached must contribute only what it
-// adds afterwards, or a continued crush dumps its history into this review.
+// adds afterwards, or a continued crush dumps its history into this attach.
 func TestCrushWatchCountsOnlyGrowthAfterAttach(t *testing.T) {
 	dir := t.TempDir()
 	crushDB(t, dir, map[string][3]int64{
@@ -215,7 +215,7 @@ func TestCrushWatchRetriesFailedAttachSnapshot(t *testing.T) {
 
 // An unreadable store at attach must not become an empty baseline. Replacing
 // the file with a real database that already has tokens would otherwise
-// dump that history into this review the first time it could be read.
+// dump that history into this attach the first time it could be read.
 func TestCrushWatchDoesNotCountHistoryWhenAttachBaselineFails(t *testing.T) {
 	dir := t.TempDir()
 	db := filepath.Join(dir, ".crush", "crush.db")
@@ -246,7 +246,7 @@ func TestCrushWatchDoesNotCountHistoryWhenAttachBaselineFails(t *testing.T) {
 	}
 }
 
-// A review's directory is watched under every spelling it can be recorded
+// A watcher's directory is watched under every spelling it can be recorded
 // under, and on macOS that always includes a symlinked one. All of them
 // address a single database, whose sessions must be summed once.
 func TestCrushSourceSumsOneDatabaseOnce(t *testing.T) {

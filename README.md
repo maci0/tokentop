@@ -251,7 +251,7 @@ process command lines.
    `vllm`, `sglang`, `koboldcpp`, `lm studio`, `lemonade-server`, ...) give
    candidate URLs, honouring `--port` flags.
 2. A scan of well-known ports follows (11434, 30000, 8000, 13305, 8080,
-   1234, 5001, 5000, 4000, 1337, 4891, 7860, ...).
+   1234, 5001, 5000, 4000, 1337, 4891, 7860, 20128, ...).
 3. Each candidate is fingerprinted by its HTTP surface; anything unrecognized
    that still speaks OpenAI is shown as such.
 

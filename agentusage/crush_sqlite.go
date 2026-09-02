@@ -19,7 +19,7 @@ import (
 //
 //	sessions.completion_tokens  what the model generated, which is output here
 //	sessions.prompt_tokens      billed prompt, which is input here
-//	sessions.updated_at         when the row last changed, which bounds the review
+//	sessions.updated_at         when the row last changed, which bounds the since filter
 //
 // That last column carries two units. The schema comments call it
 // milliseconds, and crush writes milliseconds from Go, but the table's own
@@ -31,17 +31,17 @@ import (
 // The only JSONL crush writes is `.crush/logs/crush.log`, and it carries no
 // counters, so there is nothing for the file adapters to tail.
 //
-// The database being inside the reviewed tree makes the directory the query
+// The database being inside the project tree makes the directory the query
 // bound on its own: there is no cross-project store to filter, so a session
-// written while the review ran is that review's. It is registered without an
+// written after attach is this watcher's. It is registered without an
 // opt-in switch for the same reason, unlike opencode's operator-wide store.
 type crushDBSource struct{}
 
 func init() { registerSource("crush", tokenSource{session: crushDBSource{}}) }
 
 const (
-	// crushMaxWalkUp bounds the search for the project root, so a review of a
-	// directory outside any project cannot walk to /.
+	// crushMaxWalkUp bounds the search for the project root, so a watcher
+	// started outside any project cannot walk to /.
 	crushMaxWalkUp = 16
 )
 
@@ -141,8 +141,7 @@ const crushSessionsSinceQuery = crushSessionsQuery + `
 // unreadable store is not an error: most trees have never run crush.
 //
 // A zero since reads every session (the attach baseline). After that, only
-// rows touched since the review started: idle history is not re-scanned
-// on every poll.
+// rows touched since attach: idle history is not re-scanned on every poll.
 func (crushDBSource) sessions(dirs []string, since time.Time) (map[string]map[string]sessionCounts, bool) {
 	out := map[string]map[string]sessionCounts{}
 	for _, path := range crushDBPaths(dirs) {

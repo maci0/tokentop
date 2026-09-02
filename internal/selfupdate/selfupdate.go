@@ -163,7 +163,7 @@ func githubRedirect(req *http.Request, via []*http.Request) error {
 }
 
 // Check queries the latest release. It is never called on the startup path:
-// a version check must not stand between the user and the first review.
+// a version check must not stand between the user and the dashboard.
 func Check(ctx context.Context, repo string) (*Release, error) {
 	if repo == "" {
 		repo = DefaultRepo

@@ -8,7 +8,7 @@ package agentusage
 // Outside macOS and Windows no file system in play applies Unicode
 // normalization or case-insensitive lookup: on Linux two spellings of one
 // accented or differently-cased name are genuinely different directories, so
-// equating them would attribute another project's tokens to this review.
+// equating them would attribute another project's tokens to this watcher.
 // Paths are therefore compared exactly as recorded, and each has exactly one
 // spelling.
 

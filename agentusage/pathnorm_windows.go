@@ -15,7 +15,7 @@ import (
 // separators. An agent records whichever spelling its runtime produced (Node
 // likes '/', cmd.exe likes '\'), so directory identity cannot be decided by
 // bytes the way it is on Linux: a session started as C:/Users/Foo would
-// silently vanish from a review resolved as c:\users\foo.
+// silently vanish from a watcher resolved as c:\users\foo.
 
 // dirVariants lists the spellings p can be recorded under: itself, then the
 // cleaned, slash-normalized, and lowercased forms when they differ. The given

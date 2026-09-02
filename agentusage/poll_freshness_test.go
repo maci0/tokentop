@@ -11,9 +11,9 @@ import (
 )
 
 // A final Poll must see a transcript that appeared after the watcher started,
-// however briefly ago. A review can finish inside the rescan interval, and
-// then the file holding everything it spent is younger than the cached
-// listing: reusing that listing reports zero for the whole review.
+// however briefly ago. A short watch can finish inside the rescan interval,
+// and then the file holding everything it spent is younger than the cached
+// listing: reusing that listing reports zero for the whole attach.
 func TestPollSeesATranscriptCreatedAfterTheWatchBegan(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -47,7 +47,7 @@ func TestPollSeesATranscriptCreatedAfterTheWatchBegan(t *testing.T) {
 	}
 
 	if got := w.Poll(); got.Output != 42 {
-		t.Fatalf("final poll read %d output tokens, want the 42 this review spent", got.Output)
+		t.Fatalf("final poll read %d output tokens, want the 42 this attach spent", got.Output)
 	}
 }
 

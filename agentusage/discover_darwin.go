@@ -14,13 +14,12 @@ import (
 
 // Discover lists the agent CLIs running on this machine.
 //
-// An empty result means "cannot tell" rather than "nothing is running", which
-// callers should surface as no local agents rather than an error. On macOS this
-// asks ps(1) for the process table (there is no pure-Go BSD process list
-// without cgo) and lsof(8) for each match's working directory; macOS exposes
-// no /proc-style cwd symlink to readlink. Only processes that name a known
-// agent pay for the second call. Nil if ps fails; an empty slice if nothing
-// matched.
+// On macOS this asks ps(1) for the process table (there is no pure-Go BSD
+// process list without cgo) and lsof(8) for each match's working directory;
+// macOS exposes no /proc-style cwd symlink to readlink. Only processes that
+// name a known agent pay for the second call. A nil result is not an error:
+// ps failing and nothing matched both return nil, and callers should surface
+// either as no local agents.
 func Discover() []Process {
 	out, err := psTable()
 	if err != nil {

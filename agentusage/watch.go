@@ -18,13 +18,14 @@
 //
 // The design constraints that shape everything here:
 //
-//   - Only count what happened during this review. Transcripts are per session
-//     and sessions outlive reviews (--continue-sessions reuses them), so the
-//     watcher records where each file ended when it attached and reads only
-//     what is appended after that.
-//   - Attribute the transcript to the right review. Each adapter ties its
+//   - Only count usage after the watcher attached. Session transcripts persist
+//     across runs, so the watcher records where each file ended when it
+//     attached and reads only what is appended after that. Database-backed
+//     agents (opencode, crush) use the since argument the same way; file
+//     transcripts are always tailed from their attach-time end.
+//   - Attribute the transcript to the right process. Each adapter ties its
 //     files to a working directory: recorded per record, read from the
-//     session header, or implicit because the log lives inside the reviewed
+//     session header, or implicit because the log lives inside the project
 //     directory itself (clanker), so the cwd is the key.
 //   - Never invent a number. An agent whose transcript cannot be found, parsed,
 //     or attributed simply reports nothing, and the dashboard shows no rate.
@@ -104,7 +105,7 @@ const (
 )
 
 type adapter struct {
-	// roots are directories to scan, given the review's working directory.
+	// roots are directories to scan, given the process's working directory.
 	// Most agents keep transcripts under $HOME and ignore it; agents that keep
 	// them inside the project (clanker) use it.
 	roots func(dir string) []string
@@ -201,7 +202,7 @@ var adapters = map[string]adapter{
 	},
 
 	// clanker keeps its own token log inside the repository it runs in, one
-	// record per request, so the review directory is the attribution.
+	// record per request, so the project directory is the attribution.
 	"clanker": {
 		roots:  func(dir string) []string { return []string{filepath.Join(dir, "state")} },
 		suffix: "token_stats.jsonl",
@@ -245,9 +246,9 @@ func RegisterSpec(tool string, spec Spec) error {
 	if tool == "" {
 		return ErrEmptyTool
 	}
-	// {dir} lets a definition point at a store inside the reviewed project,
-	// the way clanker keeps its own. Blank roots are dropped rather than
-	// becoming empty WalkDir targets.
+	// {dir} lets a definition point at a store inside the agent's working
+	// directory, the way clanker keeps its own. Blank roots are dropped
+	// rather than becoming empty WalkDir targets.
 	patterns := specRoots(spec)
 	if len(patterns) == 0 {
 		return fmt.Errorf("usage spec for %q has no roots: %w", tool, ErrNoRoots)
@@ -361,7 +362,7 @@ func home(parts ...string) string {
 	return filepath.Join(append([]string{dir}, parts...)...)
 }
 
-// Watcher tails one agent's transcripts for one review.
+// Watcher tails one agent's transcripts from the moment it attached.
 type Watcher struct {
 	// source is set for agents whose usage is not in files (opencode, crush).
 	// When it is present, every field below that describes file state is unused.
@@ -375,8 +376,8 @@ type Watcher struct {
 	since   time.Time
 	offsets map[string]int64 // file -> bytes already accounted for
 	// preexisting marks transcripts that were already on disk when the watcher
-	// attached. Their earlier content belongs to another review; a file that
-	// appears afterwards belongs entirely to this one.
+	// attached. Their earlier content belongs to a previous run; a file that
+	// appears afterwards belongs entirely to this attach.
 	preexisting map[string]bool
 	// stamps records what a transcript looked like when it was last read, so
 	// idle files are skipped without opening them. Size rides along with the
@@ -384,20 +385,20 @@ type Watcher struct {
 	// for an open handle) can leave two writes sharing one stamp: a file that
 	// only grew would then look untouched and its records would be lost.
 	stamps  map[string]fileStamp
-	owner   map[string]bool // file -> belongs to this review (cached)
+	owner   map[string]bool // file -> belongs to this working directory (cached)
 	cached  []string        // candidate files, refreshed on an interval
 	scanned time.Time
 	// Cumulative adapters need a baseline per file: usage recorded before the
-	// watcher attached belongs to an earlier review.
+	// watcher attached belongs to a previous run.
 	base      map[string]int
 	baseThink map[string]int
 	baseInput map[string]int
-	seen      map[string]values // file -> this review's contribution
+	seen      map[string]values // file -> this attach's contribution
 	total     map[string]int
 	// sourceBase is per-session counters at attach for a sessionSource
 	// (crush). completion_tokens and prompt_tokens are cumulative for the
 	// session's life, so without this a continued session would dump its
-	// history into this review the first time it was updated. hasSessionBase
+	// history into this attach the first time it was updated. hasSessionBase
 	// is the latch: an empty map is a valid snapshot (no sessions yet), and
 	// a failed attach read must not look like that or a later successful
 	// poll would count the whole store as growth.
@@ -491,7 +492,7 @@ func Watch(tool, dir string, since time.Time) *Watcher {
 			// Cumulative counters only make sense against what the session had
 			// already spent. That value is in the bytes being skipped, so it is
 			// read once here; without it the first record after attaching would
-			// become the baseline and this review would measure zero forever.
+			// become the baseline and this attach would measure zero forever.
 			w.seedBaseline(path)
 		}
 	}
@@ -516,7 +517,7 @@ func resolveDir(dir string) string {
 	return abs
 }
 
-// dirSpellings lists the paths a review's directory can be recorded under:
+// dirSpellings lists the paths a process's working directory can be recorded under:
 // the resolved one, and the one the caller passed if it differs. On macOS
 // every temporary directory is reached through a symlink, and an agent records
 // whichever spelling it was started with; there the list also carries the
@@ -583,7 +584,7 @@ const baselineTailBytes = 256 << 10
 // seedBaseline records what a pre-existing session had already spent.
 // consumeAppend is used rather than a Scanner: a line past maxLineBytes
 // aborts bufio.Scanner and would leave a stale (too-low) baseline from
-// earlier records, so later attach-time totals look like this review's
+// earlier records, so later attach-time totals look like this attach's
 // growth. consumeAppend skips the oversized line and keeps reading, and
 // a real I/O error leaves the baseline unset instead of committing a
 // partial one.
@@ -643,7 +644,7 @@ func (w *Watcher) Run(ctx context.Context, every time.Duration, onChange func(Sa
 // readSource is one reading from a non-file source. A sessionSource is
 // snapshotted at attach (or on the first successful poll if that read
 // failed), so only growth since then is counted. A usageSource (opencode)
-// reports this review's usage in full each time via a timestamp filter.
+// reports this attach's usage in full each time via a timestamp filter.
 func (w *Watcher) readSource() (values, bool) {
 	if w.source.session != nil {
 		return w.readSessionSource(w.source.session)
@@ -666,7 +667,7 @@ func (w *Watcher) readSessionSource(ss sessionSource) (values, bool) {
 		}
 		w.sourceBase = base
 		w.hasSessionBase = true
-		return values{}, false // attach baseline: nothing yet is this review's
+		return values{}, false // attach baseline: nothing yet is this attach's
 	}
 	cur, ok := ss.sessions(w.dirs, w.since)
 	if !ok {
@@ -860,7 +861,7 @@ func walkTranscripts(root, suffix string, cutoff time.Time) []string {
 	return out
 }
 
-// candidates lists transcript files recent enough to belong to this review,
+// candidates lists transcript files recent enough to belong to this attach,
 // reusing the previous walk for a few seconds. An empty result is cached too:
 // until something matches, the store is walked once per rescanEvery rather
 // than on every poll, and a session created in between surfaces when the
@@ -886,7 +887,7 @@ func (w *Watcher) candidates() []string {
 }
 
 // forgetIdle drops per-file bookkeeping for transcripts that have aged out of
-// the walk and are not carrying this review's counts. Without it, stamps,
+// the walk and are not carrying this attach's counts. Without it, stamps,
 // offsets and the owner cache grow by every session file that ever appeared
 // during a long --agents run, including other projects'. Counted files keep
 // their offsets so a later append is not read from the start and double-counted.
@@ -1100,14 +1101,14 @@ const maxLineBytes = 8 << 20
 const appendReaderBytes = 64 << 10
 
 // collect parses one complete line and appends its values when it carries
-// usage belonging to this review.
+// usage belonging to this attach.
 func (w *Watcher) collect(recs []values, line []byte) []values {
 	v, cwd, ok := w.ad.parse(line)
 	if !ok {
 		return recs
 	}
 	// A transcript that names a different working directory belongs to
-	// another review, or another project entirely.
+	// another process, or another project entirely.
 	if cwd != "" && !w.sameDir(cwd) {
 		return recs
 	}
@@ -1129,11 +1130,11 @@ func (w *Watcher) applyRecord(path string, v values) {
 		w.total[path] = max(w.total[path], v.total)
 	case cumulative:
 		if _, have := w.base[path]; !have {
-			// Attaching mid-session, everything before now belongs to an
-			// earlier review, so the first value seen is the baseline. A
-			// session that only appeared after the review started is ours
-			// in full, and baselining it would throw the first reading
-			// away, which is most of a short review.
+			// Attaching mid-session, everything before now belongs to a
+			// previous run, so the first value seen is the baseline. A
+			// session that only appeared after attach is ours in full, and
+			// baselining it would throw the first reading away, which on a
+			// short watch is most of the signal.
 			if w.preexisting[path] {
 				w.base[path] = v.output
 				w.baseThink[path] = v.thinking
@@ -1163,14 +1164,15 @@ func (w *Watcher) applyRecord(path string, v values) {
 // directory in the opening record, so a file this deep without one has none.
 const ownerScanLines = 20
 
-// owns reports whether a transcript belongs to this review. For agents whose
-// usage lines repeat the cwd there is nothing to decide here; for the others
-// the session header at the top of the file is read once and cached.
+// owns reports whether a transcript belongs to this working directory. For
+// agents whose usage lines repeat the cwd there is nothing to decide here;
+// for the others the session header at the top of the file is read once and
+// cached.
 //
 // The second return value says whether the verdict is final. A file caught
 // between creation and its header flush yields no verdict yet: caching a
-// refusal there would blackhole a session that in fact belongs to this
-// review, so the decision is retried on a later poll instead.
+// refusal there would blackhole a session that in fact belongs here, so the
+// decision is retried on a later poll instead.
 func (w *Watcher) owns(path string) (mine, decided bool) {
 	if w.ad.sessionCwd == nil {
 		return true, true // decided per line instead
@@ -1204,7 +1206,7 @@ func (w *Watcher) owns(path string) (mine, decided bool) {
 	}
 	// The scan cap was reached with no header anywhere in it, so there is
 	// nothing to wait for: refuse durably rather than credit another
-	// project's tokens to this review.
+	// project's tokens to this working directory.
 	w.owner[path] = false
 	return false, true
 }

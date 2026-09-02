@@ -18,7 +18,7 @@ type jsonEvent struct {
 	// zero, and Has reports whether anything was found at all.
 	Usage jsonUsage
 	// Cwd is the working directory the record was produced in, when the agent
-	// records one. Transcripts use it to attribute a session to a review.
+	// records one. Transcripts use it to attribute a session to a process.
 	Cwd string
 }
 

@@ -18,7 +18,7 @@ import (
 // same directory yet differ byte for byte, and so do "Users" and "users". An
 // agent records the spelling its own argv carried, so directory identity
 // cannot be decided by bytes alone here: a session started from an NFC
-// spelling would silently vanish from a review resolved through NFD paths.
+// spelling would silently vanish from a watcher resolved through NFD paths.
 
 // dirVariants lists the spellings p can be recorded under: itself, then its
 // NFC and NFD forms when they differ. The given spelling stays first so

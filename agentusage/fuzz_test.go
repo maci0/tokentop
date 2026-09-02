@@ -12,7 +12,7 @@ import (
 // (parseClaude, parseQwen, parseCodex, parseDsh and the two session-cwd readers) with
 // arbitrary bytes. Transcripts are files on disk whose records embed whatever
 // the model and its tools ingested, so a corrupted or hostile line must not be
-// able to poison a review: no counter is ever negative (they are summed
+// able to poison a reading: no counter is ever negative (they are summed)
 // straight into displayed totals), an accepted line always carries numbers the
 // envelope-agnostic walker also sees, a cwd reader never accepts an empty
 // directory, and every parser answers identical input identically twice.

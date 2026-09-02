@@ -22,7 +22,7 @@ import (
 //
 //	session.directory  the working directory, which is the attribution key
 //	message.data       {"role":"assistant","tokens":{"output":324,"reasoning":52,…}}
-//	message.time_created  milliseconds, which bounds the review
+//	message.time_created  milliseconds, which bounds the since filter
 //
 // The database is opened read-only for each reading and closed again, so a
 // long-lived dashboard never holds a handle on a database the agent is

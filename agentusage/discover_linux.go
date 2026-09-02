@@ -17,11 +17,11 @@ import (
 
 // Discover lists the agent CLIs running on this machine.
 //
-// An empty result means "cannot tell" rather than "nothing is running", which
-// callers should surface as no local agents rather than an error. On Linux this
-// is a /proc walk: three reads per process, no subprocess, and every other
-// user's processes simply fail the permission check. Nil if /proc cannot be
-// read; an empty slice if nothing matched.
+// On Linux this is a /proc walk: comm, cmdline, and cwd per process, plus
+// starttime for matches; no subprocess. Every other user's processes simply
+// fail the permission check. A nil result is not an error: /proc unreadable
+// and nothing matched both return nil, and callers should surface either as
+// no local agents.
 func Discover() []Process {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
