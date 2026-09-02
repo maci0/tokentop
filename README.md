@@ -203,10 +203,13 @@ Error bodies are short
 plain-text reasons that name the field or expected shape; unknown fields are
 ignored, so harnesses can include their own. The request `Content-Type` header is not checked: the body is
 always read as JSON/NDJSON, so plain `curl -d` works unmodified.
-Every POST is logged to stderr as one structured line (`req`, `status`,
-`accepted`, `duration`, `remote`; failures add `error`). Event bodies are
-not logged. Responses carry `X-Request-Id`, echoed from the request when
-the sender set one.
+Every POST is logged to stderr as one structured line (`req`, `method`,
+`path`, `status`, `accepted`, `duration`, `remote`; failures add `error`).
+Wrong-method and unknown-path requests log the same way, so a harness
+posting to `/events` is not silent. `GET /healthz` and `GET /v1/events`
+are not logged. Event bodies are not logged. A handler panic is one ERROR
+line with `req` and a single-line `stack`. Responses carry `X-Request-Id`,
+echoed from the request when the sender set one.
 
 Streams are recorded line by line: if a later line fails, events before it
 stay recorded and the error states how many. Retrying a stream (or a

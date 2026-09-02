@@ -19,6 +19,9 @@ support channel (see SECURITY.md).
   samples, matching `Rate` for output.
 - `agentusage.Process.Watch` starts a watcher from a discovered process so the
   agent name and working directory cannot be swapped.
+- Ingest logs 404/405 and handler panics on the same structured stderr line
+  as POST `/v1/events` (including `method` and `path`). A 202 whose body
+  cannot be written is a warning, not a success.
 
 ### Changed
 

@@ -26,7 +26,7 @@ targets, the static site worker at site/worker.js). Out of scope: the
 | 3 | Self-update installs whatever binary the named GitHub repo published: integrity rests on the release's own checksums.txt over TLS; no external signature exists | runtime -> update channel | internal/selfupdate/selfupdate.go:133-192, .github/workflows/release.yml | Checksum + size verification present; signing absent |
 | 4 | SSH engine relays bind loopback listeners (`127.0.0.1:0`); any local process can reach the remote engines those listeners front | local processes -> remote engines | internal/remote/client.go:312-353 | Bound loopback-only; no listener auth; previously denied by README (corrected) |
 | 5 | Hot-reload re-execs whatever binary occupies the exe path when its identity changes (Unix); PATH-based vendor CLI lookup executes tools from `$PATH` | build -> runtime, host -> process | internal/selfreload/exec_unix.go:16; internal/gpu/gpu.go:46-67 | Windows Restart does not exec (exec_windows.go:12-14); `--no-hot-reload` exists |
-| 6 | Ingest bodies are not persisted; a poisoning incident after process exit cannot be reconstructed from event content | response readiness | internal/ingest/server.go (POST /v1/events logs req/status/accepted/duration/remote/error; bodies stay off the log) | HTTP audit line present; payload is still only in the in-memory feed |
+| 6 | Ingest bodies are not persisted; a poisoning incident after process exit cannot be reconstructed from event content | response readiness | internal/ingest/server.go (ingest logs req/method/path/status/accepted/duration/remote/error; bodies stay off the log) | HTTP audit line present; payload is still only in the in-memory feed |
 
 Resolved since 2026-08-25: the previous ranking's "bearer token sent to every
 probed endpoint" is closed by origin-scoped token application
@@ -406,7 +406,7 @@ Controls verified in code, with the threats they cover:
 | M19: Flag validation exits 2; set-but-invalid `TOKTOP_COLUMNS`/`TOKTOP_LINES` exit 2 under `--once` (and are named as ignored without it); non-TTY stdout aborts the live dashboard; malformed `~/.gauntlet/agents.json` warned instead of swallowed; unknown `TOKTOP_*` env warned | misconfiguration acting as silent security-relevant behavior change | main.go:87-101,475-487,494-502,509-519,533-550,565-577,585-592 |
 | M20: Supply chain: govulncheck in CI, Dependabot, SHA-pinned workflow actions, SBOM in releases | vulnerable-dependency drift (deployment surface) | .github/workflows/ci.yml, .github/dependabot.yml, .github/workflows/release.yml, Makefile |
 | M21: Ingest POSTs carrying an `Origin` header refused with 403 (browsers always send Origin on cross-site writes; scripts and agents never do; the endpoint's Content-Type blindness would otherwise let `text/plain` POSTs sail past CORS preflight) | browser-driven dashboard forgery from any visited web page (B1 spoofing) | server.go:235-240; tests internal/ingest/server_test.go; README "Agent feed API" documents it |
-| M25: Structured ingest POST audit log (req, status, accepted, duration, remote, error) with X-Request-Id; bodies excluded | B1 repudiation of the HTTP exchange; reconstructing whether a POST happened after the fact | server.go:94-158,219-227,347; tests internal/ingest/server_test.go |
+| M25: Structured ingest audit log (req, method, path, status, accepted, duration, remote, error) with X-Request-Id; bodies excluded; 404/405 and handler panics share the line | B1 repudiation of the HTTP exchange; reconstructing whether a POST (or a missed one) happened after the fact | server.go logRequest/withUnhandledLog/withRecover; tests internal/ingest/server_test.go |
 | M22: Remote discovery ports parsed as 16-bit with port 0 rejected, so hostile `/proc/net/tcp` output cannot plant impossible forward targets; pinned by FuzzParseDiscoveryOutput | tunnel-set manipulation by a hostile ssh remote (B3 elevation/DoS) | remote/discover.go:93-116; internal/remote/fuzz_test.go |
 | M23: `--agents` opt-in; `--opencode-db` is a second gate on top of the `sqlite` build tag; crush has no extra flag because the database lives in the watched project | silent process/file scan the operator did not ask for (B7 disclosure) | main.go:57-58,248-256; agentusage/source.go:37-46; crush_sqlite.go:35-41 |
 | M24: SQLite session stores opened `mode=ro`; crush walk capped at 16 parents; crush counters rejected above 1<<40; opencode directory list bound as parameters | accidental writes into agent databases, walk-to-root, overflow, and SQL injection via cwd (B7) | opencode_sqlite.go:68-90,106-107; crush_sqlite.go:44-50,70-94,107,117 |
@@ -420,8 +420,8 @@ Documentation claims checked against code this pass (fd61deb):
   `GITHUB_TOKEN` for `toktop update`; both match bearer.go and
   selfupdate.go:85-87.
 - README documents the Origin-header 403, the stream-resume semantics, and
-  the ingest POST audit log; they match server.go:235-240, the fail() path
-  (:252-262), and logPost (:139-158).
+  the ingest POST audit log; they match server.go Origin refusal, the fail()
+  path, and logRequest.
 - README previously claimed "no local port forwards, nothing to race or
   leak". The code binds loopback listeners in Forward (client.go:312-353).
   That sentence is now the loopback-listener description above; the claim
@@ -512,14 +512,15 @@ Recorded as threats with locations; fixes do not happen in this document:
 
 ## Response readiness (notes only)
 
-- **Audit trail:** each ingest POST writes one structured stderr line
-  (req id, status, accepted count, duration, remote; failures add the
-  same short error the client saw). Event bodies, notes, and token
-  counts are not logged. Credentials are never logged (verified:
-  bearer.Token has one caller chain through bearer.Apply). Nothing
-  survives process exit except what the operator captured from stderr,
-  so payload reconstruction after a poisoning still requires the live
-  feed.
+- **Audit trail:** each ingest request that can fail invisibly on the
+  dashboard (POST /v1/events, 404, 405, panics) writes one structured
+  stderr line (req id, method, path, status, accepted count, duration,
+  remote; failures add the same short error the client saw). Event
+  bodies, notes, and token counts are not logged. Credentials are never
+  logged (verified: bearer.Token has one caller chain through
+  bearer.Apply). Nothing survives process exit except what the operator
+  captured from stderr, so payload reconstruction after a poisoning still
+  requires the live feed.
 - **Reported-vulnerability-to-fix path:** undocumented. SECURITY.md exists
   and states that no dedicated disclosure contact or supported-version
   matrix is published; it invents no SLA. CONTRIBUTING.md covers CI gates

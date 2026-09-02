@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -71,7 +72,7 @@ func newServer(addr string, rec Recorder, lg *slog.Logger) (*Server, error) {
 		fmt.Fprint(w, "ok")
 	})
 	s.srv = http.Server{
-		Handler:           withSecurityHeaders(withRequestID(mux)),
+		Handler:           withSecurityHeaders(withRequestID(withRecover(s, withUnhandledLog(s, mux)))),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       idleTimeout,
 		ErrorLog:          slog.NewLogLogger(lg.Handler(), slog.LevelError),
@@ -181,12 +182,18 @@ func logRemote(addr string) string {
 	return "remote"
 }
 
-func (s *Server) logPost(r *http.Request, reqID string, status, accepted int, d time.Duration, errMsg string) {
+func (s *Server) logRequest(r *http.Request, reqID string, status, accepted int, d time.Duration, errMsg string, extra ...any) {
 	if s.log == nil {
 		return
 	}
+	path := ""
+	if r.URL != nil {
+		path = r.URL.Path
+	}
 	attrs := []any{
 		"req", reqID,
+		"method", logField(r.Method, 16),
+		"path", logField(path, 64),
 		"remote", logRemote(r.RemoteAddr),
 		"status", status,
 		"accepted", accepted,
@@ -195,11 +202,103 @@ func (s *Server) logPost(r *http.Request, reqID string, status, accepted int, d 
 	if errMsg != "" {
 		attrs = append(attrs, "error", logField(errMsg, 256))
 	}
+	attrs = append(attrs, extra...)
 	level := slog.LevelInfo
-	if status >= 400 {
+	switch {
+	case status >= 500:
+		level = slog.LevelError
+	case status >= 400 || errMsg != "":
 		level = slog.LevelWarn
 	}
 	s.log.Log(r.Context(), level, "toktop: ingest", attrs...)
+}
+
+// withUnhandledLog writes the same structured ingest line for requests the
+// mux answers itself (404, 405). POST /v1/events is logged in handlePost;
+// GET /healthz and GET /v1/events are not (probes and the schema hint
+// would only add noise). The wrapper is skipped on POST /v1/events so
+// handlePost keeps a bare ResponseWriter for SetReadDeadline.
+func withUnhandledLog(s *Server, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if skipUnhandledLog(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w}
+		next.ServeHTTP(sw, r)
+		status := sw.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if status < 400 {
+			return
+		}
+		msg := "method not allowed"
+		if status != http.StatusMethodNotAllowed {
+			msg = "not found"
+			if status != http.StatusNotFound {
+				msg = strings.ToLower(http.StatusText(status))
+			}
+		}
+		s.logRequest(r, requestID(r), status, 0, time.Since(start), msg)
+	})
+}
+
+func skipUnhandledLog(r *http.Request) bool {
+	switch r.URL.Path {
+	case "/healthz":
+		return r.Method == http.MethodGet || r.Method == http.MethodHead
+	case "/v1/events":
+		switch r.Method {
+		case http.MethodPost, http.MethodGet, http.MethodHead:
+			return true
+		}
+	}
+	return false
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// withRecover turns a handler panic into a 500 and the structured ingest
+// line with req id, so a crash in RecordAgent is not only net/http's
+// "panic serving" without correlation. The stack is one log attribute
+// (whitespace-collapsed) so it does not split the line.
+func withRecover(s *Server, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		defer func() {
+			recov := recover()
+			if recov == nil {
+				return
+			}
+			if recov == http.ErrAbortHandler {
+				panic(recov)
+			}
+			s.logRequest(r, requestID(r), http.StatusInternalServerError, 0, time.Since(start),
+				fmt.Sprintf("panic: %v", recov),
+				"stack", logField(string(debug.Stack()), 2048))
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // SetNow overrides the clock used to stamp events that arrive without a
@@ -286,7 +385,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Request-Id", reqID)
 	}
 	done := func(status, accepted int, errMsg string) {
-		s.logPost(r, reqID, status, accepted, time.Since(start), errMsg)
+		s.logRequest(r, reqID, status, accepted, time.Since(start), errMsg)
 	}
 
 	// A POST carrying an Origin header is browser-driven: every browser
@@ -384,7 +483,10 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	fmt.Fprintf(w, `{"accepted":%d}`+"\n", n)
+	if _, err := fmt.Fprintf(w, `{"accepted":%d}`+"\n", n); err != nil {
+		done(http.StatusAccepted, n, "response write failed")
+		return
+	}
 	done(http.StatusAccepted, n, "")
 }
 

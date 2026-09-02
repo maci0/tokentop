@@ -1070,10 +1070,11 @@ func countLogLines(s string) int {
 	return len(strings.Split(s, "\n"))
 }
 
-// POST /v1/events is the only request path an operator cannot see on the
+// POST /v1/events is the request path an operator cannot see on the
 // dashboard when it fails: a structured stderr line has to answer whether it
-// succeeded, how long it took, and why it was refused. Event bodies stay off
-// the log; they are attacker-shaped and the retained feed already holds them.
+// succeeded, how long it took, and why it was refused. Wrong-method and
+// unknown-path requests share that line. Event bodies stay off the log;
+// they are attacker-shaped and the retained feed already holds them.
 func TestIngestLogsPostOutcome(t *testing.T) {
 	lg, buf := captureLogger()
 	rec := &memRecorder{}
@@ -1102,6 +1103,8 @@ func TestIngestLogsPostOutcome(t *testing.T) {
 		`msg="toktop: ingest"`,
 		"level=INFO",
 		"req=" + reqID,
+		"method=POST",
+		"path=/v1/events",
 		"status=202",
 		"accepted=1",
 		"duration=",
@@ -1239,8 +1242,208 @@ func TestHealthzIsNotLogged(t *testing.T) {
 	if resp.Header.Get("X-Request-Id") == "" {
 		t.Error("healthz missing X-Request-Id")
 	}
+	req, err := http.NewRequest(http.MethodHead, "http://"+s.Addr()+"/healthz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, head.Body)
+	head.Body.Close()
+	if head.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD /healthz = %d", head.StatusCode)
+	}
 	if buf.Len() != 0 {
 		t.Errorf("healthz must not log, got %q", buf.String())
+	}
+}
+
+func TestIngestGetHintIsNotLogged(t *testing.T) {
+	lg, buf := captureLogger()
+	s := startIngestLog(t, &memRecorder{}, lg)
+
+	resp, err := http.Get("http://" + s.Addr() + "/v1/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/events = %d", resp.StatusCode)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("schema hint must not log, got %q", buf.String())
+	}
+}
+
+func TestIngestLogsUnknownPath(t *testing.T) {
+	lg, buf := captureLogger()
+	s := startIngestLog(t, &memRecorder{}, lg)
+
+	resp, err := http.Post("http://"+s.Addr()+"/events", "application/json",
+		strings.NewReader(`{"agent":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	reqID := resp.Header.Get("X-Request-Id")
+	got := buf.String()
+	if countLogLines(got) != 1 {
+		t.Fatalf("404 log lines = %d (%q), want 1", countLogLines(got), got)
+	}
+	for _, want := range []string{
+		"level=WARN",
+		"method=POST",
+		"path=/events",
+		"status=404",
+		"accepted=0",
+		`error="not found"`,
+		"req=" + reqID,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("404 log missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestIngestLogsWrongMethod(t *testing.T) {
+	lg, buf := captureLogger()
+	s := startIngestLog(t, &memRecorder{}, lg)
+
+	req, err := http.NewRequest(http.MethodPut, "http://"+s.Addr()+"/v1/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", resp.StatusCode)
+	}
+	got := buf.String()
+	if countLogLines(got) != 1 {
+		t.Fatalf("405 log lines = %d (%q), want 1", countLogLines(got), got)
+	}
+	for _, want := range []string{
+		"level=WARN",
+		"method=PUT",
+		"path=/v1/events",
+		"status=405",
+		`error="method not allowed"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("405 log missing %q: %s", want, got)
+		}
+	}
+}
+
+type panicRecorder struct{}
+
+func (panicRecorder) RecordAgent(core.AgentEvent) { panic("recorder boom") }
+
+func TestIngestLogsHandlerPanic(t *testing.T) {
+	lg, buf := captureLogger()
+	s, err := newServer("127.0.0.1:0", panicRecorder{}, lg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go s.Serve()
+	t.Cleanup(func() { s.Close() })
+
+	resp, err := http.Post("http://"+s.Addr()+"/v1/events", "application/json",
+		strings.NewReader(`{"agent":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+	if strings.Contains(string(body), "recorder boom") {
+		t.Errorf("panic leaked to client: %q", body)
+	}
+	got := buf.String()
+	if countLogLines(got) != 1 {
+		t.Fatalf("panic log lines = %d (%q), want 1", countLogLines(got), got)
+	}
+	for _, want := range []string{
+		"level=ERROR",
+		"method=POST",
+		"path=/v1/events",
+		"status=500",
+		`error="panic: recorder boom"`,
+		"stack=",
+		"req=" + resp.Header.Get("X-Request-Id"),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("panic log missing %q: %s", want, got)
+		}
+	}
+}
+
+type failWriter struct{ http.ResponseWriter }
+
+func (failWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestIngestLogsResponseWriteFailure(t *testing.T) {
+	lg, buf := captureLogger()
+	s := &Server{rec: &memRecorder{}, log: lg}
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/events",
+		strings.NewReader(`{"agent":"x"}`))
+	w := httptest.NewRecorder()
+	s.handlePost(failWriter{w}, r)
+
+	got := buf.String()
+	if countLogLines(got) != 1 {
+		t.Fatalf("write-fail log lines = %d (%q), want 1", countLogLines(got), got)
+	}
+	for _, want := range []string{
+		"level=WARN",
+		"status=202",
+		"accepted=1",
+		`error="response write failed"`,
+		"method=POST",
+		"path=/v1/events",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("write-fail log missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestIngestUnknownPathStaysOneLogLine(t *testing.T) {
+	lg, buf := captureLogger()
+	s, err := newServer("127.0.0.1:0", &memRecorder{}, lg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.URL.Path = "/x\nlevel=INFO forged"
+	w := httptest.NewRecorder()
+	s.srv.Handler.ServeHTTP(w, r)
+
+	got := buf.String()
+	if countLogLines(got) != 1 {
+		t.Fatalf("injected path split the log: %q", got)
+	}
+	if strings.Contains(got, "\nlevel=INFO forged") {
+		t.Errorf("newline survived into log: %q", got)
 	}
 }
 
