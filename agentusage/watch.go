@@ -1200,10 +1200,11 @@ func parseClaude(line []byte) (values, string, bool) {
 	u := rec.Message.Usage
 	out := counter(u.OutputTokens)
 	in := counter(u.InputTokens)
+	think := counter(u.Details.ThinkingTokens)
 	prompt := satAdd(in, satAdd(counter(u.CacheReadInputTokens), counter(u.CacheCreationInputTokens)))
 	v := values{
 		output:   out,
-		thinking: counter(u.Details.ThinkingTokens),
+		thinking: think,
 		total:    satAdd(prompt, out),
 		input:    prompt,
 	}
@@ -1286,13 +1287,14 @@ func parseCodex(line []byte) (values, string, bool) {
 		u := rec.Payload.Info.TotalTokenUsage
 		total := counter(u.TotalTokens)
 		out := counter(u.OutputTokens)
+		think := counter(u.ReasoningOutputTokens)
 		in := counter(u.InputTokens)
 		if remain := satSub(total, out); remain > in {
 			in = remain
 		}
 		v := values{
 			output:   out,
-			thinking: counter(u.ReasoningOutputTokens),
+			thinking: think,
 			total:    total,
 			input:    in,
 		}

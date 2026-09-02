@@ -236,6 +236,9 @@ func TestIngestJSONTypeErrorsNameTheField(t *testing.T) {
 		want []string
 	}{
 		{`[{"agent":"a"}]`, []string{"object", "NDJSON", "array"}},
+		{`null`, []string{"object", "NDJSON", "null"}},
+		{`true`, []string{"object", "NDJSON"}},
+		{`123`, []string{"object", "NDJSON"}},
 		{`{"prompt_tokens":"100"}`, []string{"prompt_tokens", "integer"}},
 		{`{"output_tokens":true}`, []string{"output_tokens", "integer"}},
 		{`{"thinking_tokens":[1]}`, []string{"thinking_tokens", "integer"}},

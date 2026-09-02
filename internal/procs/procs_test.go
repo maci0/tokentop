@@ -62,7 +62,9 @@ func TestMatchEngine(t *testing.T) {
 		{"llama-server", []string{"/usr/bin/llama-server", "--port", "8081"}, "llama.cpp", 8080, true}, // def; hint overrides separately
 		{"llamafile", []string{"llamafile", "--port", "8080"}, "llama.cpp", 8080, true},
 		{"python3", []string{"python3", "-m", "vllm.entrypoints.openai.api_server"}, "vllm", 8000, true},
+		{"vllm", []string{"vllm", "serve", "--port", "8001"}, "vllm", 8000, true},
 		{"python3", []string{"python3", "-m", "sglang.launch_server"}, "sglang", 30000, true},
+		{"sglang", []string{"sglang", "serve", "--port", "30001"}, "sglang", 30000, true},
 		{"tritonserver", []string{"/opt/tritonserver/bin/tritonserver"}, "triton", 8000, true},
 		{"koboldcpp.py", []string{"python3", "koboldcpp.py", "--port", "5001"}, "koboldcpp", 5001, true},
 		{"jan", []string{"/opt/Jan/jan"}, "jan", 1337, true},

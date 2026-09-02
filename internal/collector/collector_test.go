@@ -51,6 +51,30 @@ func (f *fakeProvider) Poll(context.Context) (*provider.Metrics, error) {
 
 var _ provider.Provider = (*fakeProvider)(nil)
 
+func TestURLPort(t *testing.T) {
+	cases := []struct {
+		addr string
+		want int
+	}{
+		{"http://127.0.0.1:11434", 11434},
+		{"https://example:8443", 8443},
+		{"http://127.0.0.1", 80},
+		{"https://example.com", 443},
+		{"http://[::1]:8080", 8080},
+		{"https://[::1]", 443},
+		{"", 0},
+		{"fake://x", 0},
+		{"http://127.0.0.1:abc", 0},
+		{"http://127.0.0.1:0", 0},
+		{"http://127.0.0.1:65536", 0},
+	}
+	for _, tc := range cases {
+		if got := urlPort(tc.addr); got != tc.want {
+			t.Errorf("urlPort(%q) = %d, want %d", tc.addr, got, tc.want)
+		}
+	}
+}
+
 func TestRatesDeriveAndSmooth(t *testing.T) {
 	c := New(nil, time.Second)
 	now := time.Now()

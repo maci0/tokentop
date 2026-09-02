@@ -301,8 +301,8 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		done(status, n, msg)
 	}
 	for {
-		var wire agentEventWire
-		if err := dec.Decode(&wire); err != nil {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
 			if n > 0 && errors.Is(err, io.EOF) {
 				break // clean end of stream after at least one event
 			}
@@ -321,6 +321,16 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 					fmt.Sprintf("event stream exceeds %d byte cap", maxBytes.Limit))
 				return
 			}
+			fail(http.StatusBadRequest, clientJSONError(err))
+			return
+		}
+		// Null unmarshals into a struct as zeros; the body must be an object.
+		if kind := jsonRootKind(raw); kind != "object" {
+			fail(http.StatusBadRequest, "bad json: expected a JSON object or NDJSON stream, got "+kind)
+			return
+		}
+		var wire agentEventWire
+		if err := json.Unmarshal(raw, &wire); err != nil {
 			fail(http.StatusBadRequest, clientJSONError(err))
 			return
 		}
@@ -521,6 +531,32 @@ func parseTokenJSON(raw json.RawMessage, field string) (int64, error) {
 		return int64(f), nil
 	}
 	return 0, fmt.Errorf("bad json: %s must be an integer", field)
+}
+
+// jsonRootKind names the JSON value kind of a decoded raw message so a
+// non-object root (null, array, string, number) can be refused with the
+// same "expected a JSON object" wording Decode-into-struct already used
+// for arrays. encoding/json treats null as a zero struct, which is why
+// this check sits in front of Unmarshal.
+func jsonRootKind(raw json.RawMessage) string {
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return "empty"
+	}
+	switch s[0] {
+	case '{':
+		return "object"
+	case '[':
+		return "array"
+	case '"':
+		return "string"
+	case 't', 'f':
+		return "bool"
+	case 'n':
+		return "null"
+	default:
+		return "number"
+	}
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {

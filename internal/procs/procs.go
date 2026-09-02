@@ -275,7 +275,10 @@ var engineMatchers = []engineMatcher{
 			baseNameEq(args, "vllm")
 	}},
 	{"sglang", 30000, func(_, c string, args []string) bool {
-		return anyArgContains(args, "sglang.launch_server", "sglang.srt")
+		// python -m sglang.launch_server / sglang.srt.*, and the
+		// `sglang serve` CLI (same shape as `vllm serve`).
+		return anyArgContains(args, "sglang.launch_server", "sglang.srt") ||
+			baseNameEq(args, "sglang")
 	}},
 	{"triton", 8000, func(n, _ string, _ []string) bool { return n == "tritonserver" }},
 	{"tgi", 8080, func(_, c string, _ []string) bool {

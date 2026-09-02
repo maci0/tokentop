@@ -582,21 +582,23 @@ func (c *Collector) ProbeAll() {
 	}
 }
 
-// urlPort extracts the TCP port from a backend URL.
+// urlPort extracts the TCP port from a backend URL. Non-http(s) addresses
+// (tests use fake://, and a blank Addr is not a listener) must not fall
+// through to port 80: that would attach GPUStack-on-80 process stats to
+// an unrelated provider.
 func urlPort(addr string) int {
 	u, err := url.Parse(addr)
-	if err != nil {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return 0
 	}
 	if _, port, err := net.SplitHostPort(u.Host); err == nil {
-		if p, err := strconv.Atoi(port); err == nil {
+		if p, err := strconv.Atoi(port); err == nil && p >= 1 && p <= 65535 {
 			return p
 		}
+		return 0
 	}
-	switch u.Scheme {
-	case "https":
+	if u.Scheme == "https" {
 		return 443
-	default:
-		return 80
 	}
+	return 80
 }

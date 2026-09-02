@@ -397,6 +397,20 @@ func TestRegisterSpecValidates(t *testing.T) {
 	}
 }
 
+func TestParseClaudeThinkingOnly(t *testing.T) {
+	line := []byte(`{"type":"assistant","cwd":"/tmp/p","message":{"usage":{"input_tokens":0,"output_tokens":0,"output_tokens_details":{"thinking_tokens":40}}}}`)
+	v, cwd, ok := parseClaude(line)
+	if !ok {
+		t.Fatal("thinking-only assistant record must count")
+	}
+	if v.thinking != 40 || v.output != 0 || v.input != 0 {
+		t.Fatalf("got %+v, want thinking 40", v)
+	}
+	if cwd != "/tmp/p" {
+		t.Fatalf("cwd = %q", cwd)
+	}
+}
+
 func TestSampleEmptyIncludesThinking(t *testing.T) {
 	if !(Sample{}).Empty() {
 		t.Fatal("zero sample must be empty")

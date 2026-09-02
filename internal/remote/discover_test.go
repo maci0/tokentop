@@ -53,8 +53,9 @@ func TestParseProcScan(t *testing.T) {
 func TestEnginePortsCustomFlagForms(t *testing.T) {
 	infos := parseProcScan(
 		"1 llama-server --port=9001\n" +
-			"2 sglang.launch_server --http-port 9100\n")
-	if got := enginePorts(infos); !reflect.DeepEqual(got, []int{9001, 9100}) {
+			"2 sglang.launch_server --http-port 9100\n" +
+			"3 sglang serve --port 9200\n")
+	if got := enginePorts(infos); !reflect.DeepEqual(got, []int{9001, 9100, 9200}) {
 		t.Errorf("enginePorts = %v", got)
 	}
 }
