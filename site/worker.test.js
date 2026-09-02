@@ -170,6 +170,12 @@ test("hero is the captured dashboard, not an ASCII stand-in", () => {
   expect(identityBody.includes("https://toktop.ai/dashboard.png")).toBe(true);
 });
 
+test("section titles are sentence case on the body scale, not marketing labels", () => {
+  expect(identityBody.includes("text-transform")).toBe(false);
+  expect(identityBody.includes("letter-spacing")).toBe(false);
+  expect(identityBody.includes("max-width: 62ch")).toBe(true);
+});
+
 // RFC 6928 initcwnd: ten ~1460-byte segments (~14 KB). Identity bytes plus
 // inline CSS are everything there is, so staying under this keeps first paint
 // at one round trip. Exact sizes are the record: a copy or compression
@@ -184,9 +190,9 @@ test("recorded transfer sizes stay inside the initial congestion window", async 
   const brotli = new Uint8Array(
     await (await call({ "accept-encoding": "br" })).arrayBuffer(),
   ).byteLength;
-  expect(identity).toBe(6392);
-  expect(gzipped).toBe(2686);
-  expect(brotli).toBe(2166);
+  expect(identity).toBe(6399);
+  expect(gzipped).toBe(2674);
+  expect(brotli).toBe(2162);
   expect(identity).toBeLessThan(budget);
   expect(gzipped).toBeLessThan(budget);
   expect(brotli).toBeLessThan(budget);

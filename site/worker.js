@@ -30,7 +30,7 @@ const HTML = htmlForWire(`<!doctype html>
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="https://toktop.ai/dashboard.png">
 <!-- the icon is the h1 cursor block in the accent and panel colors, not a placeholder emoji -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20rx='20'%20fill='%2311161d'/%3E%3Crect%20x='37'%20y='25'%20width='26'%20height='50'%20rx='5'%20fill='%234cc38a'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20fill='%2311161d'/%3E%3Crect%20x='37'%20y='25'%20width='26'%20height='50'%20fill='%234cc38a'/%3E%3C/svg%3E">
 <style>
   :root {
     /* Both schemes are styled here; declaring them lets the browser match
@@ -44,7 +44,7 @@ const HTML = htmlForWire(`<!doctype html>
   }
   @media (prefers-color-scheme: light) {
     :root {
-      --bg: #fbfbf9; --panel: #ffffff; --line: #e3e3de;
+      --bg: #fbfbf9; --panel: #f3f3ee; --line: #e3e3de;
       --fg: #1b1f24; --dim: #5c6570; --accent: #1a7f4b; --warm: #9a6b00;
     }
   }
@@ -64,10 +64,13 @@ const HTML = htmlForWire(`<!doctype html>
     @keyframes blink { 50% { opacity: 0; } }
   }
   .tag { color: var(--dim); margin: .6rem 0 2.4rem; font-size: 1.05rem; }
-  h2 { font-size: .82rem; text-transform: uppercase;
-       color: var(--dim); font-weight: 600; margin: 3rem 0 .9rem; }
+  /* Sentence-case titles on the tagline size, not uppercase micro-labels.
+     Install/Run sit tight under the capture; the manifesto heading after
+     the list keeps the larger gap. */
+  h2 { font-size: 1.05rem; color: var(--fg); font-weight: 600; margin: 2.8rem 0 .7rem; }
+  .shot + h2, h2 + pre + h2 { margin-top: 1.5rem; }
   pre {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
+    background: var(--panel); border: 1px solid var(--line);
     padding: 1rem 1.15rem; overflow-x: auto; margin: 0 0 1rem; font-size: 13.5px;
   }
   /* Narrow viewports clip code lines into a scroll container; a mouse-only
@@ -77,6 +80,8 @@ const HTML = htmlForWire(`<!doctype html>
   .up { color: var(--accent); }
   .warm { color: var(--warm); }
   .dim { color: var(--dim); }
+  /* The capture needs the 76rem column; copy does not. */
+  p, ul { max-width: 62ch; }
   ul { padding-left: 1.1rem; margin: 0; }
   li { margin-bottom: .5rem; }
   li b { font-weight: 600; }
@@ -94,7 +99,7 @@ const HTML = htmlForWire(`<!doctype html>
   /* The screenshot is the product, not a decoration: a dark terminal
      frame so the capture never sits on the light-scheme paper. */
   .shot {
-    margin: 0 0 2.6rem; border: 1px solid var(--line);
+    margin: 0; border: 1px solid var(--line);
     background: #0d1117; overflow: hidden;
   }
   .shot figcaption {

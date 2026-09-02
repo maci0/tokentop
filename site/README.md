@@ -34,7 +34,7 @@ so caches never hand a compressed body to a client that cannot decode it.
 One request for the page, no JavaScript, no webfonts, inline CSS only. The
 hero is the real dashboard capture (WebP ~140 KB, PNG fallback), served from
 this Worker so a deploy updates share cards and the page together. Measured
-against the current source: 6,392 bytes identity / 2,686 gzip / 2,166 brotli
+against the current source: 6,399 bytes identity / 2,674 gzip / 2,162 brotli
 for the HTML, still inside the ~14 KB initial congestion window. The budget
 is pinned by a test, so drift fails `bun test site/`; numbers above are
 re-measurable with it:
