@@ -332,4 +332,21 @@ func TestRecordAgentSameIDKeptOnce(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("agents = %d, want 1", n)
 	}
+
+	s.RecordAgent(core.AgentEvent{At: time.Now(), ID: "turn-2", Agent: "coder", OutputTokens: 10})
+	s.mu.Lock()
+	n = len(s.agents)
+	s.mu.Unlock()
+	if n != 2 {
+		t.Fatalf("distinct ids = %d, want 2", n)
+	}
+
+	s.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "coder", OutputTokens: 1})
+	s.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "coder", OutputTokens: 1})
+	s.mu.Lock()
+	n = len(s.agents)
+	s.mu.Unlock()
+	if n != 4 {
+		t.Fatalf("events without id = %d, want 4 total", n)
+	}
 }

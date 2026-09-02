@@ -204,8 +204,19 @@ func TestEmitSnapshotShape(t *testing.T) {
 
 	select {
 	case snap := <-ch:
-		if snap.Sys == nil || snap.Sys.MemUsed != 50 || len(snap.Sys.Temps) != 1 {
+		if snap.Sys == nil || snap.Sys.MemUsed != 50 || snap.Sys.MemTotal != 100 ||
+			snap.Sys.Load1 != 0.5 || len(snap.Sys.Temps) != 1 {
 			t.Fatalf("sys sample missing from snapshot: %+v", snap.Sys)
+		}
+		if len(snap.Providers) != 1 {
+			t.Fatalf("providers = %d, want 1", len(snap.Providers))
+		}
+		p := snap.Providers[0]
+		if p.Label != "testprov" || p.Kind != core.KindOllama || !p.OK || p.Running != 2 {
+			t.Fatalf("provider = %+v, want testprov/ollama ok running=2", p)
+		}
+		if len(p.Models) != 1 || p.Models[0].Name != "m1" {
+			t.Fatalf("models = %+v, want [m1]", p.Models)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("emit did not produce a snapshot")
@@ -393,14 +404,57 @@ func TestRunWarmsSysCacheBeforeFirstEmit(t *testing.T) {
 
 func TestAgentEventRing(t *testing.T) {
 	c := New(nil, time.Second)
-	for range core.AgentHistoryLen + 5 {
-		c.RecordAgent(core.AgentEvent{At: time.Now(), Agent: "a"})
+	base := time.Unix(1_700_000_000, 0)
+	n := core.AgentHistoryLen + 5
+	for i := range n {
+		c.RecordAgent(core.AgentEvent{
+			At:           base.Add(time.Duration(i) * time.Second),
+			Agent:        "a",
+			OutputTokens: int64(i),
+		})
 	}
 	if len(c.agents) != core.AgentHistoryLen {
-		t.Fatalf("agent ring = %d", len(c.agents))
+		t.Fatalf("agent ring = %d, want %d", len(c.agents), core.AgentHistoryLen)
 	}
-	if c.agents[len(c.agents)-1].At.Before(c.agents[0].At) {
-		t.Fatal("ring order broken")
+	if c.agents[0].OutputTokens != 5 {
+		t.Fatalf("oldest kept = %d, want 5 (first 5 evicted)", c.agents[0].OutputTokens)
+	}
+	if want := int64(n - 1); c.agents[len(c.agents)-1].OutputTokens != want {
+		t.Fatalf("newest kept = %d, want %d", c.agents[len(c.agents)-1].OutputTokens, want)
+	}
+	for i := 1; i < len(c.agents); i++ {
+		if !c.agents[i].At.After(c.agents[i-1].At) {
+			t.Fatalf("ring order broken at %d: %v", i, c.agents)
+		}
+	}
+}
+
+// The probe ring evicts the oldest sample once full, the same way the agent
+// ring does: charts and the "last probe" readout assume newest-last and a
+// bounded window.
+func TestProbeRingCap(t *testing.T) {
+	c := New(nil, time.Second)
+	base := time.Unix(1_700_000_000, 0)
+	n := core.ProbeHistoryLen + 5
+	for i := range n {
+		c.RecordProbe(core.ProbeSample{
+			At:    base.Add(time.Duration(i) * time.Second),
+			TokPS: float64(i),
+		})
+	}
+	if len(c.probes) != core.ProbeHistoryLen {
+		t.Fatalf("probe ring = %d, want %d", len(c.probes), core.ProbeHistoryLen)
+	}
+	if c.probes[0].TokPS != 5 {
+		t.Fatalf("oldest kept = %v, want 5 (first 5 evicted)", c.probes[0].TokPS)
+	}
+	if want := float64(n - 1); c.probes[len(c.probes)-1].TokPS != want {
+		t.Fatalf("newest kept = %v, want %v", c.probes[len(c.probes)-1].TokPS, want)
+	}
+	for i := 1; i < len(c.probes); i++ {
+		if !c.probes[i].At.After(c.probes[i-1].At) {
+			t.Fatalf("ring order broken at %d: %v", i, c.probes)
+		}
 	}
 }
 
@@ -532,10 +586,12 @@ func TestPerProviderStateKeyedByEndpoint(t *testing.T) {
 	m1 := &provider.Metrics{OutTotal: 100, Models: []core.ModelInfo{{Name: "m"}}}
 	m2 := &provider.Metrics{OutTotal: 500, Models: []core.ModelInfo{{Name: "m"}}}
 	ch := make(chan core.Snapshot, 1)
+	now := time.Unix(1_700_000_000, 0).UTC()
 	c := New([]provider.Provider{
 		&fakeProvider{label: core.KindLlamaCPP, addr: "http://127.0.0.1:8080", m: m1},
 		&fakeProvider{label: core.KindLlamaCPP, addr: "http://127.0.0.1:8081", m: m2},
 	}, time.Second)
+	c.SetNow(func() time.Time { return now })
 
 	get := func() map[string]float64 {
 		c.emit(context.Background(), ch)
@@ -548,17 +604,73 @@ func TestPerProviderStateKeyedByEndpoint(t *testing.T) {
 	}
 
 	get() // seed both baselines
-	// A rate needs a measurable interval, and back-to-back emits do not have
-	// one on a clock as coarse as Windows'.
-	time.Sleep(20 * time.Millisecond)
+	now = now.Add(time.Second)
 	m1.OutTotal = 200 // only engine :8080 generated tokens since emit #1
 
 	rates := get()
-	if rates["http://127.0.0.1:8080"] <= 10 {
-		t.Fatalf(":8080 rate = %v, want > 10 (its own counter moved)", rates)
+	// 100 tok over 1s, EMA from 0 with alpha 0.35.
+	if rates["http://127.0.0.1:8080"] != 35 {
+		t.Fatalf(":8080 rate = %v, want 35 (its own counter moved)", rates)
 	}
 	if rates["http://127.0.0.1:8081"] != 0 {
 		t.Fatalf(":8081 rate = %v, want 0 (its counter did not move)", rates)
+	}
+}
+
+func TestURLPort(t *testing.T) {
+	cases := []struct {
+		addr string
+		want int
+	}{
+		{"http://127.0.0.1:11434", 11434},
+		{"http://127.0.0.1:8081", 8081},
+		{"https://example.com:8443", 8443},
+		{"https://example.com", 443},
+		{"http://example.com", 80},
+		{"http://[::1]:11434", 11434},
+	}
+	for _, c := range cases {
+		if got := urlPort(c.addr); got != c.want {
+			t.Errorf("urlPort(%q) = %d, want %d", c.addr, got, c.want)
+		}
+	}
+}
+
+// emit copies PID/RSS/CPU from the process whose listen port matches the
+// backend URL. Two processes on the same port keep the first sample; a
+// provider with no match stays zeroed.
+func TestEmitAttachesProcessByListenPort(t *testing.T) {
+	ollama := &fakeProvider{label: "ollama", addr: "http://127.0.0.1:11434", m: &provider.Metrics{
+		Models: []core.ModelInfo{{Name: "m"}},
+	}}
+	vllm := &fakeProvider{label: "vllm", addr: "http://127.0.0.1:8000", m: &provider.Metrics{
+		Models: []core.ModelInfo{{Name: "m"}},
+	}}
+	ch := make(chan core.Snapshot, 1)
+	c := New([]provider.Provider{ollama, vllm}, time.Hour)
+	c.procCache = []procs.Info{
+		{PID: 42, RSS: 1000, CPUPct: 12.5, PortHint: 11434},
+		{PID: 43, RSS: 999, CPUPct: 1, PortHint: 11434}, // same port: first wins
+		{PID: 99, RSS: 2000, CPUPct: 3, PortHint: 9999}, // unmatched
+	}
+	c.emit(context.Background(), ch)
+	snap := <-ch
+	if len(snap.Providers) != 2 {
+		t.Fatalf("providers = %d, want 2", len(snap.Providers))
+	}
+	got := map[string]core.ProviderSnapshot{}
+	for _, p := range snap.Providers {
+		got[p.Addr] = p
+	}
+	o := got["http://127.0.0.1:11434"]
+	if o.PID != 42 || o.ProcRSS != 1000 || o.ProcCPU != 12.5 {
+		t.Errorf("ollama process = pid %d rss %d cpu %v, want 42/1000/12.5 (first sample)",
+			o.PID, o.ProcRSS, o.ProcCPU)
+	}
+	v := got["http://127.0.0.1:8000"]
+	if v.PID != 0 || v.ProcRSS != 0 || v.ProcCPU != 0 {
+		t.Errorf("unmatched vllm process = pid %d rss %d cpu %v, want zeros",
+			v.PID, v.ProcRSS, v.ProcCPU)
 	}
 }
 

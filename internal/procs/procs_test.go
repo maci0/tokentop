@@ -28,6 +28,26 @@ func TestExtractPort(t *testing.T) {
 	}
 }
 
+// ListenPort prefers an explicit --port flag over the engine's default, and
+// is zero when neither is set, so discovery and emit attribute the right
+// process (or none) to a backend URL.
+func TestListenPort(t *testing.T) {
+	cases := []struct {
+		name string
+		info Info
+		want int
+	}{
+		{"explicit flag wins over default", Info{PortHint: 8081, DefPort: 8080}, 8081},
+		{"engine default when no flag", Info{DefPort: 11434}, 11434},
+		{"neither is zero", Info{}, 0},
+	}
+	for _, c := range cases {
+		if got := c.info.ListenPort(); got != c.want {
+			t.Errorf("%s: ListenPort() = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
 func TestMatchEngine(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -81,17 +101,23 @@ func TestSnapshotDropsUnrelatedProcesses(t *testing.T) {
 		}, nil
 	}
 	list := NewSampler().Snapshot()
+	got := map[string]Info{}
+	for _, p := range list {
+		got[p.Name] = p
+	}
+	if _, ok := got["firefox"]; ok {
+		t.Fatal("unrelated process was kept")
+	}
+	ollama, ok := got["ollama"]
+	if !ok || ollama.Engine != "ollama" || ollama.DefPort != 11434 || ollama.PID != 1 {
+		t.Errorf("ollama = %+v, want engine ollama default port 11434 pid 1", ollama)
+	}
+	py, ok := got["python3"]
+	if !ok || py.PortHint != 9000 || py.Engine != "" || py.PID != 3 {
+		t.Errorf("python3 = %+v, want --port 9000, no engine match, pid 3", py)
+	}
 	if len(list) != 2 {
 		t.Fatalf("snapshot = %+v, want ollama and the --port process", list)
-	}
-	var sawFirefox bool
-	for _, p := range list {
-		if p.Name == "firefox" {
-			sawFirefox = true
-		}
-	}
-	if sawFirefox {
-		t.Fatal("unrelated process was kept")
 	}
 }
 

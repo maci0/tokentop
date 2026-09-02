@@ -77,10 +77,17 @@ func TestIngestAcceptsEvents(t *testing.T) {
 		t.Fatalf("status = %d", resp)
 	}
 	awaitEvents(t, rec, 2)
-	if rec.evs[0].Agent != "coder" || rec.evs[0].Kind != "tool" || rec.evs[0].ThinkingTokens != 2 {
-		t.Errorf("event 0 = %+v", rec.evs[0])
+	ev0 := rec.evs[0]
+	if ev0.Agent != "coder" || ev0.Kind != "tool" ||
+		ev0.PromptTokens != 100 || ev0.OutputTokens != 5 || ev0.ThinkingTokens != 2 {
+		t.Errorf("event 0 = %+v, want coder/tool 100/5/2", ev0)
 	}
-	if !rec.evs[1].At.After(time.Time{}) {
+	ev1 := rec.evs[1]
+	if ev1.Agent != "coder" || ev1.Kind != "turn" || ev1.OutputTokens != 50 ||
+		ev1.PromptTokens != 0 || ev1.ThinkingTokens != 0 {
+		t.Errorf("event 1 = %+v, want coder/turn 0/50/0", ev1)
+	}
+	if !ev1.At.After(time.Time{}) {
 		t.Error("server must stamp missing timestamps")
 	}
 }
@@ -306,7 +313,7 @@ func TestIngestDefaultsAndBadJSON(t *testing.T) {
 		t.Fatalf("anonymous event rejected: %d", resp)
 	}
 	awaitEvents(t, rec, 1)
-	if rec.evs[0].Agent != "anonymous" || rec.evs[0].Kind != "turn" {
+	if rec.evs[0].Agent != "anonymous" || rec.evs[0].Kind != "turn" || rec.evs[0].PromptTokens != 1 {
 		t.Errorf("defaults not applied: %+v", rec.evs[0])
 	}
 
@@ -466,10 +473,17 @@ func TestIngestDropsAbsurdTokenCounts(t *testing.T) {
 // Modest skew stays honored.
 func TestIngestClampsFarFutureTimestamps(t *testing.T) {
 	rec := &memRecorder{}
-	s := startIngest(t, rec)
+	s, err := newServer("127.0.0.1:0", rec, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen := time.Unix(1_700_000_000, 0).UTC()
+	s.SetNow(func() time.Time { return frozen })
+	go s.Serve()
+	t.Cleanup(func() { s.Close() })
 
-	farFuture := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
-	nearFuture := time.Now().Add(10 * time.Second).UTC().Format(time.RFC3339)
+	farFuture := frozen.Add(time.Hour).Format(time.RFC3339)
+	nearFuture := frozen.Add(10 * time.Second).Format(time.RFC3339)
 	resp := post(t, "http://"+s.Addr()+"/v1/events",
 		`{"agent":"skewed","ts":"`+farFuture+`"}`+"\n"+
 			`{"agent":"skewed","ts":"`+nearFuture+`"}`)
@@ -477,12 +491,12 @@ func TestIngestClampsFarFutureTimestamps(t *testing.T) {
 		t.Fatalf("status = %d", resp)
 	}
 	awaitEvents(t, rec, 2)
-	if got := rec.evs[0].At; got.After(time.Now()) {
-		t.Errorf("far-future stamp retained: %v", got)
+	if got := rec.evs[0].At; !got.Equal(frozen) {
+		t.Errorf("far-future stamp retained: %v, want clamped to %v", got, frozen)
 	}
-	want := time.Now().Add(-time.Minute)
-	if got := rec.evs[1].At; got.Before(want) {
-		t.Errorf("modest skew not honored: %v older than %v", got, want)
+	want := frozen.Add(10 * time.Second)
+	if got := rec.evs[1].At; !got.Equal(want) {
+		t.Errorf("modest skew not honored: %v, want %v", got, want)
 	}
 }
 
