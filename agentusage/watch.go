@@ -103,7 +103,6 @@ const (
 	cumulative
 )
 
-// adapter knows one agent's transcript layout.
 type adapter struct {
 	// roots are directories to scan, given the review's working directory.
 	// Most agents keep transcripts under $HOME and ignore it; agents that keep
@@ -131,7 +130,6 @@ type fileStamp struct {
 	size       int64
 }
 
-// values is one record's usage numbers.
 type values struct {
 	output   int
 	thinking int
@@ -797,24 +795,16 @@ var (
 
 func rootListKey(root, suffix string) string { return root + "\x00" + suffix }
 
-// pruneRootListsLocked drops listings no watcher has refreshed inside
-// recencyWindow. A clanker (or a {dir} spec) keys this map on the project
-// path; without a bound, every tree an agent ever visited during a long
-// --agents run stays pinned after the process is gone. Caller holds rootListMu.
-func pruneRootListsLocked(now time.Time) {
+// pruneRootListsLocked drops listings older than maxAge. A clanker (or a
+// {dir} spec) keys this map on the project path; without a bound, every tree
+// an agent ever visited during a long --agents run stays pinned after the
+// process is gone. Caller holds rootListMu.
+func pruneRootListsLocked(now time.Time, maxAge time.Duration) {
 	for k, c := range rootLists {
-		if now.Sub(c.at) >= recencyWindow {
+		if now.Sub(c.at) >= maxAge {
 			delete(rootLists, k)
 		}
 	}
-}
-
-func storeRootListing(key string, files []string) {
-	rootListMu.Lock()
-	defer rootListMu.Unlock()
-	now := time.Now()
-	pruneRootListsLocked(now)
-	rootLists[key] = rootListing{files: files, at: now}
 }
 
 func (a adapter) fileSuffixes() []string {
@@ -835,16 +825,12 @@ func listTranscripts(root, suffix string, cutoff time.Time, force bool) []string
 	defer rootListMu.Unlock()
 	now := time.Now()
 	if !force {
-		pruneRootListsLocked(now)
+		pruneRootListsLocked(now, recencyWindow)
 		if c, ok := rootLists[key]; ok && now.Sub(c.at) < rescanEvery {
 			return append([]string(nil), c.files...)
 		}
 	}
-	for k, c := range rootLists {
-		if now.Sub(c.at) >= rescanEvery {
-			delete(rootLists, k)
-		}
-	}
+	pruneRootListsLocked(now, rescanEvery)
 	out := walkTranscripts(root, suffix, cutoff)
 	rootLists[key] = rootListing{files: out, at: now}
 	return append([]string(nil), out...)
