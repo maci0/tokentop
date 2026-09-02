@@ -1218,3 +1218,107 @@ func TestProbeAllStampsWithInjectedClock(t *testing.T) {
 			probes[0].Addr, probes[1].Addr)
 	}
 }
+
+// A chat completion against an embedding weight is a wasted billed request.
+func TestProbeAllSkipsEmbeddingModel(t *testing.T) {
+	var got atomic.Value
+	got.Store("")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if m, _ := body["model"].(string); m != "" {
+			got.Store(m)
+		}
+		io.WriteString(w, "{\"response\":\"one\",\"done\":true,\"eval_count\":1,\"eval_duration\":1000000}\n")
+	}))
+	defer srv.Close()
+
+	oldGap := probeWaveGap
+	probeWaveGap = 0
+	defer func() { probeWaveGap = oldGap }()
+
+	fp := &fakeProvider{
+		label: "p", addr: srv.URL,
+		m: &provider.Metrics{Models: []core.ModelInfo{
+			{Name: "text-embedding-3-small", SizeVRAM: 1 << 30},
+			{Name: "llama3"},
+		}},
+	}
+	c := New([]provider.Provider{fp}, time.Second)
+	emitOnce(t, c)
+	c.ProbeAll()
+	waitFor(t, func() bool { return got.Load().(string) == "llama3" },
+		"probe targeted the embedding model instead of the chat id")
+}
+
+func TestProbeAllSkipsEmbedOnlyInventory(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hits.Add(1)
+	}))
+	defer srv.Close()
+
+	oldGap := probeWaveGap
+	probeWaveGap = 0
+	defer func() { probeWaveGap = oldGap }()
+
+	fp := &fakeProvider{
+		label: "p", addr: srv.URL,
+		m: &provider.Metrics{Models: []core.ModelInfo{{Name: "nomic-embed-text"}}},
+	}
+	c := New([]provider.Provider{fp}, time.Second)
+	emitOnce(t, c)
+	c.ProbeAll()
+	waitStay(t, 50*time.Millisecond, func() bool { return hits.Load() == 0 },
+		"probe ran against an embed-only inventory")
+}
+
+// 429/503 must keep ProbeAll from POSTing that backend until Retry-After
+// elapses; otherwise --probe 1 becomes a spend amplifier.
+func TestProbeAllHonorsRetryAfter(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":"rate limited"}`)
+	}))
+	defer srv.Close()
+
+	oldGap := probeWaveGap
+	probeWaveGap = 0
+	defer func() { probeWaveGap = oldGap }()
+
+	var clockMu sync.Mutex
+	now := time.Unix(1_700_000_000, 0).UTC()
+	c := New([]provider.Provider{&fakeProvider{label: "p", addr: srv.URL}}, time.Second)
+	c.SetNow(func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return now
+	})
+	c.lastModel[srv.URL] = "m"
+
+	c.ProbeAll()
+	waitFor(t, func() bool { return hits.Load() == 1 }, "first 429 never reached the engine")
+	waitFor(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.probes) == 1 && c.probes[0].RetryAfter == 30*time.Second
+	}, "429 sample never recorded")
+	waitFor(t, func() bool {
+		c.probeMu.Lock()
+		defer c.probeMu.Unlock()
+		return len(c.probeInflight) == 0
+	}, "in-flight 429 never cleared")
+
+	c.ProbeAll()
+	waitStay(t, 50*time.Millisecond, func() bool { return hits.Load() == 1 },
+		"backoff let another POST through")
+
+	clockMu.Lock()
+	now = now.Add(31 * time.Second)
+	clockMu.Unlock()
+	c.ProbeAll()
+	waitFor(t, func() bool { return hits.Load() == 2 }, "expired backoff never re-armed")
+}

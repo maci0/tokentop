@@ -56,9 +56,10 @@ type Collector struct {
 	started   time.Time
 	baseCtx   context.Context // set by Run; bounds ad-hoc probes past shutdown
 
-	probeMu       sync.Mutex      // guards the probe fan-out state below
-	lastProbeWave time.Time       // wave gate: see probeWaveGap
-	probeInflight map[string]bool // "base|model" -> generation running
+	probeMu       sync.Mutex           // guards the probe fan-out state below
+	lastProbeWave time.Time            // wave gate: see probeWaveGap
+	probeInflight map[string]bool      // "base|model" -> generation running
+	probeBackoff  map[string]time.Time // "base|model" -> earliest next probe (429/503)
 
 	now func() time.Time // snapshot/probe/event stamps; nil means time.Now
 }
@@ -76,6 +77,7 @@ func New(providers []provider.Provider, interval time.Duration) *Collector {
 		lastModel:     map[string]string{},
 		kvPct:         map[string]float64{},
 		probeInflight: map[string]bool{},
+		probeBackoff:  map[string]time.Time{},
 		now:           time.Now,
 		started:       time.Now(),
 	}
@@ -517,7 +519,7 @@ func probeModelName(models []core.ModelInfo) string {
 	var fallback string
 	for _, m := range models {
 		name := core.TruncateClusters(strings.TrimSpace(m.Name), probe.ModelNameMax)
-		if name == "" {
+		if name == "" || skipProbeModel(name) {
 			continue
 		}
 		if m.SizeVRAM > 0 {
@@ -528,6 +530,14 @@ func probeModelName(models []core.ModelInfo) string {
 		}
 	}
 	return fallback
+}
+
+// skipProbeModel reports ids that are not chat/generate targets. A chat
+// completion against an embedding or rerank weight is a wasted billed
+// request and can JIT-load the wrong model.
+func skipProbeModel(name string) bool {
+	n := strings.ToLower(name)
+	return strings.Contains(n, "embed") || strings.Contains(n, "rerank")
 }
 
 // probeWaveGap is the minimum spacing between probe waves. The UI's 'p' key
@@ -568,6 +578,10 @@ func (c *Collector) ProbeAll() {
 		if c.probeInflight[key] { // one generation per backend at a time
 			continue
 		}
+		if until, ok := c.probeBackoff[key]; ok && now.Before(until) {
+			continue // 429/503: wait out Retry-After before POSTing again
+		}
+		delete(c.probeBackoff, key)
 		c.probeInflight[key] = true
 		live = append(live, t)
 	}
@@ -594,6 +608,11 @@ func (c *Collector) ProbeAll() {
 			}
 			s := probe.Run(pctx, t)
 			s.At = now
+			if s.RetryAfter > 0 {
+				c.probeMu.Lock()
+				c.probeBackoff[t.Base+"|"+t.Model] = c.instant().Add(s.RetryAfter)
+				c.probeMu.Unlock()
+			}
 			c.RecordProbe(s)
 		}(t)
 	}

@@ -317,7 +317,8 @@ ports that are then exposed on local loopback (client.go:388-410).
   credential disclosure to that origin.
 - *Denial of service*: slow responses bounded by scanTimeout 700ms /
   PollTimeout 1.5s / probe timeout 30s; bodies capped (M8). Probe generation
-  is 32 tokens with a content-byte hang-up and a 16 KiB line cap (M10).
+  is 32 tokens with think disabled, a content-byte hang-up, a 16 KiB line
+  cap, and 429/503 backoff (M10).
 - *Elevation*: none; response bytes never reach execution or unsanitized
   output. Probe interpolates a capped model id (probe.go:48-51).
 
@@ -431,7 +432,7 @@ Controls verified in code, with the threats they cover:
 | M7: Negative/absurd token counts clamped to zero; unknown kinds defaulted | junk values entering retained state (B1 tampering) | server.go:611-624 |
 | M8: Engine response caps: 4 MiB JSON, 8 MiB text, 256-rune error snippets | memory blowup and log flooding from hostile engines (B2 DoS/disclosure) | provider/provider.go:78,103; httperr/httperr.go:19,24-38 |
 | M9: Non-finite rejection in metrics (per-value and family-sum overflow guard) and vendor CSV/JSON coercion | poisoned counters/rates propagating through history (B2 tampering) | provider.go:202-215; gpu.go:213-232; collector counter-reset clamp collector.go:350 |
-| M10: Probe generation ceiling 32 tokens; content-byte hang-up; 16 KiB line cap; token-trust 128; fixed small prompt; model-id cap 256 | probes becoming compute-amplification attacks against engines (B2 DoS) | probe.go:22-51 |
+| M10: Probe generation ceiling 32 tokens; think disabled; max_completion_tokens + n=1; content-byte hang-up; 16 KiB line cap; token-trust 128; fixed small prompt; model-id cap 256; 429/503 Retry-After backoff 15s–5m; embed/rerank ids skipped | probes becoming compute-amplification attacks against engines (B2 DoS) or spend amplifiers on billed gateways | probe.go:25-65,123-217; collector.go:516-539,579-612 |
 | M11: Poll/scan/probe timeouts (700ms/1.5s/30s) + context-bounded requests | hung-engine DoS (B2/B3) | discover.go:20; provider.go:28; probe.go:20 |
 | M12: TOFU host-key store with loud change refusal, 0600 file in 0700 dir, serialized writes, temp-file plus rename | silent MITM after first contact (B3 spoofing); lost pins under concurrent Connect | knownhosts.go:31-67,90-134 |
 | M13: Banner deadline lifted only on complete version line; 15s command timeout; keepalive with bounded probe waits; SupportedAlgorithms (no ssh-rsa SHA-1 / DSA); forwardDialTimeout 8s | trickle/silent-peer hangs (B3 DoS); weak host-key algorithms; hung tunnel dial (B3b) | client.go:28,92-125,151-160,209-217,397 |

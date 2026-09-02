@@ -133,6 +133,10 @@ type ProbeSample struct {
 	TTFTms float64
 	TokPS  float64
 	Tokens int
+	// RetryAfter is how long the caller should wait before probing this
+	// backend again. Set on 429/503 so an overloaded or billed gateway is
+	// not hammered; zero means no extra backoff.
+	RetryAfter time.Duration
 }
 
 // TempReading is one thermal sensor value in millidegrees Celsius.

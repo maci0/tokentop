@@ -269,6 +269,12 @@ func TestRunRequestsBoundedGeneration(t *testing.T) {
 	if n := gotOpenAI["max_tokens"]; n != float64(probeTokens) {
 		t.Errorf("openai max_tokens = %v, want %d", n, probeTokens)
 	}
+	if n := gotOpenAI["max_completion_tokens"]; n != float64(probeTokens) {
+		t.Errorf("openai max_completion_tokens = %v, want %d", n, probeTokens)
+	}
+	if n := gotOpenAI["n"]; n != float64(1) {
+		t.Errorf("openai n = %v, want 1", n)
+	}
 
 	var gotOllama map[string]any
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +286,10 @@ func TestRunRequestsBoundedGeneration(t *testing.T) {
 	opts := gotOllama["options"].(map[string]any)
 	if n := opts["num_predict"]; n != float64(probeTokens) {
 		t.Errorf("ollama num_predict = %v, want %d", n, probeTokens)
+	}
+	think, ok := gotOllama["think"].(bool)
+	if !ok || think {
+		t.Errorf("ollama think = %v (%v), want false", gotOllama["think"], ok)
 	}
 }
 
@@ -463,5 +473,149 @@ func TestRunCanceledContextFails(t *testing.T) {
 	s := Run(ctx, Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
 	if s.OK {
 		t.Fatalf("canceled probe should fail, got %+v", s)
+	}
+}
+
+// Older OpenAI-compat servers 400 on stream_options / max_completion_tokens.
+// One retry without those fields must land; 400 is not a spend multiplier
+// the way retrying 429 would be.
+func TestRunOpenAIRetriesWithoutExtraFields(t *testing.T) {
+	var n int
+	var retry map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if n == 1 {
+			if _, ok := body["stream_options"]; !ok {
+				t.Error("first request missing stream_options")
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"unknown field stream_options"}`)
+			return
+		}
+		retry = body
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if n != 2 {
+		t.Fatalf("POSTs = %d, want 2 (one retry)", n)
+	}
+	if !s.OK {
+		t.Fatalf("retry should succeed, got %+v", s)
+	}
+	if _, ok := retry["stream_options"]; ok {
+		t.Error("retry still sent stream_options")
+	}
+	if _, ok := retry["max_completion_tokens"]; ok {
+		t.Error("retry still sent max_completion_tokens")
+	}
+	if retry["max_tokens"] != float64(probeTokens) {
+		t.Errorf("retry max_tokens = %v, want %d", retry["max_tokens"], probeTokens)
+	}
+}
+
+// 429 is a spend signal: retrying the same generation would multiply cost.
+func TestRunOpenAIDoesNotRetry429(t *testing.T) {
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n++
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":"rate limited"}`)
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if n != 1 {
+		t.Fatalf("POSTs = %d, want 1 (no retry on 429)", n)
+	}
+	if s.OK || s.RetryAfter != 30*time.Second {
+		t.Fatalf("429 sample = %+v, want RetryAfter 30s", s)
+	}
+	if !strings.Contains(s.Err, "429") {
+		t.Errorf("err missing 429: %q", s.Err)
+	}
+}
+
+func TestRunOpenAIRetryAfterFloorAndCap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "2")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if s.RetryAfter != defaultRetryAfter {
+		t.Errorf("tiny Retry-After = %s, want floor %s", s.RetryAfter, defaultRetryAfter)
+	}
+
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "99999")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv2.Close()
+	s = Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv2.URL, Model: "m"})
+	if s.RetryAfter != maxRetryAfter {
+		t.Errorf("huge Retry-After = %s, want cap %s", s.RetryAfter, maxRetryAfter)
+	}
+}
+
+// Engines that ignore stream:true return a JSON object with HTTP 200.
+// That used to scan as an empty SSE stream and hide the engine error.
+func TestRunOpenAIJSONErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"error":{"message":"model overloaded"}}`)
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if s.OK || !strings.Contains(s.Err, "model overloaded") {
+		t.Fatalf("json error body should surface, got %+v", s)
+	}
+}
+
+func TestRunOpenAINonStreamCompletion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"one two three"}}],"usage":{"completion_tokens":8}}`)
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if !s.OK || s.Tokens != 8 {
+		t.Fatalf("non-stream completion = %+v, want 8 tokens", s)
+	}
+}
+
+// Some proxies emit NDJSON without the SSE data: prefix.
+func TestRunOpenAIBareJSONLine(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"choices":[{"delta":{"content":"hi"}}]}` + "\n" +
+			`{"usage":{"completion_tokens":3}}` + "\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if !s.OK || s.Tokens != 3 {
+		t.Fatalf("bare json line = %+v, want usage 3", s)
+	}
+}
+
+// Non-stream Ollama puts the whole reply on the done frame. Ignoring that
+// content reported an empty stream when eval_count was absent.
+func TestRunOllamaNonStreamDoneWithResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"response":"one two three","done":true}` + "\n"))
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindOllama, Base: srv.URL, Model: "m"})
+	if !s.OK || s.Tokens != 1 {
+		t.Fatalf("done-frame content = %+v, want 1 token", s)
 	}
 }

@@ -77,6 +77,10 @@ support channel (see SECURITY.md).
 - Agent SQLite stores are opened with `trusted_schema` off and double-quoted
   string literals disabled, so a planted schema cannot run extra SQL during
   a read.
+- Generation probes cap thinking models (`think: false`), send
+  `max_completion_tokens` and `n: 1`, back off 15s–5m on HTTP 429/503, skip
+  embedding/rerank ids, and parse non-stream JSON replies, so a probe cannot
+  run away on a billed gateway or an engine that ignores `stream`.
 - The compact dashboard clips long engine rows to the pane width and keeps
   the key hint on the last line, so a crowded or narrow strip no longer
   wraps or hides `q` / space / `?`.

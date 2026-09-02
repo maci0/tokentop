@@ -7,8 +7,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +55,15 @@ const ModelNameMax = 256
 
 const promptText = "Count from one to twenty as words."
 
+// defaultRetryAfter is the floor for 429/503 backoff. A missing or tiny
+// Retry-After must not disable the cap: the next --probe tick would otherwise
+// POST again immediately against an overloaded or billed gateway.
+const defaultRetryAfter = 15 * time.Second
+
+// maxRetryAfter caps engine-supplied Retry-After. A hostile header must not
+// silence probes for hours.
+const maxRetryAfter = 5 * time.Minute
+
 type Request struct {
 	Kind  string // core.KindOllama | openai-compatible kinds
 	Base  string
@@ -83,6 +95,10 @@ func Run(ctx context.Context, r Request) core.ProbeSample {
 	total := time.Since(start)
 	if err != nil {
 		s.Err = err.Error()
+		var se *httpStatusError
+		if errors.As(err, &se) {
+			s.RetryAfter = se.after
+		}
 		return s
 	}
 	// Windows clocks tick coarsely; instant local servers can land the whole
@@ -109,6 +125,11 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 		"model":  r.Model,
 		"prompt": promptText,
 		"stream": true,
+		// Thinking models (deepseek-r1, qwen3, …) generate a reasoning
+		// trace that num_predict does not cap. Turning think off keeps the
+		// probe inside the 32-token budget instead of filling the 30s
+		// timeout (and a billed gateway's invoice).
+		"think": false,
 		"options": map[string]any{
 			"num_predict": probeTokens,
 			"temperature": 0.2,
@@ -142,10 +163,9 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 		if chunk.Error != "" {
 			return 0, 0, ttft, fmt.Errorf("engine error: %s", httperr.Snippet([]byte(chunk.Error)))
 		}
-		if !chunk.Done {
-			if chunk.Response == "" { // keep-alive frames carry no content and are not tokens
-				continue
-			}
+		// Non-stream Ollama answers in one object with both response and
+		// done=true; counting only !Done frames treated that as empty.
+		if chunk.Response != "" {
 			tokens++
 			contentBytes += len(chunk.Response)
 			if ttft == 0 {
@@ -154,11 +174,13 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 			if overBudget(tokens, contentBytes) { // engine ignored num_predict: hang up
 				break
 			}
-			continue
 		}
-		if chunk.EvalCount > 0 {
-			reported = chunk.EvalCount
-			evalDur = time.Duration(chunk.EvalDuration) * time.Nanosecond
+		if chunk.Done {
+			if chunk.EvalCount > 0 {
+				reported = chunk.EvalCount
+				evalDur = time.Duration(chunk.EvalDuration) * time.Nanosecond
+			}
+			break
 		}
 	}
 	if err := streamReadErr(ctx, sc.Err(), tokens); err != nil {
@@ -175,44 +197,37 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 }
 
 func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens int, ttft time.Duration, err error) {
-	body, _ := json.Marshal(map[string]any{
-		"model": r.Model,
-		"messages": []map[string]string{
-			{"role": "user", "content": promptText},
-		},
-		"max_tokens":     probeTokens,
-		"temperature":    0.2,
-		"stream":         true,
-		"stream_options": map[string]bool{"include_usage": true},
-	})
-	resp, err := postJSON(ctx, r.Base+"/v1/chat/completions", body)
+	url := r.Base + "/v1/chat/completions"
+	resp, err := postJSON(ctx, url, openaiBody(r.Model, true))
 	if err != nil {
-		return 0, 0, err
+		var se *httpStatusError
+		// One retry with the legacy field set: stream_options and
+		// max_completion_tokens 400 on older llama.cpp / strict proxies.
+		// 429/503 are not retried — that would be a spend multiplier.
+		if errors.As(err, &se) && (se.status == http.StatusBadRequest || se.status == http.StatusUnprocessableEntity) {
+			resp, err = postJSON(ctx, url, openaiBody(r.Model, false))
+		}
+		if err != nil {
+			return 0, 0, err
+		}
 	}
 	defer resp.Body.Close()
+	if jsonNotStream(resp.Header.Get("Content-Type")) {
+		return readOpenAIJSON(resp.Body, s)
+	}
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 4<<10), probeLineMax)
 	var reported, contentBytes int
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if !strings.HasPrefix(line, "data:") {
+		payload, ok := openaiFrame(line)
+		if !ok {
 			continue
 		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if payload == "[DONE]" {
 			break
 		}
-		var chunk struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-			} `json:"choices"`
-			Usage *struct {
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-			Error json.RawMessage `json:"error"`
-		}
+		var chunk openaiChunk
 		if json.Unmarshal([]byte(payload), &chunk) != nil {
 			continue
 		}
@@ -226,9 +241,13 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 			reported = chunk.Usage.CompletionTokens
 		}
 		for _, c := range chunk.Choices {
-			if c.Delta.Content != "" {
+			text := c.Delta.Content
+			if text == "" {
+				text = c.Message.Content // non-stream object, or NDJSON without data:
+			}
+			if text != "" {
 				tokens++
-				contentBytes += len(c.Delta.Content)
+				contentBytes += len(text)
 				if ttft == 0 {
 					ttft = time.Since(s.At)
 				}
@@ -332,7 +351,135 @@ func postJSON(ctx context.Context, url string, body []byte) (*http.Response, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		return nil, httperr.Status(url, resp)
+		se := &httpStatusError{status: resp.StatusCode, err: httperr.Status(url, resp)}
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			se.after = parseRetryAfter(resp)
+		}
+		return nil, se
 	}
 	return resp, nil
+}
+
+// openaiBody is the chat-completions probe. extra adds fields some older
+// OpenAI-compat servers reject (stream_options, max_completion_tokens);
+// the caller retries once without them on 400/422.
+func openaiBody(model string, extra bool) []byte {
+	m := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": promptText},
+		},
+		"max_tokens":  probeTokens,
+		"n":           1, // some engines default n>1; that is n times the budget
+		"temperature": 0.2,
+		"stream":      true,
+	}
+	if extra {
+		// Newer OpenAI models reject max_tokens; older engines ignore this.
+		m["max_completion_tokens"] = probeTokens
+		m["stream_options"] = map[string]bool{"include_usage": true}
+	}
+	body, _ := json.Marshal(m)
+	return body
+}
+
+type openaiChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+	Usage *struct {
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
+	Error json.RawMessage `json:"error"`
+}
+
+// openaiFrame pulls a JSON payload out of one stream line. SSE `data:` is
+// the OpenAI shape; a bare `{...}` line is what some proxies emit instead.
+func openaiFrame(line string) (payload string, ok bool) {
+	if strings.HasPrefix(line, "data:") {
+		return strings.TrimSpace(strings.TrimPrefix(line, "data:")), true
+	}
+	if strings.HasPrefix(line, "{") {
+		return line, true
+	}
+	return "", false
+}
+
+func jsonNotStream(ct string) bool {
+	ct = strings.ToLower(ct)
+	if strings.Contains(ct, "event-stream") || strings.Contains(ct, "ndjson") {
+		return false
+	}
+	return strings.Contains(ct, "json")
+}
+
+func readOpenAIJSON(body io.Reader, s *core.ProbeSample) (tokens int, ttft time.Duration, err error) {
+	b, err := io.ReadAll(io.LimitReader(body, probeLineMax))
+	if err != nil {
+		return 0, 0, err
+	}
+	var chunk openaiChunk
+	if json.Unmarshal(b, &chunk) != nil {
+		return 0, 0, fmt.Errorf("empty stream")
+	}
+	if msg := sseErrorMessage(chunk.Error); msg != "" {
+		return 0, 0, fmt.Errorf("engine error: %s", msg)
+	}
+	var reported, n int
+	if chunk.Usage != nil && chunk.Usage.CompletionTokens > 0 {
+		reported = chunk.Usage.CompletionTokens
+	}
+	for _, c := range chunk.Choices {
+		text := c.Message.Content
+		if text == "" {
+			text = c.Delta.Content
+		}
+		if text != "" {
+			n++
+		}
+	}
+	tokens, _ = resolveTokens(n, reported)
+	if tokens == 0 {
+		return 0, 0, fmt.Errorf("empty stream")
+	}
+	ttft = time.Since(s.At)
+	return tokens, ttft, nil
+}
+
+type httpStatusError struct {
+	status int
+	after  time.Duration
+	err    error
+}
+
+func (e *httpStatusError) Error() string { return e.err.Error() }
+func (e *httpStatusError) Unwrap() error { return e.err }
+
+func parseRetryAfter(resp *http.Response) time.Duration {
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return defaultRetryAfter
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		return clampRetryAfter(time.Duration(secs) * time.Second)
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return clampRetryAfter(time.Until(t))
+	}
+	return defaultRetryAfter
+}
+
+func clampRetryAfter(d time.Duration) time.Duration {
+	if d < defaultRetryAfter {
+		return defaultRetryAfter
+	}
+	if d > maxRetryAfter {
+		return maxRetryAfter
+	}
+	return d
 }
