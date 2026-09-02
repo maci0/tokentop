@@ -575,6 +575,78 @@ func TestReportStampsWithInjectedClock(t *testing.T) {
 	}
 }
 
+// idRecorder drops a repeat of an id still in the list, matching the
+// collector's window. Agentwatch events used to have no id, so a retried
+// report of the same sample (final Poll after Run's last callback, a
+// tracker that forgot its baseline) double-counted.
+type idRecorder struct {
+	mu     sync.Mutex
+	events []core.AgentEvent
+}
+
+func (r *idRecorder) RecordAgent(ev core.AgentEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if core.HasAgentID(r.events, ev.ID) {
+		return
+	}
+	r.events = append(r.events, ev)
+}
+
+func (r *idRecorder) all() []core.AgentEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]core.AgentEvent(nil), r.events...)
+}
+
+func TestReplayOfSameSampleKeptOnce(t *testing.T) {
+	work, transcript := claudeHome(t)
+	rec := &idRecorder{}
+	w := New(rec, nil)
+	tr := &tracked{
+		proc:  agentusage.Process{PID: 1, Tool: "claude", Dir: work, Started: time.Unix(100, 0)},
+		watch: agentusage.Watch("claude", work, time.Now()),
+	}
+	if tr.watch == nil {
+		t.Fatal("no claude adapter")
+	}
+	w.tracked[tr.proc.PID] = tr
+
+	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 80))
+	w.read()
+	evs := rec.all()
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1: %+v", len(evs), evs)
+	}
+	id := evs[0].ID
+	if !strings.HasPrefix(id, "aw:1:") {
+		t.Fatalf("id = %q, want aw:1:…", id)
+	}
+
+	// The delta guard would also skip this if last were kept; clearing it
+	// is the replay: same sample, same instant, a second RecordAgent.
+	tr.last = agentusage.Sample{}
+	w.read()
+	if got := rec.all(); len(got) != 1 {
+		t.Fatalf("replay recorded %d events, want 1: %+v", len(got), got)
+	}
+}
+
+func TestSampleIDDistinguishesProcessAndInstant(t *testing.T) {
+	at := time.Unix(50, 7)
+	a := agentusage.Process{PID: 1, Started: time.Unix(10, 0)}
+	b := agentusage.Process{PID: 2, Started: time.Unix(10, 0)}
+	if sampleID(a, at) == sampleID(b, at) {
+		t.Fatal("different PIDs produced the same id")
+	}
+	if sampleID(a, at) == sampleID(a, at.Add(time.Nanosecond)) {
+		t.Fatal("different instants produced the same id")
+	}
+	if sampleID(a, at) != sampleID(a, at) {
+		t.Fatal("same process and instant must be stable")
+	}
+}
+
 // Equal-timestamp reports must follow PID order, not map iteration, so a
 // replay of the same process set emits events in the same sequence.
 func TestTrackedListOrdersByPID(t *testing.T) {

@@ -404,6 +404,7 @@ func (w *Watcher) report(t *tracked, cur agentusage.Sample) {
 	}
 	rec.RecordAgent(core.AgentEvent{
 		At:             w.instant(),
+		ID:             sampleID(proc, cur.At),
 		Agent:          proc.Tool,
 		Kind:           core.AgentKindTurn,
 		PromptTokens:   int64(max(prompt, 0)),
@@ -412,6 +413,15 @@ func (w *Watcher) report(t *tracked, cur agentusage.Sample) {
 		ViaEngine:      via,
 		Note:           note(proc, think, via),
 	})
+}
+
+// sampleID is stable for one process at one sample instant, so a retried
+// report of the same reading (final Poll after Run's last callback, a
+// tracker that forgot its baseline) is ignored by the collector's id window.
+func sampleID(proc agentusage.Process, at time.Time) string {
+	return "aw:" + strconv.Itoa(proc.PID) + ":" +
+		strconv.FormatInt(proc.Started.UnixNano(), 10) + ":" +
+		strconv.FormatInt(at.UnixNano(), 10)
 }
 
 // note carries what the event cannot: where the agent is working, how much of

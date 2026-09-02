@@ -48,7 +48,7 @@ func postBody(t *testing.T, url, body string) (int, string) {
 
 // startIngest serves on an ephemeral port backed by rec and closes it at
 // cleanup.
-func startIngest(t *testing.T, rec *memRecorder) *Server {
+func startIngest(t *testing.T, rec Recorder) *Server {
 	t.Helper()
 	return startIngestLog(t, rec, slog.New(slog.DiscardHandler))
 }
@@ -106,6 +106,128 @@ func TestIngestForwardsId(t *testing.T) {
 	awaitEvents(t, rec, 1)
 	if rec.evs[0].ID != "turn-1" {
 		t.Errorf("id = %q, want turn-1", rec.evs[0].ID)
+	}
+}
+
+// onceRecorder matches the collector's id window: a non-empty id already
+// seen is ignored. Used to prove ingest's derived ids make a retried POST
+// a no-op the way a body id already does.
+type onceRecorder struct{ evs []core.AgentEvent }
+
+func (m *onceRecorder) RecordAgent(ev core.AgentEvent) {
+	if core.HasAgentID(m.evs, ev.ID) {
+		return
+	}
+	m.evs = append(m.evs, ev)
+}
+
+func postWithHeader(t *testing.T, url, body, header, value string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if header != "" {
+		req.Header.Set(header, value)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+// A retried POST (lost 202) with no per-event id still collapses when the
+// sender supplies Idempotency-Key: ingest fills the id the collector ignores.
+func TestIngestIdempotencyKeyFillsMissingID(t *testing.T) {
+	rec := &onceRecorder{}
+	s := startIngest(t, rec)
+	url := "http://" + s.Addr() + "/v1/events"
+	body := `{"agent":"coder","output_tokens":50}` + "\n" +
+		`{"agent":"coder","output_tokens":10}`
+
+	if code := postWithHeader(t, url, body, "Idempotency-Key", "harness-batch-7"); code != http.StatusAccepted {
+		t.Fatalf("first status = %d", code)
+	}
+	if code := postWithHeader(t, url, body, "Idempotency-Key", "harness-batch-7"); code != http.StatusAccepted {
+		t.Fatalf("retry status = %d", code)
+	}
+	if len(rec.evs) != 2 {
+		t.Fatalf("events = %d, want 2 (one per line, retry ignored)", len(rec.evs))
+	}
+	if rec.evs[0].ID != "harness-batch-7:1" || rec.evs[1].ID != "harness-batch-7:2" {
+		t.Errorf("ids = %q, %q", rec.evs[0].ID, rec.evs[1].ID)
+	}
+	if rec.evs[0].OutputTokens != 50 || rec.evs[1].OutputTokens != 10 {
+		t.Errorf("tokens = %+v %+v", rec.evs[0], rec.evs[1])
+	}
+
+	// A different key is a different POST.
+	if code := postWithHeader(t, url, body, "Idempotency-Key", "harness-batch-8"); code != http.StatusAccepted {
+		t.Fatalf("other key status = %d", code)
+	}
+	if len(rec.evs) != 4 {
+		t.Fatalf("events after a new key = %d, want 4", len(rec.evs))
+	}
+}
+
+// Body id is the event's own identity; the POST-level key must not replace it.
+func TestIngestBodyIDWinsOverIdempotencyKey(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	code := postWithHeader(t, "http://"+s.Addr()+"/v1/events",
+		`{"id":"turn-9","agent":"coder","output_tokens":1}`,
+		"Idempotency-Key", "post-1")
+	if code != http.StatusAccepted {
+		t.Fatalf("status = %d", code)
+	}
+	awaitEvents(t, rec, 1)
+	if rec.evs[0].ID != "turn-9" {
+		t.Errorf("id = %q, want turn-9", rec.evs[0].ID)
+	}
+}
+
+// A server-minted X-Request-Id is per attempt. Using it as an event id would
+// make every retry look new, and a harness that reuses one correlation id
+// across turns would collapse them.
+func TestIngestDoesNotMintEventIDFromRequestID(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	if code := post(t, "http://"+s.Addr()+"/v1/events", `{"agent":"x","output_tokens":1}`); code != http.StatusAccepted {
+		t.Fatalf("status = %d", code)
+	}
+	awaitEvents(t, rec, 1)
+	if rec.evs[0].ID != "" {
+		t.Fatalf("server-minted request id became event id %q", rec.evs[0].ID)
+	}
+
+	code := postWithHeader(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"x","output_tokens":2}`, "X-Request-Id", "always-the-same")
+	if code != http.StatusAccepted {
+		t.Fatalf("status = %d", code)
+	}
+	awaitEvents(t, rec, 2)
+	if rec.evs[1].ID != "" {
+		t.Fatalf("X-Request-Id became event id %q", rec.evs[1].ID)
+	}
+}
+
+func TestDerivedEventIDFitsCap(t *testing.T) {
+	key := strings.Repeat("k", 200)
+	id := derivedEventID(key, 1)
+	if n := utf8.RuneCountInString(id); n > 128 {
+		t.Fatalf("id = %d runes, cap 128", n)
+	}
+	if !strings.HasSuffix(id, ":1") {
+		t.Fatalf("id %q lost its sequence suffix", id)
+	}
+	if derivedEventID("", 1) != "" || derivedEventID("k", 0) != "" {
+		t.Fatal("empty key or non-positive seq must not mint an id")
 	}
 }
 
@@ -929,7 +1051,7 @@ func captureLogger() (*slog.Logger, *bytes.Buffer) {
 	return lg, &buf
 }
 
-func startIngestLog(t *testing.T, rec *memRecorder, lg *slog.Logger) *Server {
+func startIngestLog(t *testing.T, rec Recorder, lg *slog.Logger) *Server {
 	t.Helper()
 	s, err := newServer("127.0.0.1:0", rec, lg)
 	if err != nil {

@@ -116,6 +116,29 @@ func incomingRequestID(r *http.Request) string {
 	return rand.Text()
 }
 
+// clientEventKey is the caller-supplied idempotency token for this POST, if
+// any. Only Idempotency-Key counts: X-Request-Id is a correlation id, often
+// reused across distinct sends or minted per attempt, so treating it as an
+// event id would collapse unrelated turns or fail to collapse retries.
+func clientEventKey(r *http.Request) string {
+	return logField(r.Header.Get("Idempotency-Key"), 128)
+}
+
+// derivedEventID maps one line of a POST onto a stable event id so a replay
+// of the same stream (lost 202, retry after a mid-stream 400) lands on the
+// same keys the collector already ignores. seq is 1-based within the POST.
+func derivedEventID(key string, seq int) string {
+	if key == "" || seq < 1 {
+		return ""
+	}
+	suffix := ":" + strconv.Itoa(seq)
+	head := clampField(key, 128-utf8.RuneCountInString(suffix))
+	if head == "" {
+		return ""
+	}
+	return head + suffix
+}
+
 func requestID(r *http.Request) string {
 	if v, ok := r.Context().Value(ctxReqID{}).(string); ok && v != "" {
 		return v
@@ -285,6 +308,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	defer r.Body.Close()
 	n := 0
+	replayKey := clientEventKey(r)
 	// fail reports a stream-level error. Events decode-and-record one by one,
 	// so everything before the failing line is already in the feed; saying so
 	// lets senders resume after the failure instead of replaying the whole
@@ -348,6 +372,12 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 			ev.At = now
 		} else if ev.At.Sub(now) > maxEventSkew {
 			ev.At = now
+		}
+		// Body id wins: that is the event's own identity. When the sender
+		// omitted one, the POST-level key plus this line's index stands in,
+		// so retrying the whole request does not double-count.
+		if ev.ID == "" {
+			ev.ID = derivedEventID(replayKey, n+1)
 		}
 		s.rec.RecordAgent(ev)
 		n++

@@ -10,6 +10,17 @@ support channel (see SECURITY.md).
 
 ## [Unreleased]
 
+### Added
+
+- Ingest `POST /v1/events` honors `Idempotency-Key`: when an event omits
+  `id`, the key plus the line's index is used, so a retried POST of the same
+  stream is ignored instead of double-counted.
+
+### Changed
+
+- The agent event ring keeps 512 events so several agents over the 30s rate
+  window are not evicted by a shared 64-slot cap.
+
 ### Fixed
 
 - `agentusage` counts a thinking-only reading (opencode SQLite, and Claude /
@@ -19,11 +30,8 @@ support channel (see SECURITY.md).
   `toktop --help`.
 - `toktop --help update` matches `toktop help update`; extra arguments to
   `--version` are a usage error, like `toktop version`.
-
-### Changed
-
-- The agent event ring keeps 512 events so several agents over the 30s rate
-  window are not evicted by a shared 64-slot cap.
+- `--agents` readings carry a stable event id, so a retried report of the
+  same sample is not added twice.
 
 ## [0.7.0] - 2026-08-30
 

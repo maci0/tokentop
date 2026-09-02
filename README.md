@@ -143,7 +143,8 @@ func main() {
   TTFT and decode speed per engine.
 - **Agent feed** - any harness can POST usage events:
   ```
-  curl -X POST localhost:8420/v1/events -d \
+  curl -X POST localhost:8420/v1/events \
+    -H 'Idempotency-Key: turn-1' -d \
     '{"agent":"coder","kind":"tool","prompt_tokens":4200,"output_tokens":310,"thinking_tokens":40,"note":"shell(git status)"}'
   ```
   `--agents` also fills this from local session logs. Per-agent rows show
@@ -177,7 +178,7 @@ Event fields are all optional; anything omitted gets the default:
 
 | field | type | default | notes |
 |---|---|---|---|
-| `id` | string | - | caller-chosen key, capped at 128 runes; a repeat of a key still in the retained feed (last 64 events) is ignored |
+| `id` | string | - | caller-chosen key, capped at 128 runes; a repeat of a key still in the retained feed (last 64 events) is ignored. When omitted, a request `Idempotency-Key` header is used (`key:1`, `key:2`, and so on per line in the POST) |
 | `ts` | RFC 3339 string | arrival instant | offset-less stamps decode as UTC; a space instead of `T` is accepted |
 | `agent` | string | `anonymous` | capped at 64 runes |
 | `model` | string | - | capped at 128 runes |
@@ -204,7 +205,8 @@ the sender set one.
 Streams are recorded line by line: if a later line fails, events before it
 stay recorded and the error states how many. Retrying a stream (or a
 successful POST whose 202 was lost) is safe when each event carries a stable
-`id`; without one, replaying the kept lines would duplicate them.
+`id`, or when the POST carries `Idempotency-Key` (filled in for events that
+omit `id`). Without either, replaying the kept lines would duplicate them.
 
 ## Zero vendor libraries
 
