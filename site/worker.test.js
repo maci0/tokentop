@@ -4,6 +4,8 @@
 // Run with `bun test site/` from the repository root (no other deps needed).
 
 import { expect, test } from "bun:test";
+import { statSync } from "node:fs";
+import { join } from "node:path";
 
 import worker from "./worker.js";
 
@@ -160,7 +162,7 @@ test("every page answer carries the security headers, not only revalidations", a
 
 const IMAGE_CACHE = "public, max-age=86400, stale-while-revalidate=604800";
 
-function assetsEnv(body = new Uint8Array([1, 2, 3, 4])) {
+function staticAssets(body = new Uint8Array([1, 2, 3, 4])) {
   return {
     ASSETS: {
       fetch: () =>
@@ -174,7 +176,7 @@ function assetsEnv(body = new Uint8Array([1, 2, 3, 4])) {
 
 test("dashboard images take cache and security headers from the worker", async () => {
   const body = new Uint8Array([1, 2, 3, 4]);
-  const env = assetsEnv(body);
+  const env = staticAssets(body);
   for (const path of ["/dashboard.png", "/dashboard.webp"]) {
     const res = await worker.fetch(new Request(ORIGIN + path), env);
     expect(res.status).toBe(200);
@@ -188,7 +190,7 @@ test("dashboard images take cache and security headers from the worker", async (
 });
 
 test("dashboard image HEAD is bodyless with the same headers as GET", async () => {
-  const env = assetsEnv();
+  const env = staticAssets();
   const get = await worker.fetch(new Request(ORIGIN + "/dashboard.png"), env);
   const head = await worker.fetch(
     new Request(ORIGIN + "/dashboard.png", { method: "HEAD" }),
@@ -231,9 +233,16 @@ test("served HTML does not carry source comments", () => {
 
 test("hero is the captured dashboard, not an ASCII stand-in", () => {
   expect(identityBody.includes("<picture>")).toBe(true);
-  expect(identityBody.includes("/dashboard.webp")).toBe(true);
+  expect(identityBody.includes('type="image/avif"')).toBe(true);
+  expect(identityBody.includes("/dashboard-1280.avif 1280w, /dashboard.avif 1920w")).toBe(
+    true,
+  );
+  expect(identityBody.includes("/dashboard-1280.webp 1280w, /dashboard.webp 1920w")).toBe(
+    true,
+  );
   expect(identityBody.includes('src="/dashboard.png"')).toBe(true);
   expect(identityBody.includes("https://toktop.ai/dashboard.png")).toBe(true);
+  expect(identityBody.includes("decoding=")).toBe(false);
 });
 
 test("section titles are sentence case on the body scale, not marketing labels", () => {
@@ -256,10 +265,140 @@ test("recorded transfer sizes stay inside the initial congestion window", async 
   const brotli = new Uint8Array(
     await (await call({ "accept-encoding": "br" })).arrayBuffer(),
   ).byteLength;
-  expect(identity).toBe(6399);
-  expect(gzipped).toBe(2674);
-  expect(brotli).toBe(2162);
+  expect(identity).toBe(6588);
+  expect(gzipped).toBe(2715);
+  expect(brotli).toBe(2197);
   expect(identity).toBeLessThan(budget);
   expect(gzipped).toBeLessThan(budget);
   expect(brotli).toBeLessThan(budget);
+});
+
+const PUBLIC = join(import.meta.dir, "public");
+const assetBytes = (name) => statSync(join(PUBLIC, name)).size;
+
+test("hero AVIF is smaller than WebP at each width, and 1280 is smaller than 1920", () => {
+  expect(assetBytes("dashboard.avif")).toBeLessThan(assetBytes("dashboard.webp"));
+  expect(assetBytes("dashboard-1280.avif")).toBeLessThan(assetBytes("dashboard-1280.webp"));
+  expect(assetBytes("dashboard-1280.avif")).toBeLessThan(assetBytes("dashboard.avif"));
+  expect(assetBytes("dashboard-1280.webp")).toBeLessThan(assetBytes("dashboard.webp"));
+  expect(assetBytes("dashboard.avif")).toBeLessThan(80_000);
+  expect(assetBytes("dashboard-1280.avif")).toBeLessThan(50_000);
+  expect(assetBytes("dashboard-1280.webp")).toBeLessThan(100_000);
+});
+
+function assetsEnv(bodies) {
+  return {
+    ASSETS: {
+      fetch(request) {
+        const url = new URL(request.url);
+        const body = bodies[url.pathname];
+        if (body == null) {
+          return Promise.resolve(new Response("missing", { status: 404 }));
+        }
+        const headers = {
+          "content-type": "application/octet-stream",
+          etag: `"${url.pathname}"`,
+        };
+        if (request.headers.get("accept-encoding")) {
+          return Promise.resolve(
+            new Response("compressed-by-mistake", {
+              status: 500,
+              headers,
+            }),
+          );
+        }
+        if (request.method === "HEAD") {
+          return Promise.resolve(new Response(null, { status: 200, headers }));
+        }
+        return Promise.resolve(new Response(body, { status: 200, headers }));
+      },
+    },
+  };
+}
+
+const imageCall = (path, headers = {}, init = {}) =>
+  worker.fetch(
+    new Request(ORIGIN + path, {
+      method: init.method ?? "GET",
+      headers,
+    }),
+    init.env,
+  );
+
+test("image paths 404 without ASSETS instead of falling through to the page", async () => {
+  const res = await imageCall("/dashboard.avif");
+  expect(res.status).toBe(404);
+  expect(await res.text()).not.toBe(identityBody);
+  for (const name of SECURITY_HEADER_NAMES) {
+    expect(res.headers.get(name)).not.toBeNull();
+  }
+});
+
+test("image paths are served from ASSETS with cache and security headers", async () => {
+  const env = assetsEnv({ "/dashboard.avif": "avif-bytes" });
+  const res = await imageCall("/dashboard.avif", { "accept-encoding": "gzip, br" }, { env });
+  expect(res.status).toBe(200);
+  expect(await res.text()).toBe("avif-bytes");
+  expect(res.headers.get("cache-control")).toBe(
+    "public, max-age=86400, stale-while-revalidate=604800",
+  );
+  expect(res.headers.get("etag")).toBe('"/dashboard.avif"');
+  for (const name of SECURITY_HEADER_NAMES) {
+    expect(res.headers.get(name)).not.toBeNull();
+  }
+});
+
+test("every dashboard URL in the HTML is served as an image asset", async () => {
+  const paths = [
+    ...new Set(
+      [...identityBody.matchAll(/\/dashboard[-.\w]+/g)].map((m) => m[0]),
+    ),
+  ];
+  expect(paths.length).toBeGreaterThanOrEqual(5);
+  const env = assetsEnv(Object.fromEntries(paths.map((p) => [p, p])));
+  for (const path of paths) {
+    const res = await imageCall(path, {}, { env });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(path);
+  }
+});
+
+test("image revalidation forwards If-None-Match without Accept-Encoding", async () => {
+  const env = {
+    ASSETS: {
+      fetch(request) {
+        if (request.headers.get("accept-encoding")) {
+          return Promise.resolve(new Response("compressed-by-mistake", { status: 500 }));
+        }
+        if (request.headers.get("if-none-match") === '"abc"') {
+          return Promise.resolve(
+            new Response(null, { status: 304, headers: { etag: '"abc"' } }),
+          );
+        }
+        return Promise.resolve(
+          new Response("full", { status: 200, headers: { etag: '"abc"' } }),
+        );
+      },
+    },
+  };
+  const res = await imageCall(
+    "/dashboard.png",
+    { "if-none-match": '"abc"', "accept-encoding": "gzip" },
+    { env },
+  );
+  expect(res.status).toBe(304);
+  expect(res.headers.get("etag")).toBe('"abc"');
+  expect(await res.text()).toBe("");
+});
+
+test("image HEAD matches GET headers with no body, POST is 405", async () => {
+  const env = assetsEnv({ "/dashboard.webp": "webp-bytes" });
+  const get = await imageCall("/dashboard.webp", {}, { env });
+  const head = await imageCall("/dashboard.webp", {}, { method: "HEAD", env });
+  expect(head.status).toBe(200);
+  expect(head.headers.get("cache-control")).toBe(get.headers.get("cache-control"));
+  expect((await head.arrayBuffer()).byteLength).toBe(0);
+  const posted = await imageCall("/dashboard.webp", {}, { method: "POST", env });
+  expect(posted.status).toBe(405);
+  expect(posted.headers.get("allow")).toBe("GET, HEAD");
 });

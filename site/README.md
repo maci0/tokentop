@@ -32,11 +32,13 @@ so caches never hand a compressed body to a client that cannot decode it.
 ## Performance budget
 
 One request for the page, no JavaScript, no webfonts, inline CSS only. The
-hero is the real dashboard capture (WebP ~140 KB, PNG fallback), served from
+hero is the real dashboard capture: AVIF (~67 KB at 1920px, ~38 KB at 1280px)
+then WebP (~143 KB / ~79 KB) then the PNG share-card original. `srcset` picks
+1280w for phones and 1x desktops; 1920w is the 2x desktop slot. Served from
 this Worker so a deploy updates share cards and the page together.
 `wrangler.jsonc` sets `run_worker_first` so those image paths hit the Worker
 (cache headers, HSTS, 405s) instead of Cloudflare's asset pipeline. Measured
-against the current source: 6,399 bytes identity / 2,674 gzip / 2,162 brotli
+against the current source: 6,588 bytes identity / 2,715 gzip / 2,197 brotli
 for the HTML, still inside the ~14 KB initial congestion window. The budget
 is pinned by a test, so drift fails `bun test site/`; numbers above are
 re-measurable with it:

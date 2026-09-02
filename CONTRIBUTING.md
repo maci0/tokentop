@@ -72,10 +72,26 @@ pane in this checkout: a detached session otherwise starts wherever the tmux
 server did, and `./toktop` is not there.
 
 The image's pixel size is repeated in `site/worker.js` as the `og:image`
-dimensions. Copy the PNG into `site/public/dashboard.png` and rebuild
-`site/public/dashboard.webp` (`magick docs/images/dashboard.png -strip
--resize 1920x -quality 82 site/public/dashboard.webp`) so the live page
-and share cards pick up the same frame.
+dimensions. Copy the PNG into `site/public/dashboard.png` and rebuild the
+hero variants the page actually sends:
+
+```
+magick docs/images/dashboard.png -strip -resize 1920x -quality 82 \
+  site/public/dashboard.webp
+magick docs/images/dashboard.png -strip -resize 1280x -quality 82 \
+  site/public/dashboard-1280.webp
+magick docs/images/dashboard.png -strip -resize 1920x .scratch/hero-1920.png
+magick docs/images/dashboard.png -strip -resize 1280x .scratch/hero-1280.png
+avifenc -q 50 -s 2 -y 444 --ignore-exif --ignore-xmp \
+  .scratch/hero-1920.png site/public/dashboard.avif
+avifenc -q 50 -s 2 -y 444 --ignore-exif --ignore-xmp \
+  .scratch/hero-1280.png site/public/dashboard-1280.avif
+```
+
+AVIF is what browsers that speak it download (about half the WebP); 1280w
+covers phones and 1x desktops. The PNG stays at capture resolution for
+share cards. `bun test site/` pins the HTML transfer sizes and the AVIF/WebP
+byte ceilings, so a recapture that blows the budget fails there.
 
 ## Make targets
 

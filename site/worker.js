@@ -10,6 +10,13 @@ function htmlForWire(source) {
   return source.replace(/<!--[\s\S]*?-->/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
+// 1280w covers 3x phones and 1x desktop; 1920w is the 2x desktop slot.
+// sizes matches the .shot column: full viewport under 640px, 76rem max otherwise.
+// The img omits decoding=async so the browser does not postpone the LCP decode.
+const HERO_SIZES = "(max-width: 640px) 100vw, 76rem";
+const HERO_AVIF_SRCSET = "/dashboard-1280.avif 1280w, /dashboard.avif 1920w";
+const HERO_WEBP_SRCSET = "/dashboard-1280.webp 1280w, /dashboard.webp 1920w";
+
 const HTML = htmlForWire(`<!doctype html>
 <html lang="en">
 <head>
@@ -122,10 +129,11 @@ const HTML = htmlForWire(`<!doctype html>
   <figure class="shot">
     <figcaption><span class="dim">$</span> toktop --demo</figcaption>
     <picture>
-      <source type="image/webp" srcset="/dashboard.webp">
+      <source type="image/avif" srcset="${HERO_AVIF_SRCSET}" sizes="${HERO_SIZES}">
+      <source type="image/webp" srcset="${HERO_WEBP_SRCSET}" sizes="${HERO_SIZES}">
       <img src="/dashboard.png" width="1920" height="1126"
            alt="toktop dashboard: five local engines with throughput and KV-cache pressure, GPU vitals, two answered probes, and three coding agents"
-           decoding="async" fetchpriority="high">
+           fetchpriority="high">
     </picture>
   </figure>
 
@@ -320,20 +328,47 @@ const PAGE_HEADERS = {
   ...SECURITY_HEADERS,
 };
 
-const IMAGE_PATHS = new Set(["/dashboard.png", "/dashboard.webp"]);
+function srcsetPaths(srcset) {
+  return srcset.split(",").map((part) => part.trim().split(/\s+/)[0]);
+}
+
+const IMAGE_PATHS = new Set([
+  "/dashboard.png",
+  ...srcsetPaths(HERO_AVIF_SRCSET),
+  ...srcsetPaths(HERO_WEBP_SRCSET),
+]);
 const IMAGE_CACHE = "public, max-age=86400, stale-while-revalidate=604800";
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (IMAGE_PATHS.has(url.pathname) && env?.ASSETS) {
+    if (IMAGE_PATHS.has(url.pathname)) {
       if (request.method !== "GET" && request.method !== "HEAD") {
         return new Response("method not allowed", {
           status: 405,
           headers: { allow: "GET, HEAD", ...SECURITY_HEADERS },
         });
       }
-      const asset = await env.ASSETS.fetch(request);
+      if (!env?.ASSETS) {
+        return new Response("not found", {
+          status: 404,
+          headers: SECURITY_HEADERS,
+        });
+      }
+      // Images are already compressed. Clone-with-headers keeps
+      // Accept-Encoding (a forbidden header), so this is a new request
+      // that only forwards revalidation fields.
+      const assetHeaders = new Headers();
+      const noneMatch = request.headers.get("if-none-match");
+      if (noneMatch) assetHeaders.set("if-none-match", noneMatch);
+      const modifiedSince = request.headers.get("if-modified-since");
+      if (modifiedSince) assetHeaders.set("if-modified-since", modifiedSince);
+      const asset = await env.ASSETS.fetch(
+        new Request(request.url, {
+          method: request.method,
+          headers: assetHeaders,
+        }),
+      );
       const headers = new Headers(asset.headers);
       for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
         headers.set(name, value);
