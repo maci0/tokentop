@@ -296,6 +296,35 @@ func TestGaugeBar(t *testing.T) {
 	}
 }
 
+func TestProcLineVRAMSumSaturates(t *testing.T) {
+	got := procLine(core.ProviderSnapshot{
+		Models: []core.ModelInfo{
+			{Name: "a", SizeVRAM: ^uint64(0)},
+			{Name: "b", SizeVRAM: 1 << 30},
+		},
+	})
+	// MaxUint64 + 1GiB wraps to ~1GiB. Saturated sum formats as a huge GiB figure.
+	if strings.Contains(got, "MiB") {
+		t.Fatalf("VRAM sum wrapped to a small readout: %q", got)
+	}
+	if !strings.Contains(got, "GiB") {
+		t.Fatalf("expected saturated GiB readout, got %q", got)
+	}
+}
+
+func TestProcLineCtxEstimateSaturates(t *testing.T) {
+	got := procLine(core.ProviderSnapshot{
+		Models: []core.ModelInfo{{Name: "a", CtxMax: 1 << 63}},
+	})
+	// 2^63 * 2 wraps to 0, which humanBytesShort prints as "0M".
+	if strings.Contains(got, "0M") {
+		t.Fatalf("CtxMax*2 wrapped to zero: %q", got)
+	}
+	if !strings.Contains(got, "ctx") {
+		t.Fatalf("expected ctx estimate, got %q", got)
+	}
+}
+
 // BrailleChart fills a fixed pane: a degenerate size is empty, and a real
 // size occupies exactly h rows of w cells even when the series is all zeros.
 func TestBrailleChartPane(t *testing.T) {

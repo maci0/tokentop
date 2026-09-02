@@ -175,5 +175,12 @@ func asInt(v any) (int, bool) {
 	if !(n >= 1) || n > float64(maxSaneTokens) {
 		return 0, false
 	}
-	return int(n), true
+	// JSON numbers are float64. A fractional remainder (1.5, 99.9) would
+	// become 1 or 99 through a truncating conversion; ingest already
+	// refuses those, and a transcript line is the same kind of counter.
+	i := int(n)
+	if n != float64(i) {
+		return 0, false
+	}
+	return i, true
 }

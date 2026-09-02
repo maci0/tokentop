@@ -249,7 +249,6 @@ func agentDenseHist(events []core.AgentEvent, out bool, end time.Time, n int, ca
 	grid := make([]float64, n)
 	start := end.Add(-time.Duration(n-1) * cadence)
 	sec := cadence.Seconds()
-	half := cadence / 2
 	for _, ev := range events {
 		if ev.ViaEngine != "" {
 			continue
@@ -261,14 +260,29 @@ func agentDenseHist(events []core.AgentEvent, out bool, end time.Time, n int, ca
 		if tok <= 0 {
 			continue
 		}
-		d := ev.At.Sub(start)
-		idx := int((d + half) / cadence)
+		idx := nearestCadenceIndex(ev.At.Sub(start), cadence)
 		if idx < 0 || idx >= n {
 			continue
 		}
 		grid[idx] += float64(tok) / sec
 	}
 	return grid
+}
+
+// nearestCadenceIndex is the cadence-spaced slot nearest to offset d from the
+// series origin. Go divides durations toward zero, so a negative remainder
+// would otherwise land on the next slot up: an event 0.6s before the window
+// start at 1s cadence would sit in column 0 instead of being out of range.
+func nearestCadenceIndex(d, cadence time.Duration) int {
+	if cadence <= 0 {
+		return 0
+	}
+	shifted := d + cadence/2
+	q := shifted / cadence
+	if shifted%cadence < 0 {
+		q--
+	}
+	return int(q)
 }
 
 func agentHistEnd(events []core.AgentEvent) time.Time {

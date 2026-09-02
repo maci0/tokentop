@@ -846,13 +846,13 @@ func procLine(p core.ProviderSnapshot) string {
 	var parts []string
 	var bytes uint64
 	for _, mm := range p.Models {
-		bytes += mm.SizeVRAM
+		bytes = satAddU64(bytes, mm.SizeVRAM)
 	}
 	if bytes > 0 {
 		parts = append(parts, "mem "+humanBytes(bytes))
 	} else if len(p.Models) > 0 && p.Models[0].CtxMax > 0 {
 		// CtxMax is a token count; ~2 bytes/token turns it into a KV-byte estimate.
-		parts = append(parts, "ctx "+humanBytesShort(p.Models[0].CtxMax*2)+"tok")
+		parts = append(parts, "ctx "+humanBytesShort(satMulU64(p.Models[0].CtxMax, 2))+"tok")
 	}
 	if p.ProcRSS > 0 {
 		rss := "rss " + humanBytesShort(p.ProcRSS)
@@ -868,6 +868,24 @@ func procLine(p core.ProviderSnapshot) string {
 		return ""
 	}
 	return styleDim.Render(strings.Join(parts, " · "))
+}
+
+// satAddU64 adds saturating at MaxUint64: a wrapped sum of two engine-reported
+// VRAM sizes would read as a small allocation instead of "full".
+func satAddU64(a, b uint64) uint64 {
+	if b > ^uint64(0)-a {
+		return ^uint64(0)
+	}
+	return a + b
+}
+
+// satMulU64 multiplies saturating at MaxUint64. CtxMax*2 as a KV-byte estimate
+// wraps to 0 at 2^63 tokens, which would print as "ctx 0Mtok".
+func satMulU64(a, b uint64) uint64 {
+	if a != 0 && b > ^uint64(0)/a {
+		return ^uint64(0)
+	}
+	return a * b
 }
 
 func (m Model) probesTitle() string {
@@ -1338,7 +1356,7 @@ func aggHist(s core.Snapshot, out bool, w int, cadence time.Duration) []float64 
 	if aend := agentHistEnd(s.Agents); aend.After(end) {
 		end = aend
 	}
-	if end.IsZero() || w <= 0 {
+	if end.IsZero() || w <= 0 || cadence <= 0 {
 		return nil
 	}
 	grid := make([]float64, w)
@@ -1348,8 +1366,7 @@ func aggHist(s core.Snapshot, out bool, w int, cadence time.Duration) []float64 
 		ts := start.Add(time.Duration(j) * cadence)
 		var sum float64
 		for _, sr := range srcs {
-			d := ts.Sub(sr.t0)
-			idx := int((d + half) / cadence) // nearest sample
+			idx := nearestCadenceIndex(ts.Sub(sr.t0), cadence)
 			if idx < 0 || idx >= len(sr.vals) {
 				continue
 			}

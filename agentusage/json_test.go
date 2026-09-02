@@ -241,6 +241,28 @@ func TestAbsurdCountersReportNothing(t *testing.T) {
 	}
 }
 
+func TestFractionalCounterIsAbsent(t *testing.T) {
+	// JSON numbers are float64. 1.5 would become 1 through a truncating
+	// conversion, under-counting the line. Whole values still count.
+	for _, line := range []string{
+		`{"usage":{"output_tokens":1.5}}`,
+		`{"usage":{"output_tokens":99.9}}`,
+		`{"usage":{"input_tokens":2.1}}`,
+	} {
+		ev, ok := parseJSON([]byte(line))
+		if !ok {
+			t.Fatalf("%s should parse as JSON", line)
+		}
+		if ev.Usage.Has() {
+			t.Fatalf("%s truncated a fractional counter to %+v", line, ev.Usage)
+		}
+	}
+	ev, ok := parseJSON([]byte(`{"usage":{"output_tokens":120.0}}`))
+	if !ok || ev.Usage.Output != 120 {
+		t.Fatalf("whole float lost: ok=%v usage=%+v", ok, ev.Usage)
+	}
+}
+
 func TestParseGenericKeepsInputWhenTotalIsAbsent(t *testing.T) {
 	v, _, ok := parseGeneric([]byte(`{"usage":{"input_tokens":900,"output_tokens":120}}`))
 	if !ok || v.output != 120 || v.input != 900 {

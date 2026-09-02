@@ -300,3 +300,52 @@ func TestAgentDenseHistSkipsViaEngine(t *testing.T) {
 		t.Fatalf("hist = %v, want zeros outside the event bucket", got)
 	}
 }
+
+func TestNearestCadenceIndexFloorsNegatives(t *testing.T) {
+	sec := time.Second
+	half := 500 * time.Millisecond
+	if got := nearestCadenceIndex(-half+time.Millisecond, sec); got != 0 {
+		t.Errorf("just inside the first bucket = %d, want 0", got)
+	}
+	if got := nearestCadenceIndex(-half-time.Millisecond, sec); got != -1 {
+		t.Errorf("just outside the first bucket = %d, want -1", got)
+	}
+	if got := nearestCadenceIndex(-sec-half, sec); got != -1 {
+		t.Errorf("-1.5 cadences = %d, want -1 (tie rounds toward later)", got)
+	}
+	if got := nearestCadenceIndex(half, sec); got != 1 {
+		t.Errorf("+0.5 cadences = %d, want 1 (tie rounds toward later)", got)
+	}
+}
+
+func TestAgentDenseHistExcludesEventsBeforeWindow(t *testing.T) {
+	end := time.Unix(1_700_000_010, 0)
+	// n=3, cadence=1s → start = end-2s. An event 0.6s before start is
+	// outside the nearest-bucket window and must not inflate column 0.
+	// Toward-zero duration division maps that offset onto index 0.
+	events := []core.AgentEvent{
+		{At: end.Add(-2*time.Second - 600*time.Millisecond), Agent: "codex", OutputTokens: 999},
+		{At: end.Add(-time.Second), Agent: "codex", OutputTokens: 50},
+	}
+	got := agentDenseHist(events, true, end, 3, time.Second)
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+	if got[0] != 0 {
+		t.Fatalf("hist = %v, event 0.6s before the window leaked into column 0", got)
+	}
+	if got[1] != 50 {
+		t.Fatalf("hist = %v, want 50 tok/s in the middle bucket", got)
+	}
+}
+
+func TestAgentDenseHistRoundsHalfCadenceBeforeStartIntoColumnZero(t *testing.T) {
+	end := time.Unix(1_700_000_010, 0)
+	events := []core.AgentEvent{
+		{At: end.Add(-2*time.Second - 400*time.Millisecond), Agent: "codex", OutputTokens: 80},
+	}
+	got := agentDenseHist(events, true, end, 3, time.Second)
+	if got[0] != 80 {
+		t.Fatalf("hist = %v, want 80 tok/s in column 0 (0.4s before start is nearer to start)", got)
+	}
+}
