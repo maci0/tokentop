@@ -321,9 +321,12 @@ func parseXpuMetrics(b []byte, index int) (core.GPUDevice, bool) {
 		return core.GPUDevice{}, false
 	}
 	d := core.GPUDevice{Vendor: "intel", Index: index}
-	for k, v := range raw.Metrics {
+	// Sorted keys, same as ParseRocmSMI: map ranges are randomized, and
+	// which of two overlapping sensors (two temperature keys, memory_size
+	// vs memory_total) wins would otherwise flip between polls.
+	for _, k := range slices.Sorted(maps.Keys(raw.Metrics)) {
 		lk := strings.ToLower(k)
-		val := flatten(v)
+		val := flatten(raw.Metrics[k])
 		switch {
 		case strings.Contains(lk, "temperature"):
 			d.MilliC = satInt(flexAny(val) * 1000)

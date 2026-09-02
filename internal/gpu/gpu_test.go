@@ -101,6 +101,26 @@ func TestParseXpuDiscoveryAndMetrics(t *testing.T) {
 	}
 }
 
+// Two temperature keys must pick the same winner every time: last write on
+// sorted keys, matching ParseRocmSMI's stable visit order.
+func TestParseXpuMetricsOverlappingSensorsAreStable(t *testing.T) {
+	const body = `{"metrics":{
+		"gpu_temperature_1":{"values":[90]},
+		"gpu_temperature":{"values":[58]}
+	}}`
+	dev, ok := parseXpuMetrics([]byte(body), 0)
+	if !ok {
+		t.Fatal("metrics parse failed")
+	}
+	if dev.MilliC != 90000 {
+		t.Errorf("temp = %d, want 90000 (last sorted temperature key)", dev.MilliC)
+	}
+	dev2, ok2 := parseXpuMetrics([]byte(body), 0)
+	if !ok2 || dev2 != dev {
+		t.Fatal("parseXpuMetrics is not deterministic")
+	}
+}
+
 func TestFlexF(t *testing.T) {
 	cases := map[string]float64{
 		"[N/A]": 0, "[Not Supported]": 0, "42.5": 42.5, "-1": 0, " 12 ": 12,

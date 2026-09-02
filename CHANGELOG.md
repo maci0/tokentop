@@ -69,6 +69,8 @@ support channel (see SECURITY.md).
   `$TOKTOP_SSH_PASSWORD` without an `ssh://` target, `--bearer` without
   `--add`, and `$TOKTOP_LOG_LEVEL` with `--no-ingest` are named as unused.
   `$TOKTOP_SCREENSHOT_FONT` is no longer reported as an unknown variable.
+- `agentusage` resumes after a JSONL record larger than 8MiB instead of
+  dropping every later record in that transcript.
 - `agentusage` counts a thinking-only reading (opencode SQLite, and Claude /
   Qwen / Codex transcript lines that carry reasoning with no billed output)
   instead of reporting nothing until the first completion token.

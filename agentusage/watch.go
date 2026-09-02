@@ -366,8 +366,8 @@ func home(parts ...string) string {
 // Watcher tails one agent's transcripts for one review.
 type Watcher struct {
 	// source is set for agents whose usage is not in files (opencode, crush).
-	// When it is, every field below that describes file state is unused.
-	source any
+	// When it is present, every field below that describes file state is unused.
+	source tokenSource
 	// dirs are the spellings a source matches against, for agents that record
 	// the directory they were started in rather than its resolved form.
 	dirs    []string
@@ -444,11 +444,11 @@ func Watch(tool, dir string, since time.Time) *Watcher {
 	tool = canonicalTool(tool)
 	if source, ok := sourceFor(tool); ok {
 		w := &Watcher{source: source, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
-		if ss, ok := source.(sessionSource); ok {
+		if source.session != nil {
 			// A failed snapshot must not become an empty baseline: that
 			// would credit every pre-attach token the first time the store
 			// becomes readable. Leave sourceBase unset and retry on poll.
-			if base, ok := ss.sessions(w.dirs, time.Time{}); ok {
+			if base, ok := source.session.sessions(w.dirs, time.Time{}); ok {
 				w.sourceBase = base
 				w.hasSessionBase = true
 			}
@@ -599,7 +599,7 @@ func (w *Watcher) seedBaseline(path string) {
 		}
 	}
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
+	sc.Buffer(make([]byte, 0, appendReaderBytes), maxLineBytes)
 	for sc.Scan() {
 		v, _, ok := w.ad.parse(sc.Bytes())
 		if !ok {
@@ -641,11 +641,11 @@ func (w *Watcher) Run(ctx context.Context, every time.Duration, onChange func(Sa
 // failed), so only growth since then is counted. A usageSource (opencode)
 // reports this review's usage in full each time via a timestamp filter.
 func (w *Watcher) readSource() (values, bool) {
-	if ss, ok := w.source.(sessionSource); ok {
-		return w.readSessionSource(ss)
+	if w.source.session != nil {
+		return w.readSessionSource(w.source.session)
 	}
-	if us, ok := w.source.(usageSource); ok {
-		return us.read(w.dirs, w.since)
+	if w.source.usage != nil {
+		return w.source.usage.read(w.dirs, w.since)
 	}
 	return values{}, false
 }
@@ -724,7 +724,7 @@ func (w *Watcher) Sample() Sample {
 func (w *Watcher) poll(onChange func(Sample)) {
 	w.pollMu.Lock()
 	var out, thinking, total, input int
-	if w.source != nil {
+	if w.source.present() {
 		v, ok := w.readSource()
 		if !ok {
 			w.pollMu.Unlock()
@@ -1042,7 +1042,7 @@ func (w *Watcher) consumeAppend(f *os.File, off int64) (recs []values, complete 
 		pos     = off
 	)
 	complete = off
-	br := bufio.NewReaderSize(f, 64<<10)
+	br := bufio.NewReaderSize(f, appendReaderBytes)
 	for {
 		chunk, rerr := br.ReadSlice('\n')
 		pos += int64(len(chunk))
@@ -1062,12 +1062,19 @@ func (w *Watcher) consumeAppend(f *os.File, off int64) (recs []values, complete 
 		if rerr == nil {
 			if !discard {
 				line = append(line, chunk...)
-				l := line[:len(line)-1] // drop the newline
-				if n := len(l); n > 0 && l[n-1] == '\r' {
-					l = l[:n-1]
+				if len(line) > maxLineBytes {
+					discard = true
+				} else {
+					l := line[:len(line)-1] // drop the newline
+					if n := len(l); n > 0 && l[n-1] == '\r' {
+						l = l[:n-1]
+					}
+					recs = w.collect(recs, l)
 				}
-				recs = w.collect(recs, l)
 			}
+			// discard is per record: a newline ends it so later lines
+			// in this same consume are still counted.
+			discard = false
 			line = line[:0]
 			complete = pos
 			continue
@@ -1079,9 +1086,11 @@ func (w *Watcher) consumeAppend(f *os.File, off int64) (recs []values, complete 
 			// and is re-read whole next poll instead of being lost.
 			if !discard && len(chunk) > 0 {
 				line = append(line, chunk...)
-				if _, _, parsed := w.ad.parse(line); parsed {
-					recs = w.collect(recs, line)
-					complete = pos
+				if len(line) <= maxLineBytes {
+					if _, _, parsed := w.ad.parse(line); parsed {
+						recs = w.collect(recs, line)
+						complete = pos
+					}
 				}
 			}
 			return recs, complete, true
@@ -1093,6 +1102,10 @@ func (w *Watcher) consumeAppend(f *os.File, off int64) (recs []values, complete 
 // maxLineBytes bounds one transcript record: a single JSONL line larger than
 // this is junk no parser here accepts.
 const maxLineBytes = 8 << 20
+
+// appendReaderBytes is the bufio fill size for transcript reads. A typical
+// JSONL record fits; a giant one is assembled across fills until maxLineBytes.
+const appendReaderBytes = 64 << 10
 
 // collect parses one complete line and appends its values when it carries
 // usage belonging to this review.

@@ -821,7 +821,10 @@ func TestOversizedLineDoesNotStallFollowingRecords(t *testing.T) {
 	path := filepath.Join(store, "session.jsonl")
 
 	w := Watch("claude", work, time.Now())
-	appendRaw(t, path, strings.Repeat("x", maxLineBytes+1)+"\n")
+	// Longer than one bufio fill past the cap, so consumeAppend actually
+	// takes the discard path (a line of maxLineBytes+1 never fills past
+	// the cap on a BufferFull: maxLineBytes is a multiple of the fill).
+	appendRaw(t, path, strings.Repeat("x", maxLineBytes+appendReaderBytes)+"\n")
 	appendRaw(t, path, claudeLine(work, 42))
 	w.poll(nil)
 	if got := w.Sample().Output; got != 42 {

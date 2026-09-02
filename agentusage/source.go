@@ -42,17 +42,29 @@ type sessionSource interface {
 	sessions(dirs []string, since time.Time) (map[string]map[string]sessionCounts, bool)
 }
 
+// tokenSource is a non-file usage reader. Exactly one field is set:
+// usageSource (opencode) sums this review's tokens; sessionSource (crush)
+// snapshots per-session counters so a continued session contributes only
+// growth.
+type tokenSource struct {
+	usage   usageSource
+	session sessionSource
+}
+
+func (s tokenSource) present() bool {
+	return s.usage != nil || s.session != nil
+}
+
 var (
 	sourcesMu sync.RWMutex
-	// usageSource (opencode) or sessionSource (crush).
-	sources = map[string]any{}
+	sources   = map[string]tokenSource{}
 )
 
-func sourceFor(tool string) (any, bool) {
+func sourceFor(tool string) (tokenSource, bool) {
 	sourcesMu.RLock()
 	defer sourcesMu.RUnlock()
 	s, ok := sources[tool]
-	return s, ok
+	return s, ok && s.present()
 }
 
 // EnableOpenCodeDB turns reading of opencode's SQLite session store on or off.

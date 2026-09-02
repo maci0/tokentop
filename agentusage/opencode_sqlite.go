@@ -32,10 +32,10 @@ type openCodeDBSource struct{ path string }
 
 func setOpenCodeDB(on bool) bool {
 	if !on {
-		registerSource("opencode", nil)
+		registerSource("opencode", tokenSource{})
 		return true
 	}
-	registerSource("opencode", openCodeDBSource{path: openCodeDBPath()})
+	registerSource("opencode", tokenSource{usage: openCodeDBSource{path: openCodeDBPath()}})
 	return true
 }
 

@@ -483,6 +483,9 @@ func probeCmp(a, b core.ProbeSample) int {
 // re-sort per event; the ingest path holds c.mu across this, so every
 // comparison saved unblocks emit and ProbeAll sooner.
 func insertSorted[T any](s []T, cmp func(a, b T) int) []T {
+	if len(s) == 0 {
+		panic("insertSorted: empty slice, caller must append first")
+	}
 	i := len(s) - 1
 	ev := s[i]
 	dst := sort.Search(i, func(j int) bool { return cmp(s[j], ev) > 0 })

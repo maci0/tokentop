@@ -462,6 +462,11 @@ func stripHome(dir string) (string, bool) {
 	return "~/" + filepath.ToSlash(rel), true
 }
 
+// maxPathWalk bounds how many ancestors resolvePath climbs. A path of
+// one-byte components would otherwise recurse thousands of times; a real
+// directory is far shorter.
+const maxPathWalk = 256
+
 // resolvePath cleans p and resolves the symlinks in it. A path that is not on
 // disk resolves too: symlinks are evaluated on the deepest ancestor that does
 // exist and the rest is appended, so a directory removed mid-session (or one
@@ -469,14 +474,34 @@ func stripHome(dir string) (string, bool) {
 // directory spelled another way.
 func resolvePath(p string) string {
 	p = filepath.Clean(p)
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		return resolved
+	var missing []string
+	cur := p
+	for range maxPathWalk {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			return joinMissing(resolved, missing)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return joinMissing(cur, missing)
+		}
+		missing = append(missing, filepath.Base(cur))
+		cur = parent
 	}
-	parent := filepath.Dir(p)
-	if parent == p {
-		return p // root, or a bare name with nothing left to walk up to
+	return joinMissing(cur, missing)
+}
+
+// joinMissing rebuilds a path from an existing ancestor and the components
+// that did not resolve, deepest first as resolvePath collected them.
+func joinMissing(root string, missing []string) string {
+	if len(missing) == 0 {
+		return root
 	}
-	return filepath.Join(resolvePath(parent), filepath.Base(p))
+	parts := make([]string, 0, 1+len(missing))
+	parts = append(parts, root)
+	for i := len(missing) - 1; i >= 0; i-- {
+		parts = append(parts, missing[i])
+	}
+	return filepath.Join(parts...)
 }
 
 func lastTwoComponents(dir string) string {

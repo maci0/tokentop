@@ -37,7 +37,7 @@ import (
 // opt-in switch for the same reason, unlike opencode's operator-wide store.
 type crushDBSource struct{}
 
-func init() { registerSource("crush", crushDBSource{}) }
+func init() { registerSource("crush", tokenSource{session: crushDBSource{}}) }
 
 const (
 	// crushMaxWalkUp bounds the search for the project root, so a review of a
