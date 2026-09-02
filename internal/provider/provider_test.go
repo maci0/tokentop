@@ -438,8 +438,8 @@ func TestExtractVersionField(t *testing.T) {
 }
 
 // A version probe fired while the engine is still starting must not be
-// cached as a permanent miss: later polls retry, and the first success is
-// memoized so healthy engines are asked only once.
+// cached as a permanent miss: later polls retry after versionRetry, and
+// the first success is memoized so healthy engines are asked only once.
 func TestVersionCacheRetriesUntilResolved(t *testing.T) {
 	var failing, reqs atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -459,6 +459,16 @@ func TestVersionCacheRetriesUntilResolved(t *testing.T) {
 		t.Fatalf("first fetch during outage = %q, want empty", got)
 	}
 	failing.Store(0)
+	if got := vc.fetch(ctx, srv.URL); got != "" {
+		t.Fatalf("fresh miss = %q, want empty until versionRetry", got)
+	}
+	if n := reqs.Load(); n != 3 { // outage sweep of 3 paths, then cache silence
+		t.Fatalf("server hit %d times before expiry, want 3", n)
+	}
+
+	vc.mu.Lock()
+	vc.at = time.Now().Add(-versionRetry - time.Second)
+	vc.mu.Unlock()
 	if got := vc.fetch(ctx, srv.URL); got != "2.7.1" {
 		t.Fatalf("fetch after recovery = %q, want 2.7.1", got)
 	}

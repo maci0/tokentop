@@ -100,6 +100,9 @@ support channel (see SECURITY.md).
   has not started, so a failed startup cannot leave the port bound.
 - SSH port forwards time out a hung remote Dial instead of pinning a
   goroutine and the accepted connection until the ssh session itself dies.
+- Linux CPU model retries an empty first read instead of staying blank, and
+  uses ARM Hardware/Processor fields and the device-tree model when
+  `/proc/cpuinfo` has no `model name`.
 
 ## [0.7.0] - 2026-08-30
 

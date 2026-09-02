@@ -196,6 +196,89 @@ func TestHostStaticInfoRetriesEmptyDrivers(t *testing.T) {
 	}
 }
 
+func TestSensorLayoutDropsExpiredKeys(t *testing.T) {
+	sensorLayoutMu.Lock()
+	sensorLayouts = map[string]cachedSensors{
+		"stale": {inputs: []sensorInput{{path: "gone"}}, at: time.Now().Add(-sensorLayoutTTL - time.Second)},
+	}
+	sensorLayoutMu.Unlock()
+	t.Cleanup(func() {
+		sensorLayoutMu.Lock()
+		sensorLayouts = map[string]cachedSensors{}
+		sensorLayoutMu.Unlock()
+	})
+
+	root := t.TempDir()
+	_ = sensorLayout("fresh\x00"+root, root, listHwmon)
+
+	sensorLayoutMu.Lock()
+	_, still := sensorLayouts["stale"]
+	sensorLayoutMu.Unlock()
+	if still {
+		t.Fatal("expired sensor layout still in the cache")
+	}
+}
+
+func TestParseCPUModel(t *testing.T) {
+	cases := map[string]string{
+		"processor\t: 0\nmodel name\t: Intel(R) Core(TM) i7-12700K\n": "Intel(R) Core(TM) i7-12700K",
+		"processor\t: 0\nBogoMIPS\t: 38.40\nHardware\t: BCM2835\n":    "BCM2835",
+		"processor\t: 0\nProcessor\t: ARMv7 Processor rev 4 (v7l)\n":  "ARMv7 Processor rev 4 (v7l)",
+		"processor\t: 0\ncpu model\t: Loongson-3A5000\n":              "Loongson-3A5000",
+		"processor\t: 0\nBogoMIPS\t: 48.00\n":                         "",
+		"model name\t: AMD EPYC\nHardware\t: other\n":                 "AMD EPYC",
+	}
+	for in, want := range cases {
+		if got := parseCPUModel([]byte(in)); got != want {
+			t.Errorf("parseCPUModel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCPUModelCacheRetriesEmpty(t *testing.T) {
+	reset := func() {
+		cpuModelMu.Lock()
+		cpuModelVal = ""
+		cpuModelAt = time.Time{}
+		cpuModelMu.Unlock()
+	}
+	reset()
+	orig := cpuModelProbe
+	t.Cleanup(func() {
+		cpuModelProbe = orig
+		reset()
+	})
+
+	var n int
+	cpuModelProbe = func() string {
+		n++
+		if n == 1 {
+			return ""
+		}
+		return "AMD EPYC"
+	}
+
+	if got := cpuModelCached(); got != "" {
+		t.Fatalf("first empty probe = %q", got)
+	}
+	if got := cpuModelCached(); got != "" || n != 1 {
+		t.Fatalf("retried inside the window: calls=%d val=%q", n, got)
+	}
+
+	cpuModelMu.Lock()
+	cpuModelAt = time.Now().Add(-cpuModelRetry - time.Second)
+	cpuModelMu.Unlock()
+	if got := cpuModelCached(); got != "AMD EPYC" {
+		t.Fatalf("expired empty cache was not filled: %q", got)
+	}
+	if n != 2 {
+		t.Fatalf("probe ran %d times, want 2", n)
+	}
+	if got := cpuModelCached(); got != "AMD EPYC" || n != 2 {
+		t.Fatalf("success was not kept: calls=%d val=%q", n, got)
+	}
+}
+
 // utsField must stop at the NUL padding of a Utsname char array.
 func TestUtsField(t *testing.T) {
 	b := make([]byte, 65)

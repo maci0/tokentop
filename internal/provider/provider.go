@@ -110,12 +110,19 @@ func getText(ctx context.Context, c *http.Client, url string) (string, error) {
 // versionCache memoizes engine version discovery across polls. Deliberately
 // not a sync.Once: an engine polled while still starting answers nothing,
 // and caching that miss would blank the version readout for the whole
-// session. Unresolved caches retry on later polls.
+// session. Unresolved caches retry after versionRetry so an engine that
+// never publishes a version is not probed on every scrape.
 type versionCache struct {
 	mu       sync.Mutex
 	resolved bool
 	val      string
+	at       time.Time // last probe; misses retry after versionRetry
 }
+
+// versionRetry spaces out probes of an unresolved version. A hit is kept
+// for the process lifetime; retrying a miss every poll would add three
+// HTTP round trips to every scrape of engines with no version endpoint.
+const versionRetry = 30 * time.Second
 
 // fetch probes common engine version endpoints and caches the first success.
 // Engines differ wildly here: /api/version (Ollama-style), /version (vLLM,
@@ -126,16 +133,20 @@ func (c *versionCache) fetch(ctx context.Context, base string) string {
 	if c.resolved {
 		return c.val
 	}
+	if !c.at.IsZero() && time.Since(c.at) < versionRetry {
+		return c.val
+	}
 	for _, path := range []string{"/api/version", "/version", "/get_server_info"} {
 		text, err := getText(ctx, httpClient, base+path)
 		if err != nil {
 			continue
 		}
 		if val := extractVersionField(text); val != "" {
-			c.val, c.resolved = val, true
-			break
+			c.val, c.resolved, c.at = val, true, time.Now()
+			return c.val
 		}
 	}
+	c.at = time.Now()
 	return c.val
 }
 

@@ -820,31 +820,37 @@ func (a adapter) fileSuffixes() []string {
 
 // listTranscripts returns recent files under root matching suffix. force
 // bypasses the shared cache so a final Poll cannot miss a file created
-// inside the last rescan window.
+// inside the last rescan window. The walk runs under rootListMu so
+// concurrent watchers of the same root share one fill, and a slower empty
+// result cannot overwrite a newer listing.
 func listTranscripts(root, suffix string, cutoff time.Time, force bool) []string {
 	key := rootListKey(root, suffix)
+	rootListMu.Lock()
+	defer rootListMu.Unlock()
+	now := time.Now()
 	if !force {
-		rootListMu.Lock()
-		now := time.Now()
 		pruneRootListsLocked(now)
-		c, ok := rootLists[key]
-		hit := ok && now.Sub(c.at) < rescanEvery
-		var files []string
-		if hit {
-			files = c.files
-		}
-		rootListMu.Unlock()
-		if hit {
-			return append([]string(nil), files...)
+		if c, ok := rootLists[key]; ok && now.Sub(c.at) < rescanEvery {
+			return append([]string(nil), c.files...)
 		}
 	}
-	var out []string
+	for k, c := range rootLists {
+		if now.Sub(c.at) >= rescanEvery {
+			delete(rootLists, k)
+		}
+	}
+	out := walkTranscripts(root, suffix, cutoff)
+	rootLists[key] = rootListing{files: out, at: now}
+	return append([]string(nil), out...)
+}
+
+func walkTranscripts(root, suffix string, cutoff time.Time) []string {
 	r, err := os.OpenRoot(root)
 	if err != nil {
-		storeRootListing(key, out)
 		return nil
 	}
 	defer r.Close()
+	var out []string
 	_ = fs.WalkDir(r.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil || rel == "." {
 			return nil
@@ -859,8 +865,7 @@ func listTranscripts(root, suffix string, cutoff time.Time, force bool) []string
 		out = append(out, filepath.Join(root, filepath.FromSlash(rel)))
 		return nil
 	})
-	storeRootListing(key, out)
-	return append([]string(nil), out...)
+	return out
 }
 
 // candidates lists transcript files recent enough to belong to this review,

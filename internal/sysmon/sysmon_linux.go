@@ -33,13 +33,37 @@ func init() {
 		}
 	}
 	platformTemps = func() []core.TempReading { return scanTemps(sysHwmon, sysThermal) }
-	platformCPUModel = cpuModelOnce // /proc/cpuinfo never changes: resolve once
+	platformCPUModel = cpuModelCached // brand string is fixed once read
 	platformHost = hostInfoLinux
 }
 
-// cpuModelOnce memoizes the brand string; /proc/cpuinfo can be hundreds of
-// kilobytes on many-core hosts and re-parsing it every poll is pure waste.
-var cpuModelOnce = sync.OnceValue(cpuModelLinux)
+// cpuModelRetry spaces out retries of an empty brand string. /proc/cpuinfo
+// can be hundreds of kilobytes on many-core hosts, so a successful parse is
+// kept for the process lifetime; a miss (procfs not ready yet) is retried
+// the way hostStatic retries empty drivers rather than blanking the row
+// forever.
+const cpuModelRetry = 30 * time.Second
+
+var (
+	cpuModelMu    sync.Mutex
+	cpuModelVal   string
+	cpuModelAt    time.Time
+	cpuModelProbe = cpuModelLinux
+)
+
+func cpuModelCached() string {
+	cpuModelMu.Lock()
+	defer cpuModelMu.Unlock()
+	if cpuModelVal != "" {
+		return cpuModelVal
+	}
+	if !cpuModelAt.IsZero() && time.Since(cpuModelAt) < cpuModelRetry {
+		return cpuModelVal
+	}
+	cpuModelVal = cpuModelProbe()
+	cpuModelAt = time.Now()
+	return cpuModelVal
+}
 
 func sampleMemoryLinux(s *core.SysSample) {
 	if b, err := os.ReadFile(procMeminfo); err == nil {
@@ -246,13 +270,58 @@ func npuDisplayName(driver string) string {
 }
 
 func cpuModelLinux() string {
-	b, err := os.ReadFile("/proc/cpuinfo")
-	if err != nil {
-		return ""
+	if b, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+		if s := parseCPUModel(b); s != "" {
+			return s
+		}
 	}
+	// ARM and Apple Silicon often omit "model name"; the board string is
+	// in the device tree, NUL-terminated.
+	if b, err := os.ReadFile("/proc/device-tree/model"); err == nil {
+		return strings.TrimRight(string(b), "\x00\n\r\t ")
+	}
+	return ""
+}
+
+// parseCPUModel picks a brand string out of /proc/cpuinfo. x86 uses
+// "model name"; ARM often uses Hardware / Processor / cpu model instead,
+// and "processor : 0" is a core index, not a brand.
+func parseCPUModel(b []byte) string {
+	var modelName, hardware, processor, cpuModel string
 	for line := range strings.SplitSeq(string(b), "\n") {
-		if k, v, ok := strings.Cut(line, ":"); ok && strings.HasPrefix(strings.TrimSpace(k), "model name") {
-			return strings.TrimSpace(v)
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(k))
+		val := strings.TrimSpace(v)
+		if val == "" {
+			continue
+		}
+		switch key {
+		case "model name":
+			if modelName == "" {
+				modelName = val
+			}
+		case "hardware":
+			if hardware == "" {
+				hardware = val
+			}
+		case "processor":
+			if processor == "" {
+				if _, err := strconv.Atoi(val); err != nil {
+					processor = val // "0" is a core index, not a brand
+				}
+			}
+		case "cpu model":
+			if cpuModel == "" {
+				cpuModel = val
+			}
+		}
+	}
+	for _, s := range []string{modelName, hardware, processor, cpuModel} {
+		if s != "" {
+			return s
 		}
 	}
 	return ""
@@ -307,16 +376,20 @@ var (
 
 func sensorLayout(key, root string, build func(string) []sensorInput) []sensorInput {
 	sensorLayoutMu.Lock()
-	if c, ok := sensorLayouts[key]; ok && time.Since(c.at) < sensorLayoutTTL {
-		in := c.inputs
-		sensorLayoutMu.Unlock()
-		return in
+	defer sensorLayoutMu.Unlock()
+	now := time.Now()
+	if c, ok := sensorLayouts[key]; ok && now.Sub(c.at) < sensorLayoutTTL {
+		return c.inputs
 	}
-	sensorLayoutMu.Unlock()
+	for k, c := range sensorLayouts {
+		if now.Sub(c.at) >= sensorLayoutTTL {
+			delete(sensorLayouts, k)
+		}
+	}
+	// Build under the lock so concurrent samples share one walk and a
+	// slower empty result cannot overwrite a newer fill.
 	inputs := build(root)
-	sensorLayoutMu.Lock()
-	sensorLayouts[key] = cachedSensors{inputs: inputs, at: time.Now()}
-	sensorLayoutMu.Unlock()
+	sensorLayouts[key] = cachedSensors{inputs: inputs, at: now}
 	return inputs
 }
 

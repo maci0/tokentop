@@ -50,3 +50,28 @@ func TestPollSeesATranscriptCreatedAfterTheWatchBegan(t *testing.T) {
 		t.Fatalf("final poll read %d output tokens, want the 42 this review spent", got.Output)
 	}
 }
+
+// Expired listings must leave the shared map, or every (root, suffix) pair
+// a long --agents run ever walked would stay for the process lifetime.
+func TestRootListCacheDropsExpiredKeys(t *testing.T) {
+	rootListMu.Lock()
+	rootLists = map[string]rootListing{
+		"stale\x00.jsonl": {files: []string{"gone"}, at: time.Now().Add(-rescanEvery - time.Second)},
+	}
+	rootListMu.Unlock()
+	t.Cleanup(func() {
+		rootListMu.Lock()
+		rootLists = map[string]rootListing{}
+		rootListMu.Unlock()
+	})
+
+	dir := t.TempDir()
+	_ = listTranscripts(dir, ".jsonl", time.Now().Add(-recencyWindow), false)
+
+	rootListMu.Lock()
+	_, still := rootLists["stale\x00.jsonl"]
+	rootListMu.Unlock()
+	if still {
+		t.Fatal("expired listing still in the cache")
+	}
+}
