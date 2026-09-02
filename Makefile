@@ -15,6 +15,10 @@ export GOTOOLCHAIN := go$(GO_VERSION)
 # Instruction-set baselines: an ambient GOAMD64=v3 would change amd64 artifacts.
 export GOAMD64 := v1
 export GOARM64 := v8.0
+# Race tests turn cgo on in their recipes. Everything else matches the
+# released artifacts, including vet/staticcheck so they analyze the same
+# net resolver the binaries ship.
+export CGO_ENABLED := 0
 # Strip paths, omit git stamps (checkout vs tarball would disagree), honor
 # go.sum, produce a PIE.
 GO_BUILDFLAGS := -trimpath -buildvcs=false -mod=readonly -buildmode=pie

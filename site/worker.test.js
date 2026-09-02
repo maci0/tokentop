@@ -158,6 +158,72 @@ test("every page answer carries the security headers, not only revalidations", a
   }
 });
 
+const IMAGE_CACHE = "public, max-age=86400, stale-while-revalidate=604800";
+
+function assetsEnv(body = new Uint8Array([1, 2, 3, 4])) {
+  return {
+    ASSETS: {
+      fetch: () =>
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        }),
+    },
+  };
+}
+
+test("dashboard images take cache and security headers from the worker", async () => {
+  const body = new Uint8Array([1, 2, 3, 4]);
+  const env = assetsEnv(body);
+  for (const path of ["/dashboard.png", "/dashboard.webp"]) {
+    const res = await worker.fetch(new Request(ORIGIN + path), env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe(IMAGE_CACHE);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    for (const name of SECURITY_HEADER_NAMES) {
+      expect(res.headers.get(name)).not.toBeNull();
+    }
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(body);
+  }
+});
+
+test("dashboard image HEAD is bodyless with the same headers as GET", async () => {
+  const env = assetsEnv();
+  const get = await worker.fetch(new Request(ORIGIN + "/dashboard.png"), env);
+  const head = await worker.fetch(
+    new Request(ORIGIN + "/dashboard.png", { method: "HEAD" }),
+    env,
+  );
+  expect(head.status).toBe(200);
+  expect(head.headers.get("cache-control")).toBe(get.headers.get("cache-control"));
+  expect((await head.arrayBuffer()).byteLength).toBe(0);
+  for (const name of SECURITY_HEADER_NAMES) {
+    expect(head.headers.get(name)).not.toBeNull();
+  }
+});
+
+test("dashboard images reject non-GET/HEAD without fetching assets", async () => {
+  let fetched = false;
+  const env = {
+    ASSETS: {
+      fetch: () => {
+        fetched = true;
+        return new Response("no");
+      },
+    },
+  };
+  const res = await worker.fetch(
+    new Request(ORIGIN + "/dashboard.png", { method: "POST" }),
+    env,
+  );
+  expect(res.status).toBe(405);
+  expect(res.headers.get("allow")).toBe("GET, HEAD");
+  expect(fetched).toBe(false);
+  for (const name of SECURITY_HEADER_NAMES) {
+    expect(res.headers.get(name)).not.toBeNull();
+  }
+});
+
 test("served HTML does not carry source comments", () => {
   expect(identityBody.includes("<!--")).toBe(false);
   expect(identityBody.includes("/*")).toBe(false);

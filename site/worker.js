@@ -335,9 +335,10 @@ export default {
       }
       const asset = await env.ASSETS.fetch(request);
       const headers = new Headers(asset.headers);
+      for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+        headers.set(name, value);
+      }
       headers.set("cache-control", IMAGE_CACHE);
-      headers.set("x-content-type-options", "nosniff");
-      headers.set("referrer-policy", "strict-origin-when-cross-origin");
       if (request.method === "HEAD") {
         return new Response(null, { status: asset.status, headers });
       }

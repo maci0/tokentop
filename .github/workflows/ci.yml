@@ -13,10 +13,14 @@ concurrency:
   cancel-in-progress: true
 
 # Match the Makefile: locale/timezone must not follow the runner into
-# formatting, glob order, or timestamps.
+# formatting, glob order, or timestamps. Instruction-set baselines and
+# CGO_ENABLED=0 match the released artifacts; race-test steps turn cgo on.
 env:
   LC_ALL: C
   TZ: UTC
+  GOAMD64: v1
+  GOARM64: v8.0
+  CGO_ENABLED: "0"
 
 jobs:
   test:
@@ -32,9 +36,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    # Race tests need cgo; do not inherit a runner that has CGO_ENABLED=0.
-    env:
-      CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,14 +68,19 @@ jobs:
           go vet -mod=readonly -tags sqlite ./agentusage/...
       - name: govulncheck (linux only; source-level analysis is platform-independent)
         if: runner.os == 'Linux'
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
-          govulncheck ./...
+        # Same invocation as `make ci` so the pin cannot drift to a second
+        # version string, and so PATH does not have to carry a go-install.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
       - name: test
+        # Race tests need cgo; do not inherit the workflow CGO_ENABLED=0.
+        env:
+          CGO_ENABLED: "1"
         run: go test -mod=readonly -race -shuffle=on ./...
       # The sqlite tag links a database driver for crush and opencode, so
       # both halves of that gate have their own tests and both must pass.
       - name: test (sqlite build)
+        env:
+          CGO_ENABLED: "1"
         run: go test -mod=readonly -tags sqlite -race -shuffle=on ./agentusage/...
 
   # The site worker and the screenshot script ship in this repo, so they gate
@@ -123,11 +129,6 @@ jobs:
           - { goos: windows, goarch: arm64 }
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    # Same instruction-set baselines the Makefile exports, so an ambient
-    # GOAMD64=v3 on the runner cannot change what this job compiles.
-    env:
-      GOAMD64: v1
-      GOARM64: v8.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -136,8 +137,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Host binary from the go.mod tool pin (same as `make vet-cross`).
+      # Installing with GOOS set would produce a tool for the analyzed
+      # platform instead of the analyzer.
       - name: install staticcheck (host binary; GOOS picks the analyzed platform)
-        run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.1
+        run: go install tool
       - name: vet and staticcheck ${{ matrix.goos }}/${{ matrix.goarch }} (platform-specific files)
         env:
           GOOS: ${{ matrix.goos }}
@@ -151,11 +155,9 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-        run: go build -trimpath -buildvcs=false -mod=readonly -buildmode=pie -o /dev/null ./cmd/toktop
+        run: go build -trimpath -buildvcs=false -mod=readonly -buildmode=pie -ldflags "-s -w" -o /dev/null ./cmd/toktop
       - name: compile ${{ matrix.goos }}/${{ matrix.goarch }} with sqlite
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-        run: go build -tags sqlite -trimpath -buildvcs=false -mod=readonly -buildmode=pie -o /dev/null ./cmd/toktop
+        run: go build -tags sqlite -trimpath -buildvcs=false -mod=readonly -buildmode=pie -ldflags "-s -w" -o /dev/null ./cmd/toktop

@@ -6,9 +6,10 @@
   exact version so a newer compiler on the host cannot change the artifact.
   CI installs the same version via `go-version-file: go.mod`.
 - A C compiler (`gcc` or `clang`) for `go test -race`. `make test` and
-  `make test-pkg` force `CGO_ENABLED=1` even if the environment has it off
-  (`make build` still builds with cgo off). Plain builds and cross-compiles
-  are pure Go and need nothing else.
+  `make test-pkg` force `CGO_ENABLED=1` even if the environment has it off.
+  Everything else (`make build`, `make vet`, `make lint`, cross-compiles)
+  keeps cgo off so analysis matches the released artifacts. Plain builds
+  and cross-compiles are pure Go and need nothing else.
 - `bun` at the version in `.bun-version` for `make site-check`.
 - `uv` for `make scripts-check` (tool pins in `scripts/requirements-dev.txt`).
 - No services or databases: everything is stdlib plus the modules in

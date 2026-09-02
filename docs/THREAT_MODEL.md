@@ -177,9 +177,11 @@ Deployment surface:
   compressed once per isolate (:191-270,328-337) keyed by
   `Vary: Accept-Encoding` on every page response (:278-281,293-299), and
   hardening headers (nosniff, HSTS, referrer-policy, CSP
-  `default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri
-  'none'; form-action 'none'; frame-ancestors 'none'`) on every page response
-  (:283-289). wrangler.jsonc also publishes the worker on workers.dev and
+  `default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:;
+  base-uri 'none'; form-action 'none'; frame-ancestors 'none'`) on every
+  page and image response. wrangler.jsonc sets `assets.run_worker_first`
+  so /dashboard.png and /dashboard.webp hit that Worker path instead of
+  the asset pipeline; it also publishes the worker on workers.dev and
   binds toktop.ai / www.toktop.ai. The only request bytes inspected are the
   method, path, If-None-Match, and Accept-Encoding headers, compared as
   strings; nothing is stored, echoed into the page, or forwarded anywhere.
