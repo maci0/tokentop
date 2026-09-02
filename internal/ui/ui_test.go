@@ -312,16 +312,18 @@ func TestProcLineVRAMSumSaturates(t *testing.T) {
 	}
 }
 
-func TestProcLineCtxEstimateSaturates(t *testing.T) {
-	got := procLine(core.ProviderSnapshot{
+func TestProcLineCtxCountFitsInt64(t *testing.T) {
+	got := strip(procLine(core.ProviderSnapshot{
 		Models: []core.ModelInfo{{Name: "a", CtxMax: 1 << 63}},
-	})
-	// 2^63 * 2 wraps to 0, which humanBytesShort prints as "0M".
-	if strings.Contains(got, "0M") {
-		t.Fatalf("CtxMax*2 wrapped to zero: %q", got)
+	}))
+	if strings.Contains(got, "-") {
+		t.Fatalf("uint64 CtxMax printed as a negative int64: %q", got)
 	}
-	if !strings.Contains(got, "ctx") {
-		t.Fatalf("expected ctx estimate, got %q", got)
+	if strings.Contains(got, "0M") {
+		t.Fatalf("ctx count collapsed to the old byte-estimate zero: %q", got)
+	}
+	if !strings.Contains(got, "ctx") || !strings.Contains(got, "tok") {
+		t.Fatalf("expected ctx token count, got %q", got)
 	}
 }
 

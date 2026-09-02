@@ -859,7 +859,9 @@ func procLine(p core.ProviderSnapshot) string {
 	if bytes > 0 {
 		parts = append(parts, "mem "+humanBytes(bytes))
 	} else if len(p.Models) > 0 && p.Models[0].CtxMax > 0 {
-		parts = append(parts, "ctx "+fmtCount(int64(p.Models[0].CtxMax))+" tok")
+		// CtxMax is uint64; a direct int64() of 2^63 is negative.
+		n := int64(min(p.Models[0].CtxMax, ^uint64(0)>>1))
+		parts = append(parts, "ctx "+fmtCount(n)+" tok")
 	}
 	if p.ProcRSS > 0 {
 		rss := "rss " + humanBytesShort(p.ProcRSS)

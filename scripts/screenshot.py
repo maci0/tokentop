@@ -18,6 +18,7 @@ is installed where the script looks.
 import glob
 import os
 import re
+import string
 import sys
 from typing import TextIO
 
@@ -208,11 +209,15 @@ def render(src: str, out: str, scale: int, cols: int, rows: int) -> None:
 
 
 def ansi_or_truecolor(color: str | None) -> RGB | None:
-    """Map pyte color names to RGB tuples."""
+    """Map pyte color names to RGB tuples.
+
+    Returns:
+        An RGB tuple, or None when the name is unknown or default.
+    """
     if color is None:
         return None
     v = color.lstrip("#")
-    if len(v) == 6 and all(c in "0123456789abcdefABCDEF" for c in v):
+    if len(v) == 6 and all(c in string.hexdigits for c in v):
         return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
     named: dict[str, int | None] = {
         "black": 0,
