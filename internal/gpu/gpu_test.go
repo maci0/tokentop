@@ -71,19 +71,23 @@ func TestParseRocmSMI(t *testing.T) {
 	}
 }
 
-func TestParseXpuDiscoveryAndMetrics(t *testing.T) {
-	disc := []byte(`{"devices":[{"device_id":0,"device_name":"Intel(R) Arc(TM) A770"},{"device_id":1,"device_name":"Intel(R) Data Center GPU Max"}]}`)
-	order := parseXpuDiscovery(disc)
-	if len(order) != 2 || order[1].Name != "Intel(R) Data Center GPU Max" {
-		t.Fatalf("discovery parse: %+v", order)
-	}
-	metrics := []byte(`{"device_id":"0","metrics":{
+const xpuDiscoveryJSON = `{"devices":[{"device_id":0,"device_name":"Intel(R) Arc(TM) A770"},{"device_id":1,"device_name":"Intel(R) Data Center GPU Max"}]}`
+
+const xpuMetricsJSON = `{"device_id":"0","metrics":{
 		"gpu_utilization":{"values":[63.5]},
 		"gpu_temperature":{"values":[58]},
 		"memory_used":{"values":[1024]},
 		"gpu_power":{"values":[180.5]}
-	}}`)
-	dev, ok := parseXpuMetrics(metrics, 0)
+	}}`
+
+const xpuDiscoveryBare = `[{"device_id":3,"device_name":"iGPU"}]`
+
+func TestParseXpuDiscoveryAndMetrics(t *testing.T) {
+	order := parseXpuDiscovery([]byte(xpuDiscoveryJSON))
+	if len(order) != 2 || order[1].Name != "Intel(R) Data Center GPU Max" {
+		t.Fatalf("discovery parse: %+v", order)
+	}
+	dev, ok := parseXpuMetrics([]byte(xpuMetricsJSON), 0)
 	if !ok {
 		t.Fatal("metrics parse failed")
 	}
@@ -91,8 +95,7 @@ func TestParseXpuDiscoveryAndMetrics(t *testing.T) {
 		t.Errorf("metrics: %+v", dev)
 	}
 
-	bare := []byte(`[{"device_id":3,"device_name":"iGPU"}]`)
-	order = parseXpuDiscovery(bare)
+	order = parseXpuDiscovery([]byte(xpuDiscoveryBare))
 	if len(order) != 1 || order[0].ID != 3 {
 		t.Errorf("bare array discovery: %+v", order)
 	}

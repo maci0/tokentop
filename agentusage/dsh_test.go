@@ -4,6 +4,8 @@
 package agentusage
 
 import (
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,7 +30,7 @@ func dshUsageChunk(out, think, in int) string {
 		strconv.Itoa(in) + `,"outputTokens":` + strconv.Itoa(out) + `,"reasoningTokens":` + strconv.Itoa(think) + `}}}}`
 }
 
-func zstdFrame(t *testing.T, plain string) []byte {
+func zstdFrame(t testing.TB, plain string) []byte {
 	t.Helper()
 	enc, err := zstd.NewWriter(nil, zstd.WithEncoderCRC(true), zstd.WithEncoderConcurrency(1))
 	if err != nil {
@@ -36,6 +38,25 @@ func zstdFrame(t *testing.T, plain string) []byte {
 	}
 	defer enc.Close()
 	return enc.EncodeAll([]byte(plain), nil)
+}
+
+// skippableFrame is one RFC 8878 skippable frame: magic 0x184D2A5X, a
+// 4-byte little-endian size, then payload.
+func skippableFrame(nibble byte, payload []byte) []byte {
+	out := make([]byte, 8+len(payload))
+	binary.LittleEndian.PutUint32(out, 0x184D2A50|uint32(nibble&0xF))
+	binary.LittleEndian.PutUint32(out[4:], uint32(len(payload)))
+	copy(out[8:], payload)
+	return out
+}
+
+// skippableClaim is a skippable header whose size field may not match the
+// bytes that follow, including claims past zstdMaxFrameBytes.
+func skippableClaim(size uint32) []byte {
+	out := make([]byte, 8)
+	binary.LittleEndian.PutUint32(out, 0x184D2A50)
+	binary.LittleEndian.PutUint32(out[4:], size)
+	return out
 }
 
 func appendBytes(t *testing.T, path string, data []byte) {
@@ -213,4 +234,125 @@ func TestZstdFrameLenMatchesEncodeAll(t *testing.T) {
 	if consumed != len(src) || string(plain) != "one\ntwo\n" {
 		t.Fatalf("prefix decode consumed %d want %d, plain %q", consumed, len(src), plain)
 	}
+}
+
+// FuzzDecodeZstdPrefix drives the concatenated-frame walker that tails
+// dsh's default session.jsonl.zstd. Those files live in a writable agent
+// store, so a hostile or torn frame must not panic, hang, or desync the
+// reader: a complete-frame length stays inside the cap and the input, an
+// incomplete tail is left unconsumed, a decode error stops on a frame
+// boundary rather than skipping magic, and a successful prefix re-decodes
+// to the same plaintext.
+func FuzzDecodeZstdPrefix(f *testing.F) {
+	header := zstdFrame(f, dshHeader("/tmp/work")+"\n")
+	msg := zstdFrame(f, dshMessage(10, 2, 5)+"\n")
+	concat := append(append([]byte{}, header...), msg...)
+	emptySkip := skippableFrame(0, nil)
+	skipThenMsg := append(skippableFrame(0xF, []byte("note")), msg...)
+
+	for _, seed := range [][]byte{
+		header,
+		msg,
+		concat,
+		append(append([]byte{}, concat...), 0x28, 0xb5),
+		header[:len(header)/2],
+		emptySkip,
+		skipThenMsg,
+		skippableClaim(zstdMaxFrameBytes + 1),
+		skippableClaim(0),
+		skippableClaim(^uint32(0)),
+		// Magic + descriptor + empty last raw block: complete, maybe
+		// undecodable (tiny window), still a length the walker must bound.
+		{0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00, 0x01, 0x00, 0x00},
+		// Last reserved block type: must not look complete.
+		{0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00, 0x07, 0x00, 0x00},
+		// Last RLE block of four 'a's.
+		{0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00, 0x23, 0x00, 0x00, 'a'},
+		{0x28, 0xb5, 0x2f, 0xfd},
+		{0x28, 0xb5},
+		{0x1f, 0x8b},
+		[]byte(`{"type":"session"}`),
+		nil,
+		{},
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, src []byte) {
+		if n, ok := zstdFrameLen(src); ok {
+			if n <= 0 || n > zstdMaxFrameBytes || n > len(src) {
+				t.Fatalf("zstdFrameLen ok with n=%d len=%d", n, len(src))
+			}
+			n2, ok2 := zstdFrameLen(src[:n])
+			if !ok2 || n2 != n {
+				t.Fatalf("complete frame of %d bytes was not complete when sliced to itself", n)
+			}
+			if n > 0 {
+				if _, ok3 := zstdFrameLen(src[:n-1]); ok3 {
+					t.Fatalf("prefix of a %d-byte frame looked complete", n)
+				}
+			}
+		}
+
+		prefix := zstdCompletePrefix(src)
+		if prefix < 0 || prefix > len(src) {
+			t.Fatalf("complete prefix %d outside [0, %d]", prefix, len(src))
+		}
+
+		plain, consumed, err := decodeZstdPrefix(src)
+		if consumed < 0 || consumed > len(src) {
+			t.Fatalf("consumed %d outside [0, %d]", consumed, len(src))
+		}
+		if !zstdAtFrameBoundary(src, consumed) {
+			t.Fatalf("consumed %d is not a frame boundary in %d-byte input", consumed, len(src))
+		}
+		if err == nil {
+			if consumed != prefix {
+				t.Fatalf("success consumed %d, complete prefix is %d", consumed, prefix)
+			}
+		} else if consumed >= prefix {
+			t.Fatalf("decode error consumed %d, complete prefix is %d", consumed, prefix)
+		}
+
+		plain2, consumed2, err2 := decodeZstdPrefix(src)
+		if consumed2 != consumed || (err2 == nil) != (err == nil) || !bytes.Equal(plain2, plain) {
+			t.Fatal("decodeZstdPrefix is not deterministic")
+		}
+
+		if consumed > 0 {
+			again, nAgain, errAgain := decodeZstdPrefix(src[:consumed])
+			if errAgain != nil || nAgain != consumed || !bytes.Equal(again, plain) {
+				t.Fatalf("complete prefix did not round-trip: n=%d err=%v", nAgain, errAgain)
+			}
+		}
+	})
+}
+
+// zstdCompletePrefix is how far zstdFrameLen can walk from the front of
+// src: every complete frame, stopping on a truncated or illegal one.
+func zstdCompletePrefix(src []byte) int {
+	off := 0
+	for off < len(src) {
+		n, ok := zstdFrameLen(src[off:])
+		if !ok || n <= 0 {
+			return off
+		}
+		off += n
+	}
+	return off
+}
+
+func zstdAtFrameBoundary(src []byte, off int) bool {
+	if off < 0 || off > len(src) {
+		return false
+	}
+	seen := 0
+	for seen < off {
+		n, ok := zstdFrameLen(src[seen:])
+		if !ok || n <= 0 || seen+n > off {
+			return false
+		}
+		seen += n
+	}
+	return seen == off
 }
