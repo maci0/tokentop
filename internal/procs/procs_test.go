@@ -60,11 +60,11 @@ func TestMatchEngine(t *testing.T) {
 }
 
 func TestSelfIsSkipped(t *testing.T) {
-	s := NewSampler()
-	list := s.Snapshot()
-	for _, p := range list {
-		if p.PID == os.Getpid() && p.Name == baseName(os.Args[0]) {
-			t.Errorf("toktop's own test process leaked in: %+v", p)
+	for _, list := range [][]Info{NewSampler().Snapshot(), Snapshot()} {
+		for _, p := range list {
+			if p.PID == os.Getpid() && p.Name == baseName(os.Args[0]) {
+				t.Errorf("toktop's own test process leaked in: %+v", p)
+			}
 		}
 	}
 }

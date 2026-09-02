@@ -84,17 +84,9 @@ func scanGet(ctx context.Context, url string) (*http.Response, error) {
 	return resp, nil
 }
 
-// procSampler lazily starts the platform process sampler; engine processes
-// found by name contribute candidate URLs ahead of the blind port scan.
-var procSampler = struct {
-	sync.Once
-	*procs.Sampler
-}{}
-
 func procCandidateURLs() []string {
-	procSampler.Do(func() { procSampler.Sampler = procs.NewSampler() })
 	var urls []string
-	for _, p := range procSampler.Snapshot() {
+	for _, p := range procs.Snapshot() {
 		if p.Engine == "" {
 			continue
 		}

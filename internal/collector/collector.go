@@ -68,7 +68,7 @@ func New(providers []provider.Provider, interval time.Duration) *Collector {
 		providers:     providers,
 		interval:      interval,
 		sysFn:         sysmon.Sample,
-		procFn:        func() []procs.Info { return procSampler.Snapshot() },
+		procFn:        procs.Snapshot,
 		histOut:       map[string]*timedRing{},
 		histIn:        map[string]*timedRing{},
 		prev:          map[string]prevSample{},
@@ -96,10 +96,6 @@ func (c *Collector) instant() time.Time {
 	}
 	return time.Now()
 }
-
-// procSampler is the shared engine-process sampler; nil-safe when the
-// platform has no process table access.
-var procSampler = procs.NewSampler()
 
 // SetSysFn overrides the host-vitals sampler (used for ssh targets whose
 // stats merge local + remote readings). Call before Run.

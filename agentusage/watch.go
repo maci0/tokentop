@@ -214,27 +214,6 @@ var adapters = map[string]adapter{
 	},
 }
 
-// Spec describes where a defined agent keeps its transcripts, so live usage
-// works for agents gauntlet was not compiled to know about (pi and the CLIs
-// built on it, in-house wrappers). The records are parsed generically: any
-// JSONL whose objects carry recognizable token counters works, and one whose
-// objects do not simply reports nothing.
-type Spec struct {
-	// Roots are directories to search, with ~ expanded.
-	Roots []string `json:"roots"`
-	// Suffix filters transcript files (default ".jsonl").
-	Suffix string `json:"suffix,omitempty"`
-	// Cumulative says the counters already include everything before them, so
-	// the first value seen becomes a baseline. Default is per message.
-	Cumulative bool `json:"cumulative,omitempty"`
-
-	// HeaderCwd says the working directory appears once in a session header
-	// rather than on every record, so ownership is decided from the head of
-	// the file. Without it, a transcript whose usage lines carry no cwd is
-	// attributed by location alone.
-	HeaderCwd bool `json:"header_cwd,omitempty"`
-}
-
 var (
 	// ErrEmptyTool is returned by RegisterSpec when the agent name is blank.
 	ErrEmptyTool = errors.New("usage spec needs an agent name")

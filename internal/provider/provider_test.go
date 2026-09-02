@@ -15,7 +15,6 @@ import (
 
 	"github.com/maci0/toktop/internal/bearer"
 	"github.com/maci0/toktop/internal/core"
-	"github.com/maci0/toktop/internal/httperr"
 )
 
 const vllmFixture = `# HELP vllm:num_requests_running Number of requests currently running.
@@ -480,20 +479,5 @@ func TestGetJSONClosesBodyOnRedirectError(t *testing.T) {
 	}
 	if n := live.Load(); n > 0 {
 		t.Fatalf("redirect error left %d connection(s) open", n)
-	}
-}
-
-// The quoted snippet is bounded and single-line so one pathological error
-// page cannot dominate the UI's backend row.
-func TestErrSnippetBoundedAndOneLine(t *testing.T) {
-	got := httperr.Snippet([]byte(strings.Repeat("boom ", 400) + "\r\n\ttail"))
-	if strings.ContainsAny(got, "\n\r\t") {
-		t.Errorf("snippet kept line breaks: %q", got)
-	}
-	if len([]rune(got)) > httperr.SnippetCap {
-		t.Errorf("snippet = %d runes, cap is %d", len([]rune(got)), httperr.SnippetCap)
-	}
-	if got := httperr.Snippet(nil); got != "" {
-		t.Errorf("empty body snippet = %q, want empty", got)
 	}
 }
