@@ -113,9 +113,26 @@ func (w *Watcher) instant() time.Time {
 	return time.Now()
 }
 
-// Run follows agents until the context is canceled. Agent definitions
-// (~/.gauntlet/agents.json, via agentusage.LoadDefinitions) are the caller's
-// to load before Run: a malformed file must be reported where the operator
+// LoadDefinitions reads ~/.gauntlet/agents.json (or $GAUNTLET_HOME/agents.json)
+// so Watch can follow agents that are not built in. A missing file is success.
+// Call it before Run: a malformed file must be reported where the operator
+// can see it, not swallowed inside a goroutine behind the alt screen.
+func LoadDefinitions() error {
+	path := agentusage.DefinitionsPath()
+	if path == "" {
+		return nil
+	}
+	return agentusage.LoadDefinitions(path)
+}
+
+// EnableOpenCodeDB opts into opencode's machine-wide SQLite session store.
+// False means this build was compiled without -tags sqlite.
+func EnableOpenCodeDB(on bool) bool {
+	return agentusage.EnableOpenCodeDB(on)
+}
+
+// Run follows agents until the context is canceled. Call LoadDefinitions
+// before Run so a malformed definitions file is reported where the operator
 // can see it, not swallowed inside a goroutine behind the alt screen.
 func (w *Watcher) Run(ctx context.Context) {
 	discover := time.NewTicker(w.discoverEvery)

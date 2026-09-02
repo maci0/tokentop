@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -732,4 +733,41 @@ func TestShortDirHidesHomeForAPathNotOnDisk(t *testing.T) {
 	if got := shortDir(filepath.Join(link, "toktop")); got != "~/toktop" {
 		t.Errorf("project in home = %q, want ~/toktop", got)
 	}
+}
+
+func TestLoadDefinitions(t *testing.T) {
+	t.Run("missing file is success", func(t *testing.T) {
+		t.Setenv("GAUNTLET_HOME", t.TempDir())
+		if err := LoadDefinitions(); err != nil {
+			t.Fatalf("LoadDefinitions() = %v, want nil", err)
+		}
+	})
+	t.Run("malformed file names itself", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "agents.json"), []byte("{oops"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GAUNTLET_HOME", dir)
+		err := LoadDefinitions()
+		if err == nil {
+			t.Fatal("LoadDefinitions() = nil, want error")
+		}
+		if !strings.Contains(err.Error(), "agents.json") {
+			t.Fatalf("LoadDefinitions() = %v, want mention of agents.json", err)
+		}
+	})
+	t.Run("valid file registers the agent", func(t *testing.T) {
+		dir := t.TempDir()
+		body := `{"deftest-agentwatch":{"usage":{"roots":["~/.deftest/sessions"]}}}`
+		if err := os.WriteFile(filepath.Join(dir, "agents.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GAUNTLET_HOME", dir)
+		if err := LoadDefinitions(); err != nil {
+			t.Fatalf("LoadDefinitions() = %v, want nil", err)
+		}
+		if !slices.Contains(agentusage.Agents(), "deftest-agentwatch") {
+			t.Fatalf("defined agent missing from %v", agentusage.Agents())
+		}
+	})
 }

@@ -26,7 +26,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
-	"github.com/maci0/toktop/agentusage"
 	"github.com/maci0/toktop/internal/agentwatch"
 	"github.com/maci0/toktop/internal/bearer"
 	"github.com/maci0/toktop/internal/collector"
@@ -343,7 +342,7 @@ func main() {
 	if f.agents {
 		loadAgentDefs()
 	}
-	if f.agents && f.opencode && !agentusage.EnableOpenCodeDB(true) {
+	if f.agents && f.opencode && !agentwatch.EnableOpenCodeDB(true) {
 		// Silence here would look like an agent that generates nothing.
 		fmt.Fprintln(os.Stderr, "toktop: --opencode-db needs a build with -tags sqlite; opencode will report no tokens")
 	}
@@ -927,11 +926,7 @@ func warnUnknownEnv() {
 // case; a malformed one is reported instead of swallowed, because agents
 // silently missing from the watch look exactly like agents doing nothing.
 func loadAgentDefs() {
-	path := agentusage.DefinitionsPath()
-	if path == "" {
-		return // no home directory resolved; nothing to load
-	}
-	if err := agentusage.LoadDefinitions(path); err != nil {
+	if err := agentwatch.LoadDefinitions(); err != nil {
 		fmt.Fprintf(os.Stderr, "toktop: %v; watching only the built-in agents\n", err)
 	}
 }

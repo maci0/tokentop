@@ -184,3 +184,39 @@ func asInt(v any) (int, bool) {
 	}
 	return i, true
 }
+
+// parseGeneric reads usage out of an unknown JSONL record by key, the same way
+// the stream parser does. It is what makes a defined agent's transcript
+// readable without a bespoke adapter.
+func parseGeneric(line []byte) (values, string, bool) {
+	ev, ok := parseJSON(line)
+	if !ok || !ev.Usage.Has() {
+		return values{}, "", false
+	}
+	out := counter(ev.Usage.Output)
+	in := counter(ev.Usage.Input)
+	tot := counter(ev.Usage.Total)
+	if tot == 0 && in > 0 {
+		tot = satAdd(in, out)
+	}
+	v := values{
+		output:   out,
+		thinking: counter(ev.Usage.Thinking),
+		total:    tot,
+		input:    in,
+	}
+	if !v.present() {
+		return values{}, "", false
+	}
+	return v, ev.Cwd, true
+}
+
+// genericSessionCwd finds the working directory in a session header, whatever
+// the record is called: the first line that names one wins.
+func genericSessionCwd(line []byte) (string, bool) {
+	ev, ok := parseJSON(line)
+	if !ok || ev.Cwd == "" {
+		return "", false
+	}
+	return ev.Cwd, true
+}

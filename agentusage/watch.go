@@ -34,7 +34,6 @@ package agentusage
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -296,42 +295,6 @@ func expandHome(p string) string {
 		}
 	}
 	return p
-}
-
-// parseGeneric reads usage out of an unknown JSONL record by key, the same way
-// the stream parser does. It is what makes a defined agent's transcript
-// readable without a bespoke adapter.
-func parseGeneric(line []byte) (values, string, bool) {
-	ev, ok := parseJSON(line)
-	if !ok || !ev.Usage.Has() {
-		return values{}, "", false
-	}
-	out := counter(ev.Usage.Output)
-	in := counter(ev.Usage.Input)
-	tot := counter(ev.Usage.Total)
-	if tot == 0 && in > 0 {
-		tot = satAdd(in, out)
-	}
-	v := values{
-		output:   out,
-		thinking: counter(ev.Usage.Thinking),
-		total:    tot,
-		input:    in,
-	}
-	if !v.present() {
-		return values{}, "", false
-	}
-	return v, ev.Cwd, true
-}
-
-// genericSessionCwd finds the working directory in a session header, whatever
-// the record is called: the first line that names one wins.
-func genericSessionCwd(line []byte) (string, bool) {
-	ev, ok := parseJSON(line)
-	if !ok || ev.Cwd == "" {
-		return "", false
-	}
-	return ev.Cwd, true
 }
 
 // Supported reports whether live usage can be read for an agent.
@@ -1217,138 +1180,6 @@ func (w *Watcher) sameDir(cwd string) bool {
 	}
 	resolved, err := filepath.EvalSymlinks(cwd)
 	return err == nil && sameSpelling(resolved, w.dir)
-}
-
-// parseClaude reads one line of a Claude Code transcript. Assistant messages
-// carry per-message usage, so the values are added up. A negative counter is
-// not a measurement: it is clamped to absent, the same rule the generic
-// walker applies, so a corrupted or hostile line cannot subtract from a total.
-func parseClaude(line []byte) (values, string, bool) {
-	var rec struct {
-		Type    string `json:"type"`
-		Cwd     string `json:"cwd"`
-		Message struct {
-			Usage struct {
-				InputTokens              int `json:"input_tokens"`
-				OutputTokens             int `json:"output_tokens"`
-				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-				Details                  struct {
-					ThinkingTokens int `json:"thinking_tokens"`
-				} `json:"output_tokens_details"`
-			} `json:"usage"`
-		} `json:"message"`
-	}
-	if err := json.Unmarshal(line, &rec); err != nil || rec.Type != "assistant" {
-		return values{}, "", false
-	}
-	u := rec.Message.Usage
-	out := counter(u.OutputTokens)
-	in := counter(u.InputTokens)
-	think := counter(u.Details.ThinkingTokens)
-	prompt := satAdd(in, satAdd(counter(u.CacheReadInputTokens), counter(u.CacheCreationInputTokens)))
-	v := values{
-		output:   out,
-		thinking: think,
-		total:    satAdd(prompt, out),
-		input:    prompt,
-	}
-	if !v.present() {
-		return values{}, "", false
-	}
-	return v, rec.Cwd, true
-}
-
-// parseQwen reads one line of a qwen-code chat transcript. Usage is recorded
-// per assistant message, and thinking tokens are output tokens too.
-func parseQwen(line []byte) (values, string, bool) {
-	var rec struct {
-		Type  string `json:"type"`
-		Cwd   string `json:"cwd"`
-		Usage struct {
-			PromptTokenCount     int `json:"promptTokenCount"`
-			CandidatesTokenCount int `json:"candidatesTokenCount"`
-			ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
-			TotalTokenCount      int `json:"totalTokenCount"`
-		} `json:"usageMetadata"`
-	}
-	if err := json.Unmarshal(line, &rec); err != nil || rec.Type != "assistant" {
-		return values{}, "", false
-	}
-	u := rec.Usage
-	thoughts := counter(u.ThoughtsTokenCount)
-	v := values{
-		output:   satAdd(counter(u.CandidatesTokenCount), thoughts),
-		thinking: thoughts,
-		total:    counter(u.TotalTokenCount),
-		input:    counter(u.PromptTokenCount),
-	}
-	if !v.present() {
-		return values{}, "", false
-	}
-	return v, rec.Cwd, true
-}
-
-// codexSessionCwd reads the working directory from a codex session header.
-func codexSessionCwd(line []byte) (string, bool) {
-	var rec struct {
-		Type    string `json:"type"`
-		Payload struct {
-			Cwd string `json:"cwd"`
-		} `json:"payload"`
-	}
-	if err := json.Unmarshal(line, &rec); err != nil || rec.Type != "session_meta" {
-		return "", false
-	}
-	if rec.Payload.Cwd == "" {
-		return "", false
-	}
-	return rec.Payload.Cwd, true
-}
-
-// parseCodex reads one line of a codex rollout. Its token_count events carry
-// the session total, so the values are absolute.
-func parseCodex(line []byte) (values, string, bool) {
-	var rec struct {
-		Type    string `json:"type"`
-		Payload struct {
-			Type string `json:"type"`
-			Cwd  string `json:"cwd"`
-			Info struct {
-				TotalTokenUsage struct {
-					InputTokens           int `json:"input_tokens"`
-					OutputTokens          int `json:"output_tokens"`
-					ReasoningOutputTokens int `json:"reasoning_output_tokens"`
-					TotalTokens           int `json:"total_tokens"`
-				} `json:"total_token_usage"`
-			} `json:"info"`
-		} `json:"payload"`
-	}
-	if err := json.Unmarshal(line, &rec); err != nil {
-		return values{}, "", false
-	}
-	// session_meta names the directory; token_count carries the numbers.
-	if rec.Payload.Type == "token_count" {
-		u := rec.Payload.Info.TotalTokenUsage
-		total := counter(u.TotalTokens)
-		out := counter(u.OutputTokens)
-		think := counter(u.ReasoningOutputTokens)
-		in := counter(u.InputTokens)
-		if remain := satSub(total, out); remain > in {
-			in = remain
-		}
-		v := values{
-			output:   out,
-			thinking: think,
-			total:    total,
-			input:    in,
-		}
-		if !v.present() {
-			return values{}, "", false
-		}
-		return v, "", true
-	}
-	return values{}, "", false
 }
 
 // satAdd sums two non-negative counters, saturating instead of wrapping: a

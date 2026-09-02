@@ -886,15 +886,6 @@ func satAddU64(a, b uint64) uint64 {
 	return a + b
 }
 
-// satMulU64 multiplies saturating at MaxUint64. CtxMax*2 as a KV-byte estimate
-// wraps to 0 at 2^63 tokens, which would print as "ctx 0Mtok".
-func satMulU64(a, b uint64) uint64 {
-	if a != 0 && b > ^uint64(0)/a {
-		return ^uint64(0)
-	}
-	return a * b
-}
-
 func (m Model) probesTitle() string {
 	t := "PROBES"
 	if last, ok := m.lastProbe(); ok {
