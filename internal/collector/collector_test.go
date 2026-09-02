@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -864,4 +865,95 @@ func TestProbeAllWaveGap(t *testing.T) {
 	waitFor(t, func() bool { return hits.Load() == 1 }, "first wave never reached the engine")
 	waitStay(t, 50*time.Millisecond, func() bool { return hits.Load() == 1 },
 		"gap gate let extra waves reach the engine")
+}
+
+func emitOnce(t *testing.T, c *Collector) {
+	t.Helper()
+	ch := make(chan core.Snapshot, 1)
+	c.emit(context.Background(), ch)
+	<-ch
+}
+
+// A successful poll with no loaded models must forget the previous id:
+// probing it would JIT-load (or bill) a cold weight.
+func TestProbeAllDropsModelOnceUnloaded(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		io.WriteString(w, "{\"response\":\"one\",\"done\":true,\"eval_count\":1,\"eval_duration\":1000000}\n")
+	}))
+	defer srv.Close()
+
+	oldGap := probeWaveGap
+	probeWaveGap = 0
+	defer func() { probeWaveGap = oldGap }()
+
+	fp := &fakeProvider{
+		label: "p", addr: srv.URL,
+		m: &provider.Metrics{Models: []core.ModelInfo{{Name: "m"}}},
+	}
+	c := New([]provider.Provider{fp}, time.Second)
+	emitOnce(t, c)
+
+	fp.m = &provider.Metrics{} // still up, nothing loaded
+	emitOnce(t, c)
+
+	c.ProbeAll()
+	waitStay(t, 50*time.Millisecond, func() bool { return hits.Load() == 0 },
+		"probe ran against an unloaded model")
+}
+
+// Catalog entries without VRAM must lose to a loaded model, otherwise 'p'
+// JIT-loads whatever /v1/models listed first.
+func TestProbeAllPrefersLoadedModel(t *testing.T) {
+	var got atomic.Value
+	got.Store("")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if m, _ := body["model"].(string); m != "" {
+			got.Store(m)
+		}
+		io.WriteString(w, "{\"response\":\"one\",\"done\":true,\"eval_count\":1,\"eval_duration\":1000000}\n")
+	}))
+	defer srv.Close()
+
+	oldGap := probeWaveGap
+	probeWaveGap = 0
+	defer func() { probeWaveGap = oldGap }()
+
+	fp := &fakeProvider{
+		label: "p", addr: srv.URL,
+		m: &provider.Metrics{Models: []core.ModelInfo{
+			{Name: "catalog-only"},
+			{Name: "loaded", SizeVRAM: 1 << 30},
+		}},
+	}
+	c := New([]provider.Provider{fp}, time.Second)
+	emitOnce(t, c)
+	c.ProbeAll()
+	waitFor(t, func() bool { return got.Load().(string) == "loaded" },
+		"probe did not target the loaded model")
+}
+
+func TestProbeAllSkipsBlankModelName(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+	}))
+	defer srv.Close()
+
+	oldGap := probeWaveGap
+	probeWaveGap = 0
+	defer func() { probeWaveGap = oldGap }()
+
+	fp := &fakeProvider{
+		label: "p", addr: srv.URL,
+		m: &provider.Metrics{Models: []core.ModelInfo{{Name: "   "}}},
+	}
+	c := New([]provider.Provider{fp}, time.Second)
+	emitOnce(t, c)
+	c.ProbeAll()
+	waitStay(t, 50*time.Millisecond, func() bool { return hits.Load() == 0 },
+		"probe ran with a blank model id")
 }

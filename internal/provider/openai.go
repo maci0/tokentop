@@ -79,13 +79,15 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 	return m, nil
 }
 
-// enrichLMStudio pulls the native /api/v0/models feed: the full model list
-// and context lengths that the thin OpenAI listing lacks.
+// enrichLMStudio pulls the native /api/v0/models feed: loaded LLMs and
+// context lengths that the thin OpenAI listing lacks. Unloaded catalog
+// entries are dropped so a probe cannot JIT-load a cold weight.
 func enrichLMStudio(ctx context.Context, base string, m *Metrics) {
 	var v0 struct {
 		Data []struct {
 			ID         string `json:"id"`
 			Type       string `json:"type"`
+			State      string `json:"state"`
 			MaxContext int64  `json:"max_context_length"`
 		} `json:"data"`
 	}
@@ -96,6 +98,11 @@ func enrichLMStudio(ctx context.Context, base string, m *Metrics) {
 	for _, d := range v0.Data {
 		if d.Type != "" && !strings.EqualFold(d.Type, "llm") {
 			continue // embeddings and friends are noise here
+		}
+		// JIT-loading an unloaded catalog entry on 'p' burns VRAM and
+		// folds load time into TTFT. Missing state (older servers) stays.
+		if d.State != "" && !strings.EqualFold(d.State, "loaded") {
+			continue
 		}
 		mi := core.ModelInfo{Name: d.ID}
 		if d.MaxContext > 0 {

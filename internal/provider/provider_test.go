@@ -317,7 +317,7 @@ func TestPollOllamaModels(t *testing.T) {
 }
 
 // LM Studio enrichment must replace the thin OpenAI listing with the native
-// v0 feed, dropping non-LLM entries and carrying load state + context length.
+// v0 feed, dropping non-LLM and unloaded entries so a probe cannot JIT-load.
 func TestPollLMStudioEnrichment(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -325,6 +325,7 @@ func TestPollLMStudioEnrichment(t *testing.T) {
 			w.Write([]byte(`{"data":[{"id":"qwen"},{"id":"stale-only-here"}]}`))
 		case "/api/v0/models":
 			w.Write([]byte(`{"data":[` +
+				`{"id":"cold","type":"llm","state":"not-loaded","max_context_length":4096},` +
 				`{"id":"embedder","type":"embeddings"},` +
 				`{"id":"qwen","type":"llm","state":"loaded","max_context_length":8192}]}`))
 		default:
@@ -340,7 +341,7 @@ func TestPollLMStudioEnrichment(t *testing.T) {
 	}
 	want := []core.ModelInfo{{Name: "qwen", CtxMax: 8192}}
 	if len(m.Models) != 1 || m.Models[0] != want[0] {
-		t.Fatalf("models = %+v, want %+v (non-llm filtered, v0 feed wins)", m.Models, want)
+		t.Fatalf("models = %+v, want %+v (unloaded and non-llm dropped, v0 feed wins)", m.Models, want)
 	}
 }
 

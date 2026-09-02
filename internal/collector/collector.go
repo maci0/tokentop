@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -283,8 +284,12 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 			} else {
 				ps.KVPct = c.kvPct[key]
 			}
-			if len(r.m.Models) > 0 {
-				c.lastModel[key] = r.m.Models[0].Name
+			if name := probeModelName(r.m.Models); name != "" {
+				c.lastModel[key] = name
+			} else {
+				// Successful poll with nothing loaded: a stale id would
+				// make the next 'p' JIT-load (or bill) a cold model.
+				delete(c.lastModel, key)
 			}
 			outPS, inPS := c.rates(key, r.m, now)
 			ps.OutTokPS = outPS
@@ -468,6 +473,27 @@ func providerKey(p provider.Provider) string {
 		return addr
 	}
 	return p.Label()
+}
+
+// probeModelName picks the model a generation probe should hit.
+// Engine-supplied names are untrusted: blanks are skipped, loaded models
+// (SizeVRAM > 0) win over catalog entries so a probe cannot JIT-load a
+// cold weight, and the id is capped so it cannot bloat the request body.
+func probeModelName(models []core.ModelInfo) string {
+	var fallback string
+	for _, m := range models {
+		name := core.TruncateClusters(strings.TrimSpace(m.Name), probe.ModelNameMax)
+		if name == "" {
+			continue
+		}
+		if m.SizeVRAM > 0 {
+			return name
+		}
+		if fallback == "" {
+			fallback = name
+		}
+	}
+	return fallback
 }
 
 // probeWaveGap is the minimum spacing between probe waves. The UI's 'p' key

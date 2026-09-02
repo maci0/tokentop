@@ -217,6 +217,47 @@ func TestRunOpenAINullErrorIsNotFailure(t *testing.T) {
 	}
 }
 
+// An empty or whitespace model id must not POST: some engines treat "" as
+// "load the default", which is VRAM and (on a billed gateway) tokens.
+func TestRunEmptyModelDoesNotPost(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hits++
+	}))
+	defer srv.Close()
+
+	for _, model := range []string{"", "  ", "\t"} {
+		s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: model})
+		if s.OK || s.Err == "" {
+			t.Fatalf("model %q: expected failure sample, got %+v", model, s)
+		}
+		if !strings.Contains(s.Err, "no model") {
+			t.Errorf("model %q err = %q, want no model", model, s.Err)
+		}
+	}
+	if hits != 0 {
+		t.Fatalf("engine was hit %d times, want 0", hits)
+	}
+}
+
+// Engine-supplied model ids are untrusted and can be megabytes from
+// /v1/models. The request must carry a capped id, never the raw string.
+func TestRunCapsModelName(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	huge := strings.Repeat("m", ModelNameMax+64)
+	Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: huge})
+	name, _ := got["model"].(string)
+	if name != strings.Repeat("m", ModelNameMax) {
+		t.Errorf("model id len = %d, want %d", len(name), ModelNameMax)
+	}
+}
+
 func TestRunRequestsBoundedGeneration(t *testing.T) {
 	var gotOpenAI map[string]any
 	openai := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -262,6 +303,54 @@ func TestRunOpenAIStopsAfterProbeTokens(t *testing.T) {
 	}
 	if s.Tokens != probeTokens {
 		t.Errorf("tokens = %d, want client cap %d", s.Tokens, probeTokens)
+	}
+}
+
+// A single huge content delta counts as one frame, so the frame cap would
+// not hang up. Byte budget must.
+func TestRunOpenAIStopsOnContentBytes(t *testing.T) {
+	payload := strings.Repeat("x", probeContentBytes+8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := http.NewResponseController(w)
+		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", payload)
+		f.Flush()
+		for range 8 {
+			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"more\"}}]}\n\n")
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindVLLM, Base: srv.URL, Model: "m"})
+	if !s.OK {
+		t.Fatalf("probe failed: %+v", s)
+	}
+	if s.Tokens != 1 {
+		t.Errorf("tokens = %d, want hang-up after the first oversized frame", s.Tokens)
+	}
+}
+
+func TestRunOllamaStopsOnContentBytes(t *testing.T) {
+	payload := strings.Repeat("x", probeContentBytes+8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		f := http.NewResponseController(w)
+		fmt.Fprintf(w, `{"response":%q,"done":false}`+"\n", payload)
+		f.Flush()
+		for range 8 {
+			fmt.Fprintf(w, `{"response":"more","done":false}`+"\n")
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	s := Run(context.Background(), Request{Kind: core.KindOllama, Base: srv.URL, Model: "m"})
+	if !s.OK {
+		t.Fatalf("probe failed: %+v", s)
+	}
+	if s.Tokens != 1 {
+		t.Errorf("tokens = %d, want hang-up after the first oversized frame", s.Tokens)
 	}
 }
 

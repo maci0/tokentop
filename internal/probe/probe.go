@@ -32,6 +32,24 @@ const probeTokens = 32
 // little; a billion-token usage field is junk that would poison tok/s.
 const probeTokenTrust = probeTokens * 4
 
+// probeContentBytes is a second hang-up: frame counting treats each
+// SSE/NDJSON content payload as one token, so a gateway that dumps a huge
+// delta in one frame would otherwise keep the connection open (and keep
+// billing) until the HTTP timeout. 32 bytes per requested token covers
+// any encoding of a 32-token reply.
+const probeContentBytes = probeTokens * 32
+
+// probeLineMax is the largest SSE/NDJSON frame we will buffer. A 32-token
+// completion plus wrapper JSON is hundreds of bytes; a megabyte line is
+// the engine ignoring the cap in one shot, and bufio.Scanner only applies
+// the hang-up after the line is fully read.
+const probeLineMax = 16 << 10
+
+// ModelNameMax caps the engine-supplied model id interpolated into the
+// generation request. /v1/models can return megabyte strings; HuggingFace
+// ids fit in well under this.
+const ModelNameMax = 256
+
 const promptText = "Count from one to twenty as words."
 
 type Request struct {
@@ -42,7 +60,14 @@ type Request struct {
 
 // Run performs one probe and returns its sample (OK=false with Err set on failure).
 func Run(ctx context.Context, r Request) core.ProbeSample {
+	r.Model = capModel(r.Model)
 	s := core.ProbeSample{At: time.Now(), Addr: r.Base, Model: r.Model}
+	if r.Model == "" {
+		// An empty id makes some engines load a default model (VRAM and,
+		// on a billed gateway, tokens). Refuse rather than POST.
+		s.Err = "no model"
+		return s
+	}
 	start := time.Now()
 	var (
 		ttft    time.Duration
@@ -95,8 +120,8 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 	}
 	defer resp.Body.Close()
 	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	var reported int
+	sc.Buffer(make([]byte, 0, 4<<10), probeLineMax)
+	var reported, contentBytes int
 	for sc.Scan() {
 		line := bytes.TrimSpace(sc.Bytes())
 		if len(line) == 0 {
@@ -122,10 +147,11 @@ func probeOllama(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 				continue
 			}
 			tokens++
+			contentBytes += len(chunk.Response)
 			if ttft == 0 {
 				ttft = time.Since(s.At)
 			}
-			if tokens >= probeTokens { // engine ignored num_predict: hang up
+			if overBudget(tokens, contentBytes) { // engine ignored num_predict: hang up
 				break
 			}
 			continue
@@ -165,8 +191,8 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 	}
 	defer resp.Body.Close()
 	sc := bufio.NewScanner(resp.Body)
-	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	var reported int
+	sc.Buffer(make([]byte, 0, 4<<10), probeLineMax)
+	var reported, contentBytes int
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if !strings.HasPrefix(line, "data:") {
@@ -202,12 +228,13 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 		for _, c := range chunk.Choices {
 			if c.Delta.Content != "" {
 				tokens++
+				contentBytes += len(c.Delta.Content)
 				if ttft == 0 {
 					ttft = time.Since(s.At)
 				}
 			}
 		}
-		if tokens >= probeTokens { // engine ignored max_tokens: hang up
+		if overBudget(tokens, contentBytes) { // engine ignored max_tokens: hang up
 			break
 		}
 	}
@@ -219,6 +246,19 @@ func probeOpenAI(ctx context.Context, r Request, s *core.ProbeSample) (tokens in
 		return 0, ttft, fmt.Errorf("empty stream")
 	}
 	return n, ttft, nil
+}
+
+// overBudget reports that the client has seen enough generation to hang up.
+// Frame count catches engines that ignore max_tokens one token at a time;
+// byte count catches a single huge delta that would count as one frame.
+func overBudget(tokens, contentBytes int) bool {
+	return tokens >= probeTokens || contentBytes >= probeContentBytes
+}
+
+// capModel trims and bounds an engine-supplied model id. Empty after trim
+// means the caller must not POST: some engines treat "" as "load default".
+func capModel(name string) string {
+	return core.TruncateClusters(strings.TrimSpace(name), ModelNameMax)
 }
 
 // resolveTokens picks a probe's token count. Engine-reported usage is
