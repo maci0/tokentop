@@ -99,16 +99,18 @@ Every externally reachable input, with its code location:
    `--opencode-db` (cmd/toktop/main.go:50-73); positional
    `ssh://[user@]host[:port]` targets (:128-136); and the `update` subcommand
    with `--check` and `--repo owner/name` (cmd/toktop/update.go:42-66).
-   `--repo` is concatenated into the GitHub API path with no owner/name
-   shape check (selfupdate.go:79). The live dashboard refuses to start when
-   stdout is not a terminal (main.go:96-101); `--once` is the non-TTY path.
+   `--repo` is checked with `ValidateRepo` (owner/name only). An `ssh://`
+   URL that embeds a password, path, query, or fragment is rejected at
+   startup. The live dashboard refuses to start when stdout is not a
+   terminal (main.go:96-101); `--once` is the non-TTY path.
 3. **Environment variables**: secrets `OMNIROUTE_API_KEY`,
    `TOKTOP_BEARER`, `TOKTOP_SSH_PASSWORD`, `GITHUB_TOKEN`; plus
-   `SSH_AUTH_SOCK`, `TOKTOP_COLUMNS`/`TOKTOP_LINES`
-   (cmd/toktop/main.go:118-125; internal/remote/auth.go:101,163;
-   internal/selfupdate/selfupdate.go:85-87; cmd/toktop/main.go:553-560),
-   `GAUNTLET_HOME` (agentusage/definitions.go:125-132), and `XDG_DATA_HOME`
-   (agentusage/opencode_sqlite.go:57-65, only when `--opencode-db` is on).
+   `SSH_AUTH_SOCK`, `TOKTOP_COLUMNS`/`TOKTOP_LINES`, `TOKTOP_LOG_LEVEL`
+   (cmd/toktop/main.go; internal/remote/auth.go; internal/selfupdate;
+   internal/ingest), `GAUNTLET_HOME` (agentusage/definitions.go),
+   `XDG_DATA_HOME` (agentusage/opencode_sqlite.go, only when
+   `--opencode-db` is on), and `TOKTOP_SCREENSHOT_FONT` (scripts/screenshot.py
+   only; the binary ignores it).
 4. **Self-update network fetches** (outbound HTTPS): latest-release lookup on
    api.github.com, then download of the checksums archive and platform asset
    named by that response (internal/selfupdate/selfupdate.go:75-107,152-163,

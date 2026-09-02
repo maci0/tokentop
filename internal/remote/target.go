@@ -22,7 +22,10 @@ type Target struct {
 }
 
 // ParseTarget parses ssh://[user@]host[:port] and applies ~/.ssh/config
-// overrides for everything the URL leaves unset.
+// overrides for everything the URL leaves unset. A password in the URL is
+// rejected: it would be visible in process listings, and this parser would
+// otherwise ignore it. A path, query, or fragment is rejected rather than
+// ignored.
 func ParseTarget(raw string) (Target, error) {
 	t, err := parseURLTarget(raw)
 	if err != nil {
@@ -56,7 +59,17 @@ func parseURLTarget(raw string) (Target, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return Target{}, fmt.Errorf("bad ssh target: %w", err)
+		// url.Parse may echo userinfo, which is the password when one was
+		// embedded; do not wrap that text into our error.
+		return Target{}, errors.New("bad ssh target")
+	}
+	if u.User != nil {
+		if _, set := u.User.Password(); set {
+			return Target{}, errors.New("ssh target must not contain a password; set TOKTOP_SSH_PASSWORD or use --ssh-key")
+		}
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return Target{}, errors.New("ssh target must be ssh://[user@]host[:port]")
 	}
 	t := Target{Host: u.Hostname()}
 	if u.User != nil {

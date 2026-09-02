@@ -101,7 +101,7 @@ var (
 func registerFlags() *cliFlags {
 	flagsOnce.Do(func() {
 		flag.BoolVar(&cli.demo, "demo", false, "run against a simulated fleet instead of real backends")
-		flag.IntVar(&cli.probeSecs, "probe", 0, "auto-probe every N seconds (0=off)")
+		flag.IntVar(&cli.probeSecs, "probe", 0, fmt.Sprintf("auto-probe every N seconds (0=off, max %d)", maxProbeSecs))
 		flag.DurationVar(&cli.interval, "interval", time.Second, "poll interval as a Go duration such as 1s or 500ms")
 		flag.StringVar(&cli.ingest, "ingest", "127.0.0.1:8420", "agent event ingest listen address")
 		flag.BoolVar(&cli.noIngest, "no-ingest", false, "disable the agent event HTTP endpoint")
@@ -109,7 +109,7 @@ func registerFlags() *cliFlags {
 		flag.BoolVar(&cli.opencode, "opencode-db", false, "with --agents: also read opencode's SQLite session database (needs a build with -tags sqlite)")
 		flag.BoolVar(&cli.once, "once", false, "render one frame and exit (non-interactive)")
 		flag.BoolVar(&cli.plain, "plain", false, "with --once: render a linear text report instead of the dashboard frame (screen-reader friendly)")
-		flag.IntVar(&cli.frames, "frames", 2, "with --once: snapshots to accumulate before rendering")
+		flag.IntVar(&cli.frames, "frames", 2, fmt.Sprintf("with --once: snapshots to accumulate before rendering (max %d)", core.HistoryLen))
 		flag.BoolVar(&cli.noReload, "no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
 		flag.Int64Var(&cli.seed, "seed", 42, "demo RNG seed")
 		flag.StringVar(&cli.sshKey, "ssh-key", "", "private key for ssh:// targets (overrides ~/.ssh/config)")
@@ -160,6 +160,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
 		os.Exit(2)
 	}
+	if err := validateLogLevelEnv(); err != nil {
+		fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
+		os.Exit(2)
+	}
 	if f.once {
 		if err := validateOnceEnv(); err != nil {
 			fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
@@ -184,8 +188,9 @@ func main() {
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	warnUnknownEnv()
-	warnIgnoredFlags(explicit, f.demo, f.once, f.agents, f.noIngest, len(remoteTargets))
+	warnIgnoredFlags(explicit, f.demo, f.once, f.agents, f.noIngest, len(f.adds), len(remoteTargets))
 	warnIgnoredFrameEnv(f.once)
+	warnUnusedEnv(explicit["bearer"], f.demo, f.noIngest, len(f.adds), len(remoteTargets))
 	if !f.noIngest {
 		if err := validateIngestAddr(f.ingest); err != nil {
 			fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
@@ -593,10 +598,11 @@ Flags:
 Positional arguments are ssh:// targets and may repeat; help and version
 are also accepted as commands. http(s) URLs are rejected with an --add hint;
 anything else points at --help. --add URLs must be http(s) with a host and
-must not embed userinfo. Bearer tokens fall back to $OMNIROUTE_API_KEY then
-$TOKTOP_BEARER (an explicit --bearer, even empty, wins) and are sent only
-to --add endpoints; ssh passwords come from the terminal prompt or
-$TOKTOP_SSH_PASSWORD. See README.md for all environment variables.
+must not embed userinfo. ssh:// targets must be ssh://[user@]host[:port]
+and must not embed a password (use $TOKTOP_SSH_PASSWORD or --ssh-key).
+Bearer tokens fall back to $OMNIROUTE_API_KEY then $TOKTOP_BEARER (an
+explicit --bearer, even empty, wins) and are sent only to --add endpoints.
+See README.md for all environment variables.
 `)
 }
 
@@ -678,7 +684,7 @@ func unexpectedArg(arg string) error {
 
 // warnIgnoredFlags names flags passed explicitly but with no effect in the
 // chosen mode: a silently dropped knob looks like a broken feature.
-func warnIgnoredFlags(set map[string]bool, demo, once, agents, noIngest bool, nRemote int) {
+func warnIgnoredFlags(set map[string]bool, demo, once, agents, noIngest bool, nAdd, nRemote int) {
 	if set["opencode-db"] && !agents {
 		fmt.Fprintln(os.Stderr, "toktop: --opencode-db has no effect without --agents")
 	}
@@ -702,6 +708,9 @@ func warnIgnoredFlags(set map[string]bool, demo, once, agents, noIngest bool, nR
 	}
 	if demo && set["bearer"] {
 		fmt.Fprintln(os.Stderr, "toktop: --bearer has no effect with --demo")
+	}
+	if set["bearer"] && !demo && nAdd == 0 {
+		fmt.Fprintln(os.Stderr, "toktop: --bearer has no effect without --add")
 	}
 	if demo && set["ssh-key"] {
 		fmt.Fprintln(os.Stderr, "toktop: --ssh-key has no effect with --demo")
@@ -729,6 +738,38 @@ func warnIgnoredFrameEnv(once bool) {
 	}
 }
 
+// warnUnusedEnv names secret and log-level variables that are set but will
+// not be read in this mode, matching warnIgnoredFlags for the flag form.
+func warnUnusedEnv(bearerFlag, demo, noIngest bool, nAdd, nRemote int) {
+	if demo || nRemote == 0 {
+		if os.Getenv("TOKTOP_SSH_PASSWORD") != "" {
+			if demo {
+				fmt.Fprintln(os.Stderr, "toktop: $TOKTOP_SSH_PASSWORD has no effect with --demo")
+			} else {
+				fmt.Fprintln(os.Stderr, "toktop: $TOKTOP_SSH_PASSWORD has no effect without an ssh:// target")
+			}
+		}
+	}
+	if !bearerFlag && (demo || nAdd == 0) {
+		reason := "without --add"
+		if demo {
+			reason = "with --demo"
+		}
+		for _, name := range [...]string{"OMNIROUTE_API_KEY", "TOKTOP_BEARER"} {
+			if os.Getenv(name) != "" {
+				fmt.Fprintf(os.Stderr, "toktop: $%s has no effect %s\n", name, reason)
+			}
+		}
+	}
+	if noIngest && os.Getenv(ingest.LogLevelEnv) != "" {
+		fmt.Fprintf(os.Stderr, "toktop: $%s has no effect with --no-ingest\n", ingest.LogLevelEnv)
+	}
+}
+
+// maxProbeSecs is 24h. Larger values overflow time.Duration(n)*time.Second
+// on 64-bit ints (NewTicker then panics) and are not a useful auto-probe.
+const maxProbeSecs = 24 * 60 * 60
+
 // validateFlags rejects out-of-range values at startup: a running dashboard
 // that ignores what it was asked to do is a misconfiguration nobody can see.
 func validateFlags(once bool, interval time.Duration, probeSecs, frames int) error {
@@ -738,10 +779,23 @@ func validateFlags(once bool, interval time.Duration, probeSecs, frames int) err
 	if probeSecs < 0 {
 		return fmt.Errorf("--probe must be >= 0 (0 disables auto-probe), got %d", probeSecs)
 	}
+	if probeSecs > maxProbeSecs {
+		return fmt.Errorf("--probe must be <= %d (seconds), got %d", maxProbeSecs, probeSecs)
+	}
 	if once && frames < 1 {
 		return fmt.Errorf("--frames must be >= 1, got %d", frames)
 	}
+	if once && frames > core.HistoryLen {
+		return fmt.Errorf("--frames must be <= %d (chart history length), got %d", core.HistoryLen, frames)
+	}
 	return nil
+}
+
+// validateLogLevelEnv rejects a set-but-unknown TOKTOP_LOG_LEVEL before the
+// ingest logger is built. Empty means the info default.
+func validateLogLevelEnv() error {
+	_, err := ingest.ParseLogLevel(os.Getenv(ingest.LogLevelEnv))
+	return err
 }
 
 // validateIngestAddr rejects listen addresses that are empty or not host:port
@@ -824,13 +878,17 @@ func validateOnceEnv() error {
 	return nil
 }
 
-// toktopEnvVars are the TOKTOP_* environment variables this build reads;
-// see also OMNIROUTE_API_KEY, SSH_AUTH_SOCK and the ssh defaults.
+// toktopEnvVars are the TOKTOP_* names this process recognizes. Most are
+// read here; TOKTOP_SCREENSHOT_FONT is used only by scripts/screenshot.py
+// and is listed so a developer export is not reported as a typo.
+// See also OMNIROUTE_API_KEY, SSH_AUTH_SOCK and the ssh defaults.
 var toktopEnvVars = map[string]bool{
-	"TOKTOP_BEARER":       true,
-	"TOKTOP_SSH_PASSWORD": true,
-	"TOKTOP_COLUMNS":      true,
-	"TOKTOP_LINES":        true,
+	"TOKTOP_BEARER":          true,
+	"TOKTOP_SSH_PASSWORD":    true,
+	"TOKTOP_COLUMNS":         true,
+	"TOKTOP_LINES":           true,
+	"TOKTOP_LOG_LEVEL":       true,
+	"TOKTOP_SCREENSHOT_FONT": true, // scripts/screenshot.py; this binary ignores it
 }
 
 // warnUnknownEnv reports unrecognized TOKTOP_* variables once at startup:

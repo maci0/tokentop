@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1550,4 +1551,45 @@ func TestCloseReleasesListenerWithoutServe(t *testing.T) {
 		t.Fatalf("listener still bound after Close without Serve: %v", err)
 	}
 	ln.Close()
+}
+
+func TestParseLogLevel(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    slog.Level
+		wantErr bool
+	}{
+		{in: "", want: slog.LevelInfo},
+		{in: "info", want: slog.LevelInfo},
+		{in: "INFO", want: slog.LevelInfo},
+		{in: " debug ", want: slog.LevelDebug},
+		{in: "warn", want: slog.LevelWarn},
+		{in: "warning", want: slog.LevelWarn},
+		{in: "error", want: slog.LevelError},
+		{in: "trace", wantErr: true},
+		{in: "inf", wantErr: true},
+	}
+	for _, tt := range tests {
+		got, err := ParseLogLevel(tt.in)
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("ParseLogLevel(%q) = %v, want error", tt.in, got)
+			}
+			continue
+		}
+		if err != nil || got != tt.want {
+			t.Errorf("ParseLogLevel(%q) = %v, %v, want %v, nil", tt.in, got, err, tt.want)
+		}
+	}
+}
+
+func TestNewIngestLoggerHonorsLogLevel(t *testing.T) {
+	t.Setenv(LogLevelEnv, "error")
+	lg := newIngestLogger()
+	if !lg.Enabled(context.Background(), slog.LevelError) {
+		t.Fatal("error should be enabled")
+	}
+	if lg.Enabled(context.Background(), slog.LevelWarn) {
+		t.Fatal("warn should be disabled at error floor")
+	}
 }

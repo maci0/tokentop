@@ -87,7 +87,18 @@ Reading is done by this repo's own `agentusage` package, which gauntlet also
 imports, so both tools report the same numbers. Agents defined in
 `~/.gauntlet/agents.json` are picked up here too; a malformed file is reported
 at startup rather than silently shrinking the watch to the built-in agents.
-Set `GAUNTLET_HOME` to read that file from somewhere else.
+Set `GAUNTLET_HOME` to read that file from somewhere else. Only the `usage`
+block matters here (launch fields are ignored):
+
+```json
+{
+  "myagent": {
+    "usage": {
+      "roots": ["~/.myagent/sessions"]
+    }
+  }
+}
+```
 
 ### Using the Go package
 
@@ -246,7 +257,7 @@ Attach anything explicitly:
 
 ```
 toktop --add http://10.0.0.5:8000        # repeatable
-toktop ssh://user@host                   # remote engines + host vitals
+toktop ssh://user@host                   # remote engines + host vitals (no password in the URL)
 ```
 
 SSH mode is built in (pure Go, no ssh binary needed) and the remote only
@@ -264,9 +275,11 @@ rows (`nvidia-smi`, or `rocm-smi` on AMD boxes).
 Auth tries, in order: `--ssh-key PATH`, keys from `~/.ssh/config`
 (`HostName`, `User`, `Port`, `IdentityFile` are honored), your default
 keys, ssh-agent, and finally a password prompt when stdin is a terminal
-(or set `TOKTOP_SSH_PASSWORD` for headless runs). Host keys use
-trust-on-first-use, stored under your config dir; a changed key is refused
-loudly.
+(or set `TOKTOP_SSH_PASSWORD` for headless runs). `ssh://user:pass@host`
+is rejected: the password would sit in argv, and is not how auth is
+configured. A path, query, or fragment on the URL is rejected rather than
+ignored. Host keys use trust-on-first-use, stored under your config dir;
+a changed key is refused loudly.
 
 ## Keys
 
@@ -338,7 +351,8 @@ toktop version    same as --version
 --demo            simulated fleet, zero setup
 --add URL         attach an openai-compatible http(s) endpoint (repeatable;
                   host required, no userinfo; use --bearer / $TOKTOP_BEARER)
-ssh://user@host   positional; monitor remote hosts (repeatable)
+ssh://user@host   positional; monitor remote hosts (repeatable;
+                  ssh://[user@]host[:port] only, no password in the URL)
 --ssh-key PATH    private key for ssh targets (overrides ~/.ssh/config;
                   ~ is expanded; a missing file aborts at startup)
 --bearer TOKEN    bearer token sent to --add endpoints only; OmniRoute API
@@ -347,7 +361,7 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 --agents          watch AI coding agents on this machine (session logs)
 --opencode-db     with --agents: also read opencode's SQLite session
                   database (needs a build with the sqlite tag)
---probe N         auto-probe every N seconds
+--probe N         auto-probe every N seconds (0=off, max 86400)
 --interval D      poll interval (Go duration such as 1s or 500ms; default 1s)
 --ingest ADDR     agent event listen address, host:port
                   (default 127.0.0.1:8420; empty is rejected)
@@ -356,6 +370,7 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 --plain           with --once: linear text report instead of the dashboard
                   frame (screen-reader friendly)
 --frames N        with --once: snapshots to accumulate before rendering
+                  (max 180, the chart history length)
 --seed N          demo RNG seed
 --no-hot-reload   disable restart-on-rebuild while running
 --version         print version and exit
@@ -372,6 +387,8 @@ Password auth for ssh targets: interactive prompt, or `TOKTOP_SSH_PASSWORD`.
 | `TOKTOP_BEARER` | bearer token fallback for `--bearer` (checked after `OMNIROUTE_API_KEY`) |
 | `TOKTOP_SSH_PASSWORD` | ssh password for headless runs; otherwise an interactive prompt |
 | `TOKTOP_COLUMNS` / `TOKTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20, and a set-but-invalid value aborts with exit code 2 |
+| `TOKTOP_LOG_LEVEL` | ingest audit log floor: `debug`, `info` (default), `warn`, or `error`; a set-but-invalid value aborts with exit code 2 |
+| `TOKTOP_SCREENSHOT_FONT` | used only by `scripts/screenshot.py` (path to a regular-weight `.ttf`); the `toktop` binary ignores it |
 | `GITHUB_TOKEN` | optional; authenticates `toktop update`'s GitHub API calls past the anonymous rate limit |
 | `GAUNTLET_HOME` | directory holding `agents.json` (default `~/.gauntlet`) |
 | `XDG_DATA_HOME` | with `--opencode-db`: directory under which `opencode/opencode.db` is read (default `~/.local/share`) |
@@ -389,10 +406,16 @@ the key is attached as `toktop --add http://127.0.0.1:20128` with the token
 in the environment. `--ingest` must be `host:port` (empty would bind every
 interface on an ephemeral port and is rejected). Unknown `TOKTOP_*`
 variables are reported at startup, so a typo fails loudly instead of doing
-nothing. Out-of-range flag values (`--interval 0`, negative `--probe`,
-`--frames < 1` with `--once`, a malformed `--add` or `--ingest`) abort with
-exit code 2 instead of being silently adjusted; so do out-of-range
-`TOKTOP_COLUMNS` / `TOKTOP_LINES` when `--once` renders.
+nothing (`TOKTOP_SCREENSHOT_FONT` is recognized so a developer export is
+not reported as a typo). `$TOKTOP_BEARER` / `$OMNIROUTE_API_KEY` without
+`--add`, `$TOKTOP_SSH_PASSWORD` without an `ssh://` target, and
+`$TOKTOP_LOG_LEVEL` with `--no-ingest` are named as unused, matching the
+flag warnings. Out-of-range flag values (`--interval 0`, negative `--probe`,
+`--probe` above 86400, `--frames < 1` or above 180 with `--once`, a
+malformed `--add` or `--ingest`, an `ssh://` URL with a password, path,
+query, or fragment) abort with exit code 2 instead of being silently
+adjusted; so do out-of-range `TOKTOP_COLUMNS` / `TOKTOP_LINES` when
+`--once` renders, and a set-but-invalid `TOKTOP_LOG_LEVEL`.
 
 ## Build & test
 

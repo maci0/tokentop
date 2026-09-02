@@ -57,9 +57,13 @@ func TestValidateFlags(t *testing.T) {
 		{name: "negative interval rejected", interval: -time.Second, wantErr: "--interval"},
 		{name: "zero interval rejected", interval: 0, wantErr: "--interval"},
 		{name: "negative probe rejected", interval: time.Second, probeSecs: -5, wantErr: "--probe"},
+		{name: "probe at cap accepted", interval: time.Second, probeSecs: maxProbeSecs},
+		{name: "probe above cap rejected", interval: time.Second, probeSecs: maxProbeSecs + 1, wantErr: "--probe"},
 		{name: "frames unchecked without --once", interval: time.Second, frames: 0},
 		{name: "zero frames with --once rejected", once: true, interval: time.Second, frames: 0, wantErr: "--frames"},
 		{name: "negative frames with --once rejected", once: true, interval: time.Second, frames: -1, wantErr: "--frames"},
+		{name: "frames at history length accepted", once: true, interval: time.Second, frames: core.HistoryLen},
+		{name: "frames above history length rejected", once: true, interval: time.Second, frames: core.HistoryLen + 1, wantErr: "--frames"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -124,6 +128,8 @@ func TestWarnUnknownEnv(t *testing.T) {
 		t.Setenv("TOKTOP_SSH_PASSWORD", "x")
 		t.Setenv("TOKTOP_COLUMNS", "80")
 		t.Setenv("TOKTOP_LINES", "24")
+		t.Setenv("TOKTOP_LOG_LEVEL", "warn")
+		t.Setenv("TOKTOP_SCREENSHOT_FONT", "/tmp/Meslo.ttf")
 		if got := captureWarnUnknownEnv(t); got != "" {
 			t.Fatalf("warnUnknownEnv() printed %q, want silence", got)
 		}
@@ -239,6 +245,8 @@ func TestUsage(t *testing.T) {
 		"OMNIROUTE_API_KEY",     // env fallbacks named
 		"--add",                 // http(s) leftovers hint at --add
 		"userinfo",              // --add must not embed credentials
+		"TOKTOP_SSH_PASSWORD",   // ssh URL must not embed a password
+		"ssh://[user@]host",     // ssh target shape
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("usage() missing %q", want)
@@ -310,6 +318,7 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		once     bool
 		agents   bool
 		noIngest bool
+		nAdd     int
 		nRemote  int
 		wantSub  string // empty means silence expected
 		wantAlso string // additional flag that must be named
@@ -332,6 +341,8 @@ func TestWarnIgnoredFlags(t *testing.T) {
 		{name: "add with demo warns", set: map[string]bool{"add": true}, demo: true, wantSub: "--add"},
 		{name: "add without demo silent", set: map[string]bool{"add": true}},
 		{name: "bearer with demo warns", set: map[string]bool{"bearer": true}, demo: true, wantSub: "--bearer"},
+		{name: "bearer without add warns", set: map[string]bool{"bearer": true}, wantSub: "--bearer"},
+		{name: "bearer with add silent", set: map[string]bool{"bearer": true}, nAdd: 1},
 		{name: "ssh-key with demo warns", set: map[string]bool{"ssh-key": true}, demo: true, nRemote: 1,
 			wantSub: "--ssh-key"},
 		{name: "ssh-key without target warns", set: map[string]bool{"ssh-key": true}, wantSub: "--ssh-key"},
@@ -346,7 +357,7 @@ func TestWarnIgnoredFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := captureStderr(t, func() {
-				warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents, tt.noIngest, tt.nRemote)
+				warnIgnoredFlags(tt.set, tt.demo, tt.once, tt.agents, tt.noIngest, tt.nAdd, tt.nRemote)
 			})
 			if tt.wantSub == "" {
 				if got != "" {
@@ -431,6 +442,85 @@ func TestWarnIgnoredFrameEnv(t *testing.T) {
 			}
 			if !strings.Contains(got, tt.wantSub) {
 				t.Fatalf("warnIgnoredFrameEnv() printed %q, want mention of %q", got, tt.wantSub)
+			}
+		})
+	}
+}
+
+func TestWarnUnusedEnv(t *testing.T) {
+	isolateToktopEnv(t)
+	t.Setenv("OMNIROUTE_API_KEY", "")
+	tests := []struct {
+		name       string
+		bearerFlag bool
+		demo       bool
+		noIngest   bool
+		nAdd       int
+		nRemote    int
+		sshPass    string
+		omni       string
+		bearer     string
+		logLevel   string
+		wantSub    string
+	}{
+		{name: "unset is silent"},
+		{name: "ssh password without target warns", sshPass: "x", wantSub: "TOKTOP_SSH_PASSWORD"},
+		{name: "ssh password with target silent", sshPass: "x", nRemote: 1},
+		{name: "ssh password with demo warns", sshPass: "x", demo: true, nRemote: 1, wantSub: "TOKTOP_SSH_PASSWORD"},
+		{name: "bearer env without add warns", bearer: "x", wantSub: "TOKTOP_BEARER"},
+		{name: "omni env without add warns", omni: "x", wantSub: "OMNIROUTE_API_KEY"},
+		{name: "bearer env with add silent", bearer: "x", nAdd: 1},
+		{name: "bearer env with demo warns", bearer: "x", demo: true, nAdd: 1, wantSub: "TOKTOP_BEARER"},
+		{name: "bearer flag suppresses env warning", bearerFlag: true, bearer: "x"},
+		{name: "log level with no-ingest warns", logLevel: "warn", noIngest: true, wantSub: "TOKTOP_LOG_LEVEL"},
+		{name: "log level with ingest silent", logLevel: "warn"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TOKTOP_SSH_PASSWORD", tt.sshPass)
+			t.Setenv("OMNIROUTE_API_KEY", tt.omni)
+			t.Setenv("TOKTOP_BEARER", tt.bearer)
+			t.Setenv("TOKTOP_LOG_LEVEL", tt.logLevel)
+			got := captureStderr(t, func() {
+				warnUnusedEnv(tt.bearerFlag, tt.demo, tt.noIngest, tt.nAdd, tt.nRemote)
+			})
+			if tt.wantSub == "" {
+				if got != "" {
+					t.Fatalf("warnUnusedEnv() printed %q, want silence", got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.wantSub) {
+				t.Fatalf("warnUnusedEnv() printed %q, want mention of %q", got, tt.wantSub)
+			}
+		})
+	}
+}
+
+func TestValidateLogLevelEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr string
+	}{
+		{name: "unset passes"},
+		{name: "empty means unset", value: ""},
+		{name: "info passes", value: "info"},
+		{name: "warn passes", value: "WARN"},
+		{name: "bogus rejected", value: "trace", wantErr: "TOKTOP_LOG_LEVEL"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TOKTOP_LOG_LEVEL", tt.value)
+			err := validateLogLevelEnv()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateLogLevelEnv() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("validateLogLevelEnv() = %v, want error mentioning %q", err, tt.wantErr)
 			}
 		})
 	}

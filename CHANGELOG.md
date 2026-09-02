@@ -12,6 +12,9 @@ support channel (see SECURITY.md).
 
 ### Added
 
+- `$TOKTOP_LOG_LEVEL` sets the ingest audit log floor (`debug`, `info`,
+  `warn`, `error`; default `info`). A set-but-invalid value aborts at
+  startup.
 - Ingest `POST /v1/events` honors `Idempotency-Key`: when an event omits
   `id`, the key plus the line's index is used, so a retried POST of the same
   stream is ignored instead of double-counted.
@@ -56,6 +59,16 @@ support channel (see SECURITY.md).
 - SSH connections use the library's supported algorithms, so ssh-rsa
   (SHA-1) and DSA host keys are not accepted.
 - Ingest responses include `Cross-Origin-Resource-Policy: same-origin`.
+- `ssh://user:pass@host` is rejected at startup (use `$TOKTOP_SSH_PASSWORD`
+  or `--ssh-key`); a path, query, or fragment on the URL is rejected rather
+  than ignored. The parse error does not echo the password.
+- `--probe` above 86400 seconds is rejected so the auto-probe ticker cannot
+  overflow. `--frames` above 180 with `--once` is rejected (chart history
+  length).
+- `$TOKTOP_BEARER` / `$OMNIROUTE_API_KEY` without `--add`,
+  `$TOKTOP_SSH_PASSWORD` without an `ssh://` target, `--bearer` without
+  `--add`, and `$TOKTOP_LOG_LEVEL` with `--no-ingest` are named as unused.
+  `$TOKTOP_SCREENSHOT_FONT` is no longer reported as an unknown variable.
 - `agentusage` counts a thinking-only reading (opencode SQLite, and Claude /
   Qwen / Codex transcript lines that carry reasoning with no billed output)
   instead of reporting nothing until the first completion token.

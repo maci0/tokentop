@@ -63,9 +63,16 @@ func TestParseTarget(t *testing.T) {
 		{"ssh://maci@192.168.0.211", "maci", "192.168.0.211", 22, false},
 		{"ssh://root@gpu-box:2222", "root", "gpu-box", 2222, false},
 		{"ssh://192.168.1.5", "", "192.168.1.5", 22, false},
+		{"ssh://maci@box/", "maci", "box", 22, false},
 		{"http://x", "", "", 0, true},
 		{"ssh://", "", "", 0, true},
 		{"ssh://h:notaport", "", "h", 0, true},
+		{"ssh://user:s3cret@box", "", "", 0, true},
+		{"ssh://:s3cret@box", "", "", 0, true},
+		{"ssh://user:@box", "", "", 0, true},
+		{"ssh://box/opt/engines", "", "", 0, true},
+		{"ssh://box?jump=1", "", "", 0, true},
+		{"ssh://box#frag", "", "", 0, true},
 	}
 	for _, c := range cases {
 		got, err := ParseTarget(c.raw)
@@ -83,6 +90,27 @@ func TestParseTarget(t *testing.T) {
 			t.Errorf("ParseTarget(%q) = %+v, want user=%q host=%q port=%d",
 				c.raw, got, c.user, c.host, c.port)
 		}
+	}
+}
+
+func TestParseTargetPasswordNotLeaked(t *testing.T) {
+	const secret = "s3cret"
+	_, err := ParseTarget("ssh://user:" + secret + "@box")
+	if err == nil {
+		t.Fatal("password in ssh URL accepted")
+	}
+	if !strings.Contains(err.Error(), "password") {
+		t.Fatalf("error = %q, want mention of password", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("error = %q leaked the password", err)
+	}
+	_, err = ParseTarget("ssh://user:" + secret + "@box:notaport")
+	if err == nil {
+		t.Fatal("malformed ssh URL with password accepted")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("parse error = %q leaked the password", err)
 	}
 }
 

@@ -153,8 +153,34 @@ func requestID(r *http.Request) string {
 	return incomingRequestID(r)
 }
 
+// LogLevelEnv is the process environment variable that sets the ingest
+// audit-log floor. Empty means info. Main validates the value at startup.
+const LogLevelEnv = "TOKTOP_LOG_LEVEL"
+
+// ParseLogLevel maps a TOKTOP_LOG_LEVEL value onto a slog floor.
+// Empty is info. Accepted names are debug, info, warn (or warning), and error.
+func ParseLogLevel(s string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "info":
+		return slog.LevelInfo, nil
+	case "debug":
+		return slog.LevelDebug, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return 0, fmt.Errorf("$%s must be debug, info, warn, or error, got %q", LogLevelEnv, s)
+	}
+}
+
 func newIngestLogger() *slog.Logger {
+	lvl, err := ParseLogLevel(os.Getenv(LogLevelEnv))
+	if err != nil {
+		lvl = slog.LevelInfo // main already rejected this; stay quiet if constructed in tests
+	}
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level:       lvl,
 		ReplaceAttr: utcLogTime,
 	}))
 }
