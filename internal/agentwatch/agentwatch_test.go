@@ -39,6 +39,13 @@ func (r *recorder) all() []core.AgentEvent {
 	return append([]core.AgentEvent(nil), r.events...)
 }
 
+func (w *Watcher) following(pid int) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, ok := w.tracked[pid]
+	return ok
+}
+
 func claudeHome(t *testing.T) (work, transcript string) {
 	t.Helper()
 	home := t.TempDir()
@@ -100,7 +107,7 @@ func TestWatchesARunningAgent(t *testing.T) {
 	go w.Run(ctx)
 
 	// Give discovery a chance to find the process, then let the agent "spend".
-	waitFor(t, 3*time.Second, func() bool { return w.Following(cmd.Process.Pid) })
+	waitFor(t, 3*time.Second, func() bool { return w.following(cmd.Process.Pid) })
 	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 120))
 	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 240))
 
@@ -179,7 +186,7 @@ func TestPIDReuseRetargetsWatcher(t *testing.T) {
 	defer w.stopAll()
 
 	w.discover(ctx)
-	if !w.Following(pid) {
+	if !w.following(pid) {
 		t.Fatal("first process not followed")
 	}
 	w.mu.Lock()
@@ -264,9 +271,9 @@ func TestForgetsExitedAgents(t *testing.T) {
 	// Scoped to this process: a developer machine usually has real agents
 	// running, so a global count would never reach zero.
 	pid := cmd.Process.Pid
-	waitFor(t, 3*time.Second, func() bool { return w.Following(pid) })
+	waitFor(t, 3*time.Second, func() bool { return w.following(pid) })
 	_, _ = cmd.Process.Wait()
-	waitFor(t, 3*time.Second, func() bool { return !w.Following(pid) })
+	waitFor(t, 3*time.Second, func() bool { return !w.following(pid) })
 }
 
 // TestSilentAgentProducesNoEvents is the honesty half: an agent that writes no
@@ -297,7 +304,7 @@ func TestSilentAgentProducesNoEvents(t *testing.T) {
 	ctx := t.Context()
 	go w.Run(ctx)
 
-	waitFor(t, 3*time.Second, func() bool { return w.Following(cmd.Process.Pid) })
+	waitFor(t, 3*time.Second, func() bool { return w.following(cmd.Process.Pid) })
 	// Followed, with nothing written to the transcript. A few read cycles
 	// must stay silent; checking before discovery would pass even if a
 	// silent agent invented events once it was tracked.
@@ -310,7 +317,7 @@ func TestSilentAgentProducesNoEvents(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !w.Following(cmd.Process.Pid) {
+	if !w.following(cmd.Process.Pid) {
 		t.Fatal("agent was forgotten before the silence check finished")
 	}
 }
@@ -452,7 +459,7 @@ func TestEngineTakesPrecedence(t *testing.T) {
 	ctx := t.Context()
 	go w.Run(ctx)
 
-	waitFor(t, 3*time.Second, func() bool { return w.Following(cmd.Process.Pid) })
+	waitFor(t, 3*time.Second, func() bool { return w.following(cmd.Process.Pid) })
 	waitFor(t, 3*time.Second, func() bool {
 		w.mu.Lock()
 		defer w.mu.Unlock()

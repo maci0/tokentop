@@ -30,13 +30,6 @@ func Set(token string) {
 	mu.Unlock()
 }
 
-// Token returns the configured token, possibly empty.
-func Token() string {
-	mu.RLock()
-	defer mu.RUnlock()
-	return tok
-}
-
 // Allow admits one engine base URL as a token destination: every request
 // bound for its origin may carry the Authorization header. Meant for
 // endpoints the operator pointed at explicitly (--add); discovered or
@@ -52,7 +45,9 @@ func Allow(base string) {
 // Apply sets the Authorization header when a token is configured and the
 // request is bound for an allowed destination.
 func Apply(req *http.Request) {
-	t := Token()
+	mu.RLock()
+	t := tok
+	mu.RUnlock()
 	if t == "" || !admits(req.URL) {
 		return
 	}

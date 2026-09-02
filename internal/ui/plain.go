@@ -283,10 +283,18 @@ func writeFeedPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 	const maxFeedEvents = 8
 	start := max(len(s.Agents)-maxFeedEvents, 0)
 	for _, ev := range s.Agents[start:] {
+		model := strings.TrimSpace(core.SanitizeText(ev.Model))
+		if model == "" {
+			model = "-"
+		}
+		kind := core.SanitizeText(ev.Kind)
+		if kind == "" {
+			kind = "event"
+		}
 		fmt.Fprintf(b, "%s %s %s model %s prompt %s output %s",
-			ev.At.Local().Format("15:04:05"), kindWord(ev.Kind),
+			ev.At.Local().Format("15:04:05"), kind,
 			core.SanitizeText(ev.Agent),
-			orDash(core.SanitizeText(ev.Model)),
+			model,
 			fmtCount(ev.PromptTokens), fmtCount(ev.OutputTokens))
 		if ev.ThinkingTokens > 0 {
 			b.WriteString(" thinking " + fmtCount(ev.ThinkingTokens))
@@ -341,32 +349,4 @@ func writeAgentsPlain(b *strings.Builder, s core.Snapshot, cfg Config) {
 		b.WriteString("waiting for an agent to report tokens\n")
 	}
 	writeFeedPlain(b, s, cfg)
-}
-
-// kindWord names an event kind in text; unknown kinds pass through like the
-// feed's dot glyph does.
-func kindWord(kind string) string {
-	switch kind {
-	case core.AgentKindTurn:
-		return "turn"
-	case core.AgentKindTool:
-		return "tool"
-	case core.AgentKindError:
-		return "error"
-	case core.AgentKindNote:
-		return "note"
-	default:
-		k := core.SanitizeText(kind)
-		if k == "" {
-			return "event"
-		}
-		return k
-	}
-}
-
-func orDash(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return "-"
-	}
-	return s
 }

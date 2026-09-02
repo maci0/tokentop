@@ -22,9 +22,6 @@ func TestSetAndApply(t *testing.T) {
 	}
 
 	Set("sk-test")
-	if Token() != "sk-test" {
-		t.Errorf("Token() = %q", Token())
-	}
 	// A token alone is not enough: undiscovered, un-admitted destinations
 	// get nothing, so a hostile listener on a probed port cannot collect it.
 	Apply(req)

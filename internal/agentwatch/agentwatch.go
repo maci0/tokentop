@@ -133,14 +133,6 @@ func (w *Watcher) Run(ctx context.Context) {
 	}
 }
 
-// Following reports whether one process is currently followed.
-func (w *Watcher) Following(pid int) bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	_, ok := w.tracked[pid]
-	return ok
-}
-
 func (w *Watcher) runningAgents() []agentusage.Process {
 	if w.listAgents != nil {
 		return w.listAgents()

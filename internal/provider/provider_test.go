@@ -218,8 +218,7 @@ func TestIdentifyNotOmniRouteWithoutHeader(t *testing.T) {
 }
 
 func TestPollCarriesBearerAndContextLength(t *testing.T) {
-	old := bearer.Token()
-	defer bearer.Set(old)
+	t.Cleanup(func() { bearer.Set("") })
 	bearer.Set("sk-live")
 
 	var gotAuth atomic.Value

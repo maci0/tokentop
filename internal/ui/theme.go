@@ -111,11 +111,7 @@ func kindBadge(kind string) string {
 	if !ok {
 		st = styleDim
 	}
-	return st.Render(fmtKind(kind))
-}
-
-func fmtKind(k string) string {
-	return fmt.Sprintf("%-9.9s", k)
+	return st.Render(fmt.Sprintf("%-9.9s", kind))
 }
 
 // heatColor maps 0..1 intensity onto a cool-to-hot ramp (cyan, green, amber,

@@ -45,12 +45,12 @@ const (
 // of megabytes between polls would pin that whole tail in one buffer.
 var zstdTailBytes int64 = zstdMaxFrameBytes
 
-// RFC 8878 block types in the 3-byte block header.
+// RFC 8878 block types in the 3-byte block header. Type 3 is reserved
+// and rejected by the default arm in zstdFrameLen.
 const (
 	zstdBlockRaw        = 0
 	zstdBlockRLE        = 1
 	zstdBlockCompressed = 2
-	zstdBlockReserved   = 3
 )
 
 var (

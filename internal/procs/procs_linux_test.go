@@ -30,8 +30,9 @@ func TestSamplerLinuxTree(t *testing.T) {
 	write("789/cmdline", "/usr/bin/firefox\x00")
 	write("789/stat", "789 (firefox) S 1 1 0 0 0 0 500 700 0 0")
 
-	restoreRoot := swapProcRoot(root)
-	defer restoreRoot()
+	oldRoot := procRoot
+	procRoot = root
+	defer func() { procRoot = oldRoot }()
 
 	s := NewSampler()
 	first := s.Snapshot()
