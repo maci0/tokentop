@@ -266,7 +266,8 @@ Deployment surface:
   into the dashboard. The operator never names those files; `agents.json`
   roots, crush's walk to `.crush/crush.db` (crush_sqlite.go:73-88, capped at
   16 parents), and opencode's well-known path do. SQLite opens are
-  read-only (sqlite.go:70-79, `_query_only=1` and `_defensive=1` in the DSN).
+  read-only (sqlite.go:67-82, `_query_only=1`, `_defensive=1`, `_dqs=0`,
+  and `trusted_schema=OFF` in the DSN).
   Transcript and crush paths that leave their root via a planted symlink are
   refused (watch.go:563-577; crush_sqlite.go:101-125).
 
@@ -444,7 +445,7 @@ Controls verified in code, with the threats they cover:
 | M21: Ingest POSTs carrying an `Origin` header refused with 403 (browsers always send Origin on cross-site writes; scripts and agents never do; the endpoint's Content-Type blindness would otherwise let `text/plain` POSTs sail past CORS preflight) | browser-driven dashboard forgery from any visited web page (B1 spoofing) | server.go:473-478; tests internal/ingest/server_test.go; README "Agent feed API" documents it |
 | M22: Remote discovery ports parsed as 16-bit with port 0 rejected, so hostile `/proc/net/tcp` output cannot plant impossible forward targets; pinned by FuzzParseDiscoveryOutput | tunnel-set manipulation by a hostile ssh remote (B3 elevation/DoS) | remote/discover.go:93-114; internal/remote/fuzz_test.go |
 | M23: `--agents` opt-in; `--opencode-db` is a second gate on top of the `sqlite` build tag; crush has no extra flag because the database lives in the watched project | silent process/file scan the operator did not ask for (B7 disclosure) | main.go:109-110,340-348; agentusage/source.go:70-81; crush_sqlite.go:34-40 |
-| M24: SQLite session stores opened `mode=ro` with `_query_only=1` and `_defensive=1`; crush walk capped at 16 parents; counters rejected above 1<<40; opencode directory list bound as parameters | accidental writes into agent databases, walk-to-root, overflow, and SQL injection via cwd (B7) | agentusage/sqlite.go:65-79; crush_sqlite.go:42-45,73-88; watch.go:152,164-171; opencode_sqlite.go:83-98,108 |
+| M24: SQLite session stores opened `mode=ro` with `_query_only=1`, `_defensive=1`, `_dqs=0`, and `trusted_schema=OFF`; crush walk capped at 16 parents; counters rejected above 1<<40; opencode directory list bound as parameters | accidental writes into agent databases, planted-schema SQL during a read, walk-to-root, overflow, and SQL injection via cwd (B7) | agentusage/sqlite.go:67-82; crush_sqlite.go:42-45,73-88; watch.go:152,164-171; opencode_sqlite.go:90-100,109 |
 | M25: Structured ingest audit log (req, method, path, status, accepted, duration, remote, error) with X-Request-Id; bodies excluded; 404/405 and handler panics share the line | B1 repudiation of the HTTP exchange; reconstructing whether a POST (or a missed one) happened after the fact | server.go logRequest/withUnhandledLog/withRecover; tests internal/ingest/server_test.go |
 | M26: Ingest response headers (nosniff, DENY framing, CSP `default-src 'none'`, CORP same-origin, no-store) and MaxHeaderBytes 16 KiB | a fetched JSON body sniffed as HTML or framed when `--ingest` is exposed (B1 disclosure); header-bomb DoS | server.go:76-79,88-104 |
 | M27: logRemote rewrites non-loopback peer addresses to `"remote"` on the audit line and on http.Server.ErrorLog | peer-IP disclosure when `--ingest` is bound off loopback (B1 information disclosure) | server.go:202-239 |

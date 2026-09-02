@@ -45,8 +45,10 @@ const (
 //
 // The query parameters pin the connection so a live store cannot be written:
 // mode=ro is the file-open flag, _query_only rejects write statements, and
-// _defensive turns off the SQL-level knobs that can rewrite the file. A short
-// busy timeout waits out a writer instead of failing on the first lock.
+// _defensive turns off the SQL-level knobs that can rewrite the file.
+// _dqs=0 and trusted_schema=OFF disable double-quoted string literals and
+// application functions in views and triggers, which _defensive does not.
+// A short busy timeout waits out a writer instead of failing on the first lock.
 func readOnlyDSN(path string) string {
 	var b strings.Builder
 	b.WriteString("file:")
@@ -62,7 +64,7 @@ func readOnlyDSN(path string) string {
 			b.WriteByte(path[i])
 		}
 	}
-	fmt.Fprintf(&b, "?mode=ro&_query_only=1&_busy_timeout=%d&_defensive=1",
+	fmt.Fprintf(&b, "?mode=ro&_query_only=1&_busy_timeout=%d&_defensive=1&_dqs=0&_pragma=trusted_schema=OFF",
 		dbBusyTimeout.Milliseconds())
 	return b.String()
 }

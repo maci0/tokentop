@@ -72,6 +72,11 @@ support channel (see SECURITY.md).
 - `scripts/screenshot.py` rejects extra arguments and unknown options
   (exit 2) instead of treating them as file names; error lines start with
   `screenshot.py:`.
+- OpenCode token totals stored as JSON strings are compared as numbers when
+  taking the largest context size, so `"9"` does not beat `100`.
+- Agent SQLite stores are opened with `trusted_schema` off and double-quoted
+  string literals disabled, so a planted schema cannot run extra SQL during
+  a read.
 - The compact dashboard clips long engine rows to the pane width and keeps
   the key hint on the last line, so a crowded or narrow strip no longer
   wraps or hides `q` / space / `?`.

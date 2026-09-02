@@ -261,7 +261,7 @@ func TestOpenCodeDBWithoutAStoreReportsNothing(t *testing.T) {
 }
 
 func TestReadOnlyDSNEscapesURISyntax(t *testing.T) {
-	q := fmt.Sprintf("?mode=ro&_query_only=1&_busy_timeout=%d&_defensive=1", dbBusyTimeout.Milliseconds())
+	q := fmt.Sprintf("?mode=ro&_query_only=1&_busy_timeout=%d&_defensive=1&_dqs=0&_pragma=trusted_schema=OFF", dbBusyTimeout.Milliseconds())
 	for _, tc := range []struct{ path, want string }{
 		{"/home/user/.local/share/opencode/opencode.db",
 			"file:/home/user/.local/share/opencode/opencode.db" + q},
@@ -277,7 +277,8 @@ func TestReadOnlyDSNEscapesURISyntax(t *testing.T) {
 }
 
 // A live session store is opened so it cannot be written: query_only rejects
-// INSERT, and the pool is a single connection.
+// INSERT, the pool is a single connection, and a planted schema cannot run
+// extra SQL through views, triggers, or double-quoted string literals.
 func TestOpenReadOnlyRejectsWrites(t *testing.T) {
 	path := opencodeDB(t)
 	db, err := openReadOnly(path)
@@ -295,6 +296,14 @@ func TestOpenReadOnlyRejectsWrites(t *testing.T) {
 	var busy int
 	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&busy); err != nil || busy != int(dbBusyTimeout.Milliseconds()) {
 		t.Fatalf("PRAGMA busy_timeout = %d (%v), want %d", busy, err, dbBusyTimeout.Milliseconds())
+	}
+	var trusted int
+	if err := db.QueryRow("PRAGMA trusted_schema").Scan(&trusted); err != nil || trusted != 0 {
+		t.Fatalf("PRAGMA trusted_schema = %d (%v), want 0", trusted, err)
+	}
+	var quoted string
+	if err := db.QueryRow(`SELECT "not_a_column"`).Scan(&quoted); err == nil {
+		t.Fatal("dqs treated a double-quoted identifier as a string literal")
 	}
 }
 
@@ -368,6 +377,29 @@ func TestOpenCodeDBIgnoresNonAssistantTokens(t *testing.T) {
 	s := w.Sample()
 	if s.Output != 12 || s.Thinking != 3 || s.Total != 100 {
 		t.Fatalf("read %+v, want only the assistant message", s)
+	}
+}
+
+// json_extract of a JSON string is TEXT, and SQLite ranks TEXT above INTEGER,
+// so MAX without CAST would pick "9" over 100.
+func TestOpenCodeDBMaxTotalIsNumeric(t *testing.T) {
+	path := opencodeDB(t)
+	dir := t.TempDir()
+	addSession(t, path, "s", dir)
+	start := time.Now()
+	addMessage(t, path, "m-str", "s", start.Add(time.Second),
+		`{"role":"assistant","tokens":{"total":"9"}}`)
+	addMessage(t, path, "m-num", "s", start.Add(2*time.Second),
+		`{"role":"assistant","tokens":{"total":100}}`)
+	withOpenCodeDB(t, path)
+
+	w := Watch("opencode", dir, start)
+	if w == nil {
+		t.Fatal("the source is registered, so a watcher is expected")
+	}
+	w.poll(nil)
+	if got := w.Sample().Total; got != 100 {
+		t.Fatalf("total %d, want 100: MAX compared token totals as text", got)
 	}
 }
 

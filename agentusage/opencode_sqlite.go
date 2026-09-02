@@ -61,13 +61,14 @@ func openCodeDBPath() string {
 // Sessions are the outer loop, then messages via message_session_idx
 // (session_id). CROSS JOIN stops SQLite from reversing that into a scan of
 // message: opencode indexes session_id, not (session_id, time_created) and
-// not directory.
+// not directory. CAST keeps MAX numeric: json_extract of a JSON string is
+// TEXT, and SQLite ranks TEXT above INTEGER, so MAX('9', 100) would be '9'.
 const usageQuery = `
 	SELECT
-		COALESCE(SUM(json_extract(m.data, '$.tokens.output')), 0),
-		COALESCE(SUM(json_extract(m.data, '$.tokens.reasoning')), 0),
-		COALESCE(MAX(json_extract(m.data, '$.tokens.total')), 0),
-		COALESCE(SUM(json_extract(m.data, '$.tokens.input')), 0)
+		COALESCE(SUM(CAST(json_extract(m.data, '$.tokens.output') AS INTEGER)), 0),
+		COALESCE(SUM(CAST(json_extract(m.data, '$.tokens.reasoning') AS INTEGER)), 0),
+		COALESCE(MAX(CAST(json_extract(m.data, '$.tokens.total') AS INTEGER)), 0),
+		COALESCE(SUM(CAST(json_extract(m.data, '$.tokens.input') AS INTEGER)), 0)
 	FROM session
 	CROSS JOIN message m
 	WHERE m.session_id = session.id
