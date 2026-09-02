@@ -4,6 +4,7 @@
 """Render a tmux ANSI capture (SGR truecolor/256/8) to a PNG screenshot.
 
 Usage: screenshot.py <capture.txt> <out.png> [scale] [cols] [rows]
+       screenshot.py -h|--help
 
 Dependencies are declared in scripts/requirements.txt (pyte, pillow).
 
@@ -18,9 +19,7 @@ import glob
 import os
 import re
 import sys
-
-import pyte
-from PIL import Image, ImageDraw, ImageFont
+from typing import TextIO
 
 RGB = tuple[int, int, int]
 
@@ -97,18 +96,54 @@ def resolve_fonts() -> tuple[str, str]:
     return regular[0], bold[0]
 
 
+def usage(out: TextIO) -> None:
+    print((__doc__ or "screenshot.py").strip(), file=out)
+
+
+def parse_int(name: str, raw: str) -> int:
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"screenshot.py: {name} must be an integer, got {raw!r}", file=sys.stderr)
+        raise SystemExit(2) from None
+
+
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] in {"-h", "--help"}:
+        usage(sys.stdout)
+        raise SystemExit(0)
     if len(sys.argv) < 3:
-        sys.exit(__doc__)
+        usage(sys.stderr)
+        raise SystemExit(2)
     src, out = sys.argv[1], sys.argv[2]
-    scale = int(sys.argv[3]) if len(sys.argv) > 3 else 2
+    scale = parse_int("scale", sys.argv[3]) if len(sys.argv) > 3 else 2
     # Exact pane geometry keeps pyte from wrapping or scrolling; pass the
     # values of #{pane_width} #{pane_height} from the capturing tmux session.
-    cols = int(sys.argv[4]) if len(sys.argv) > 4 else 0
-    rows = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+    cols = parse_int("cols", sys.argv[4]) if len(sys.argv) > 4 else 0
+    rows = parse_int("rows", sys.argv[5]) if len(sys.argv) > 5 else 0
+    render(src, out, scale, cols, rows)
 
-    with open(src, "rb") as f:
-        data = f.read().rstrip(b"\n")
+
+def render(src: str, out: str, scale: int, cols: int, rows: int) -> None:
+    try:
+        # Imported here so `screenshot.py --help` works without pyte/pillow.
+        import pyte  # noqa: PLC0415
+        from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
+    except ImportError as e:
+        print(f"screenshot.py: missing dependency ({e})", file=sys.stderr)
+        print(
+            "install with: uv run --isolated --no-project "
+            "--with-requirements scripts/requirements.txt scripts/screenshot.py",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from e
+
+    try:
+        with open(src, "rb") as f:
+            data = f.read().rstrip(b"\n")
+    except OSError as e:
+        print(f"screenshot.py: {src}: {e}", file=sys.stderr)
+        raise SystemExit(1) from e
 
     lines = data.split(b"\n")
     if cols <= 0:

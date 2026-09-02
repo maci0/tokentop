@@ -320,9 +320,7 @@ technology:
 ```
 toktop update     subcommand: install the latest release (--check to only
                   report it, --repo owner/name for a fork)
-toktop help       subcommand: usage (help update for the updater's own)
-toktop version    subcommand: same as --version
-toktop help       same as --help; `toktop help update` for the subcommand
+toktop help       same as --help; `toktop help update` for the updater
 toktop version    same as --version
 --demo            simulated fleet, zero setup
 --add URL         attach an openai-compatible http(s) endpoint (repeatable;
@@ -337,7 +335,7 @@ ssh://user@host   positional; monitor remote hosts (repeatable)
 --opencode-db     with --agents: also read opencode's SQLite session
                   database (needs a build with the sqlite tag)
 --probe N         auto-probe every N seconds
---interval D      poll interval (default 1s)
+--interval D      poll interval (Go duration such as 1s or 500ms; default 1s)
 --ingest ADDR     agent event listen address, host:port
                   (default 127.0.0.1:8420; empty is rejected)
 --no-ingest       disable the event endpoint (`--ingest` is then ignored)

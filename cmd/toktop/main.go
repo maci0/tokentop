@@ -71,7 +71,62 @@ func resolveVersion(stamped, moduleVersion string) string {
 	return "dev"
 }
 
+// cliFlags is the top-level FlagSet. Registration is independent of
+// flag.Parse so `toktop help` can PrintDefaults the same way `--help` does.
+type cliFlags struct {
+	demo      bool
+	adds      flagAddList
+	probeSecs int
+	interval  time.Duration
+	ingest    string
+	noIngest  bool
+	agents    bool
+	opencode  bool
+	once      bool
+	plain     bool
+	frames    int
+	noReload  bool
+	seed      int64
+	sshKey    string
+	bearer    string
+	showVer   bool
+	showHelp  bool
+}
+
+var (
+	cli       cliFlags
+	flagsOnce sync.Once
+)
+
+func registerFlags() *cliFlags {
+	flagsOnce.Do(func() {
+		flag.BoolVar(&cli.demo, "demo", false, "run against a simulated fleet instead of real backends")
+		flag.IntVar(&cli.probeSecs, "probe", 0, "auto-probe every N seconds (0=off)")
+		flag.DurationVar(&cli.interval, "interval", time.Second, "poll interval as a Go duration such as 1s or 500ms")
+		flag.StringVar(&cli.ingest, "ingest", "127.0.0.1:8420", "agent event ingest listen address")
+		flag.BoolVar(&cli.noIngest, "no-ingest", false, "disable the agent event HTTP endpoint")
+		flag.BoolVar(&cli.agents, "agents", false, "watch AI coding agents on this machine by reading their session transcripts")
+		flag.BoolVar(&cli.opencode, "opencode-db", false, "with --agents: also read opencode's SQLite session database (needs a build with -tags sqlite)")
+		flag.BoolVar(&cli.once, "once", false, "render one frame and exit (non-interactive)")
+		flag.BoolVar(&cli.plain, "plain", false, "with --once: render a linear text report instead of the dashboard frame (screen-reader friendly)")
+		flag.IntVar(&cli.frames, "frames", 2, "with --once: snapshots to accumulate before rendering")
+		flag.BoolVar(&cli.noReload, "no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
+		flag.Int64Var(&cli.seed, "seed", 42, "demo RNG seed")
+		flag.StringVar(&cli.sshKey, "ssh-key", "", "private key for ssh:// targets (overrides ~/.ssh/config)")
+		flag.StringVar(&cli.bearer, "bearer", "", "bearer token sent to --add endpoints only (OmniRoute etc.)")
+		flag.BoolVar(&cli.showVer, "version", false, "print version and exit")
+		flag.BoolVar(&cli.showHelp, "help", false, "show help and exit")
+		flag.BoolVar(&cli.showHelp, "h", false, "show help and exit")
+		flag.Var(&cli.adds, "add", "attach an openai-compatible backend http(s) URL (repeatable)")
+		// Error paths (unknown flag, bad value) print this usage on stderr and
+		// exit 2; -h/--help is handled below so it lands on stdout with exit 0.
+		flag.Usage = func() { usage(os.Stderr) }
+	})
+	return &cli
+}
+
 func main() {
+	f := registerFlags()
 	// Subcommands taken before flag parsing so their own flags
 	// (`update --check`) are not rejected by the top-level FlagSet, and so
 	// `toktop help --anything` never dies as an unknown flag.
@@ -88,48 +143,24 @@ func main() {
 			os.Exit(runVersion(os.Stdout, os.Args[2:]))
 		}
 	}
-	var (
-		demoMode  = flag.Bool("demo", false, "run against a simulated fleet instead of real backends")
-		adds      flagAddList
-		probeSecs = flag.Int("probe", 0, "auto-probe every N seconds (0=off)")
-		interval  = flag.Duration("interval", time.Second, "poll interval")
-		ingestArg = flag.String("ingest", "127.0.0.1:8420", "agent event ingest listen address")
-		noIngest  = flag.Bool("no-ingest", false, "disable the agent event HTTP endpoint")
-		agents    = flag.Bool("agents", false, "watch AI coding agents on this machine by reading their session transcripts")
-		opencode  = flag.Bool("opencode-db", false, "with --agents: also read opencode's SQLite session database (needs a build with -tags sqlite)")
-		once      = flag.Bool("once", false, "render one frame and exit (non-interactive)")
-		plain     = flag.Bool("plain", false, "with --once: render a linear text report instead of the dashboard frame (screen-reader friendly)")
-		frames    = flag.Int("frames", 2, "with --once: snapshots to accumulate before rendering")
-		noReload  = flag.Bool("no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
-		seed      = flag.Int64("seed", 42, "demo RNG seed")
-		sshKey    = flag.String("ssh-key", "", "private key for ssh:// targets (overrides ~/.ssh/config)")
-		bearerArg = flag.String("bearer", "", "bearer token sent to --add endpoints only (OmniRoute etc.)")
-		showVer   = flag.Bool("version", false, "print version and exit")
-		showHelp  bool
-	)
-	flag.BoolVar(&showHelp, "help", false, "show help and exit")
-	flag.BoolVar(&showHelp, "h", false, "show help and exit")
-	flag.Var(&adds, "add", "attach an openai-compatible backend http(s) URL (repeatable)")
-	// Error paths (unknown flag, bad value) print this usage on stderr and
-	// exit 2; -h/--help is handled below so it lands on stdout with exit 0.
-	flag.Usage = func() { usage(os.Stderr) }
 	flag.Parse()
 
-	if showHelp {
-		usage(os.Stdout)
-		return
+	// Leftovers are forwarded so `toktop --help update` matches
+	// `toktop help update`, and `toktop --version extra` is a usage error
+	// like `toktop version extra`.
+	if f.showHelp {
+		os.Exit(runHelp(os.Stdout, flag.Args()))
 	}
-	if *showVer {
-		fmt.Println("toktop", version)
-		return
+	if f.showVer {
+		os.Exit(runVersion(os.Stdout, flag.Args()))
 	}
 	log.SetFlags(0)
 
-	if err := validateFlags(*once, *interval, *probeSecs, *frames); err != nil {
+	if err := validateFlags(f.once, f.interval, f.probeSecs, f.frames); err != nil {
 		fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
 		os.Exit(2)
 	}
-	if *once {
+	if f.once {
 		if err := validateOnceEnv(); err != nil {
 			fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
 			os.Exit(2)
@@ -153,24 +184,24 @@ func main() {
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	warnUnknownEnv()
-	warnIgnoredFlags(explicit, *demoMode, *once, *agents, *noIngest, len(remoteTargets))
-	warnIgnoredFrameEnv(*once)
-	if !*noIngest {
-		if err := validateIngestAddr(*ingestArg); err != nil {
+	warnIgnoredFlags(explicit, f.demo, f.once, f.agents, f.noIngest, len(remoteTargets))
+	warnIgnoredFrameEnv(f.once)
+	if !f.noIngest {
+		if err := validateIngestAddr(f.ingest); err != nil {
 			fmt.Fprintf(os.Stderr, "toktop: %v\n", err)
 			os.Exit(2)
 		}
 	}
-	if *sshKey != "" && !*demoMode && len(remoteTargets) > 0 {
-		resolved, err := remote.ResolveKeyFile(*sshKey)
+	if f.sshKey != "" && !f.demo && len(remoteTargets) > 0 {
+		resolved, err := remote.ResolveKeyFile(f.sshKey)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "toktop: --ssh-key: %v\n", err)
 			os.Exit(2)
 		}
-		*sshKey = resolved
+		f.sshKey = resolved
 	}
 
-	if !*once && !term.IsTerminal(int(os.Stdout.Fd())) {
+	if !f.once && !term.IsTerminal(int(os.Stdout.Fd())) {
 		// The live dashboard paints with alt-screen sequences; piped or
 		// redirected they are garbage bytes in the capture, and --once is
 		// the supported way to get output without a terminal.
@@ -185,10 +216,10 @@ func main() {
 	// Bearer token for gateways that require API keys (OmniRoute et al).
 	// An explicit --bearer, even empty, wins so "not set" and "set to empty"
 	// stay distinct; otherwise OMNIROUTE_API_KEY then TOKTOP_BEARER.
-	if tok := resolveBearer(*bearerArg, explicit["bearer"]); tok != "" {
+	if tok := resolveBearer(f.bearer, explicit["bearer"]); tok != "" {
 		bearer.Set(tok)
 	}
-	warnBearerFlag(explicit["bearer"], *bearerArg)
+	warnBearerFlag(explicit["bearer"], f.bearer)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -208,15 +239,15 @@ func main() {
 	var demoSrc *demo.Source
 
 	switch {
-	case *demoMode:
-		demoSrc = demo.NewSource(*interval, *seed)
+	case f.demo:
+		demoSrc = demo.NewSource(f.interval, f.seed)
 		go demoSrc.Run(ctx, ch)
 		prober = demoSrc
 		recorder = demoSrc
 
 	default:
 		providers := provider.Discover(ctx)
-		for _, raw := range adds {
+		for _, raw := range f.adds {
 			// The token rides only to endpoints the operator named: discovery
 			// probes every well-known port on spec, and whatever answers there
 			// must not be able to harvest the credential.
@@ -238,8 +269,8 @@ func main() {
 			}
 			// Only when set: an empty flag must keep the IdentityFile
 			// resolved from ~/.ssh/config by ParseTarget.
-			if *sshKey != "" {
-				tgt.KeyFile = *sshKey
+			if f.sshKey != "" {
+				tgt.KeyFile = f.sshKey
 			}
 			rp, rsys, rerr := attachRemote(ctx, tgt)
 			if rerr != nil {
@@ -270,7 +301,7 @@ func main() {
 			return out
 		}
 
-		col := collector.New(providers, *interval)
+		col := collector.New(providers, f.interval)
 		if sysWrap != nil {
 			col.SetSysFn(sysWrap)
 		}
@@ -279,8 +310,8 @@ func main() {
 		recorder = col
 	}
 
-	if *probeSecs > 0 && prober != nil {
-		d := time.Duration(*probeSecs) * time.Second
+	if f.probeSecs > 0 && prober != nil {
+		d := time.Duration(f.probeSecs) * time.Second
 		go func() {
 			t := time.NewTicker(d)
 			defer t.Stop()
@@ -304,14 +335,14 @@ func main() {
 	// Opt-in, because it means scanning this machine's processes and reading
 	// files the operator never pointed at toktop. Watching engines does not
 	// imply consent to that.
-	if *agents {
+	if f.agents {
 		loadAgentDefs()
 	}
-	if *agents && *opencode && !agentusage.EnableOpenCodeDB(true) {
+	if f.agents && f.opencode && !agentusage.EnableOpenCodeDB(true) {
 		// Silence here would look like an agent that generates nothing.
 		fmt.Fprintln(os.Stderr, "toktop: --opencode-db needs a build with -tags sqlite; opencode will report no tokens")
 	}
-	if *agents && recorder != nil {
+	if f.agents && recorder != nil {
 		// engineAddrs is nil in demo mode, where nothing real is measured.
 		aw := agentwatch.New(recorder, engineAddrs)
 		if demoSrc != nil {
@@ -320,14 +351,14 @@ func main() {
 		go aw.Run(ctx)
 	}
 
-	if !*noIngest && recorder != nil {
-		srv, err := ingest.New(*ingestArg, recorder)
+	if !f.noIngest && recorder != nil {
+		srv, err := ingest.New(f.ingest, recorder)
 		if err != nil {
 			if ingestSet {
 				// The operator explicitly asked for this endpoint; continuing
 				// would run the dashboard without the event feed they asked
 				// for, with only a stderr line lost under the alt screen.
-				fmt.Fprintf(os.Stderr, "toktop: --ingest %s unusable: %v\n", *ingestArg, err)
+				fmt.Fprintf(os.Stderr, "toktop: --ingest %s unusable: %v\n", f.ingest, err)
 				os.Exit(2)
 			}
 			fmt.Fprintf(os.Stderr, "toktop: ingest disabled (%v)\n", err)
@@ -354,20 +385,20 @@ func main() {
 
 	cfg := ui.Config{
 		Version:    version,
-		Demo:       *demoMode,
+		Demo:       f.demo,
 		IngestAddr: feedAddr,
-		PollEvery:  *interval,
+		PollEvery:  f.interval,
 		Prober:     prober,
 		FeedErr:    feedErr,
-		Agents:     *agents,
+		Agents:     f.agents,
 	}
 
-	if *once {
-		runOnce(ctx, cfg, ch, *frames, *plain)
+	if f.once {
+		runOnce(ctx, cfg, ch, f.frames, f.plain)
 		return
 	}
 
-	runTUI(ctx, cfg, ch, !*noReload)
+	runTUI(ctx, cfg, ch, !f.noReload)
 }
 
 // routableBind reports whether a bound listen address is reachable from
@@ -533,6 +564,7 @@ func validateAddURL(raw string) error {
 // -h/--help sends it to stdout so piping works (`toktop --help | grep
 // probe`); flag-package error paths call it with stderr.
 func usage(w io.Writer) {
+	registerFlags()
 	out := flag.CommandLine.Output()
 	flag.CommandLine.SetOutput(w)
 	defer flag.CommandLine.SetOutput(out)
@@ -541,7 +573,7 @@ func usage(w io.Writer) {
 Usage:
   toktop [flags] [ssh://user@host ...]
   toktop update [--check] [--repo owner/name]   install the latest release
-  toktop help [update]
+  toktop help [update|version]
   toktop version
 
 Examples:
@@ -575,8 +607,16 @@ func runHelp(out io.Writer, args []string) int {
 		usage(out)
 		return 0
 	}
-	if args[0] == "update" {
+	switch args[0] {
+	case "update":
 		return runUpdate(context.Background(), out, []string{"--help"})
+	case "version":
+		usage(out)
+		return 0
+	}
+	if strings.HasPrefix(args[0], "-") {
+		fmt.Fprintf(os.Stderr, "toktop: unknown option %q (see 'toktop --help')\n", args[0])
+		return 2
 	}
 	fmt.Fprintf(os.Stderr, "toktop: no help topic for %q (see 'toktop --help')\n", args[0])
 	return 2

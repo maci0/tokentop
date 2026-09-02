@@ -225,16 +225,20 @@ func TestUsage(t *testing.T) {
 	usage(&buf)
 	got := buf.String()
 	for _, want := range []string{
-		"toktop -",             // what the tool is
-		"Usage:",               // invocation line
-		"[ssh://user@host ...", // positional targets documented
-		"toktop help",          // git-style help command
-		"toktop version",       // git-style version command
-		"Examples:",            // worked examples section
-		"-demo",                // generated flag docs survive
-		"OMNIROUTE_API_KEY",    // env fallbacks named
-		"--add",                // http(s) leftovers hint at --add
-		"userinfo",             // --add must not embed credentials
+		"toktop -",              // what the tool is
+		"Usage:",                // invocation line
+		"[ssh://user@host ...",  // positional targets documented
+		"toktop help",           // git-style help command
+		"toktop version",        // git-style version command
+		"help [update|version]", // both extra commands are help topics
+		"Examples:",             // worked examples section
+		"-demo",                 // generated flag docs survive
+		"-interval",             // PrintDefaults, not just the examples
+		"-add",                  // repeatable backend flag
+		"1s or 500ms",           // --interval names the duration format
+		"OMNIROUTE_API_KEY",     // env fallbacks named
+		"--add",                 // http(s) leftovers hint at --add
+		"userinfo",              // --add must not embed credentials
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("usage() missing %q", want)
@@ -475,8 +479,8 @@ func TestRunHelp(t *testing.T) {
 		if got != "" {
 			t.Fatalf("runHelp() leaked %q to stderr", got)
 		}
-		if !strings.Contains(out.String(), "Usage:") || !strings.Contains(out.String(), "-demo") {
-			t.Fatalf("runHelp() stdout missing top-level usage: %q", out.String())
+		if !strings.Contains(out.String(), "Usage:") || !strings.Contains(out.String(), "-demo") || !strings.Contains(out.String(), "-interval") {
+			t.Fatalf("runHelp() stdout missing top-level usage with flags: %q", out.String())
 		}
 	})
 	t.Run("update topic prints update help", func(t *testing.T) {
@@ -501,6 +505,36 @@ func TestRunHelp(t *testing.T) {
 		}
 		if !strings.Contains(got, "bogus") || !strings.Contains(got, "toktop --help") {
 			t.Fatalf("stderr = %q, want topic name and --help", got)
+		}
+		if strings.Contains(got, "unknown option") {
+			t.Fatalf("stderr = %q, bare word must not be called an option", got)
+		}
+	})
+	t.Run("version topic prints top-level help", func(t *testing.T) {
+		var out bytes.Buffer
+		var code int
+		got := captureStderr(t, func() { code = runHelp(&out, []string{"version"}) })
+		if code != 0 {
+			t.Fatalf("runHelp(version) = %d, want 0", code)
+		}
+		if got != "" {
+			t.Fatalf("runHelp(version) leaked %q to stderr", got)
+		}
+		if !strings.Contains(out.String(), "Usage:") || !strings.Contains(out.String(), "-demo") {
+			t.Fatalf("runHelp(version) stdout missing top-level usage: %q", out.String())
+		}
+	})
+	t.Run("dashed leftover is an unknown option", func(t *testing.T) {
+		var code int
+		got := captureStderr(t, func() { code = runHelp(io.Discard, []string{"--demo"}) })
+		if code != 2 {
+			t.Fatalf("runHelp(--demo) = %d, want 2", code)
+		}
+		if !strings.Contains(got, "unknown option") || !strings.Contains(got, "--demo") {
+			t.Fatalf("stderr = %q, want unknown option --demo", got)
+		}
+		if strings.Contains(got, "no help topic") {
+			t.Fatalf("stderr = %q, a dashed arg is an option not a topic", got)
 		}
 	})
 }
@@ -542,6 +576,9 @@ func TestRunVersion(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), "Usage:") {
 			t.Fatalf("stdout missing usage: %q", out.String())
+		}
+		if !strings.Contains(out.String(), "-demo") {
+			t.Fatalf("stdout missing generated flags: %q", out.String())
 		}
 	})
 }

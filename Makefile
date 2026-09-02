@@ -62,8 +62,13 @@ PLATFORMS := \
 
 .PHONY: help
 help: ## show available targets
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@if [ -t 1 ] && [ -z "$${NO_COLOR}" ] && [ "$${TERM:-}" != "dumb" ]; then \
+		color=1; \
+	else \
+		color=; \
+	fi; \
+	grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk -v color="$$color" 'BEGIN {FS = ":.*?## "} { if (color) printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2; else printf "  %-14s %s\n", $$1, $$2 }'
 
 # CGO stays off so the host build matches the released artifacts exactly;
 # with cgo available the net package links host-specific resolver code and
@@ -90,8 +95,8 @@ NEED_CC = cc="$${CC:-}"; \
 		fi; \
 	fi; \
 	if [ -z "$$cc" ] || ! command -v $$cc >/dev/null 2>&1; then \
-		echo "make: go test -race needs a C compiler (gcc or clang) on PATH"; \
-		echo "  CGO stays off for make build; only the race tests need it."; \
+		echo "make: go test -race needs a C compiler (gcc or clang) on PATH" >&2; \
+		echo "  CGO stays off for make build; only the race tests need it." >&2; \
 		exit 1; \
 	fi
 
@@ -106,8 +111,8 @@ test: ## run all tests with the race detector, shuffled order (both halves of th
 .PHONY: test-pkg
 test-pkg: ## one package/test: PKG=./internal/ui [RUN=TestName] [TESTTAGS=sqlite]
 	@if [ -z "$(PKG)" ]; then \
-		echo "make test-pkg: set PKG (e.g. PKG=./internal/ui)"; \
-		echo "  optional: RUN=TestName  TESTTAGS=sqlite"; \
+		echo "make test-pkg: set PKG (e.g. PKG=./internal/ui)" >&2; \
+		echo "  optional: RUN=TestName  TESTTAGS=sqlite" >&2; \
 		exit 1; \
 	fi
 	@$(NEED_CC)
@@ -158,7 +163,7 @@ lint: ## run staticcheck (both halves of the sqlite tag gate)
 .PHONY: site-check
 site-check: ## bun test the Cloudflare Worker in site/ (CI parity)
 	@command -v bun >/dev/null 2>&1 || { \
-		echo "make site-check: bun is not on PATH (see .bun-version)"; \
+		echo "make site-check: bun is not on PATH (see .bun-version)" >&2; \
 		exit 1; \
 	}
 	bun test site/
@@ -181,7 +186,7 @@ tidy-check: ## fail if go.mod or go.sum would change
 .PHONY: scripts-check
 scripts-check: ## black, ruff and mypy over scripts/ (same pins as CI)
 	@command -v uv >/dev/null 2>&1 || { \
-		echo "make scripts-check: uv is not on PATH (pins are scripts/requirements-dev.txt)"; \
+		echo "make scripts-check: uv is not on PATH (pins are scripts/requirements-dev.txt)" >&2; \
 		exit 1; \
 	}
 	uv run --isolated --no-project --with-requirements scripts/requirements-dev.txt black --check scripts/
@@ -192,7 +197,7 @@ scripts-check: ## black, ruff and mypy over scripts/ (same pins as CI)
 check: ## verify go.mod, gofmt -s formatting, vet and staticcheck (CI parity)
 	@unformatted=$$($(GOFMT) -s -l .); \
 		if [ -n "$$unformatted" ]; then \
-			echo "needs gofmt:"; echo "$$unformatted"; exit 1; \
+			echo "needs gofmt:" >&2; echo "$$unformatted" >&2; exit 1; \
 		fi
 	@$(MAKE) tidy-check
 	@$(MAKE) lint
@@ -220,7 +225,7 @@ release: checksums ## build every release platform into dist/ with reproducible 
 .PHONY: checksums
 checksums: test-dist ## checksum the dist/ binaries into a byte-reproducible tarball
 	@$(TAR) --sort=name --version >/dev/null 2>&1 || \
-		{ echo "$(TAR) rejects --sort: deterministic packaging needs GNU tar (install it as gtar)"; exit 1; }
+		{ echo "$(TAR) rejects --sort: deterministic packaging needs GNU tar (install it as gtar)" >&2; exit 1; }
 	@cd $(DIST) && \
 		files=$$(printf '%s\n' $(BINARY)_* | sort) && \
 		if command -v sha256sum >/dev/null 2>&1; then \

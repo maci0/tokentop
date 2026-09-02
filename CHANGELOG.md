@@ -15,6 +15,10 @@ support channel (see SECURITY.md).
 - `agentusage` counts a thinking-only reading (opencode SQLite, and Claude /
   Qwen / Codex transcript lines that carry reasoning with no billed output)
   instead of reporting nothing until the first completion token.
+- `toktop help` and `toktop version --help` list the same flags as
+  `toktop --help`.
+- `toktop --help update` matches `toktop help update`; extra arguments to
+  `--version` are a usage error, like `toktop version`.
 
 ### Changed
 
