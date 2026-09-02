@@ -31,6 +31,11 @@ export GOEXPERIMENT :=
 # second, toolchain-hash-shaped input to the bytes.
 GO_BUILDFLAGS := -trimpath -buildvcs=false -mod=readonly -buildmode=pie
 STATICCHECK := $(GO) tool staticcheck
+# go run @version, not a go.mod tool: govulncheck's module graph is newer than
+# staticcheck's (x/tools, x/mod) and would force those up if it joined the
+# tool block. One string so Makefile and CI cannot drift.
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.7.0
+SBOM_TOOL   := github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0
 LDFLAGS     := -s -w -buildid= -X main.version=$(VERSION)
 # gofmt from the selected toolchain, not a different major on PATH.
 GOFMT = $$($(GO) env GOROOT)/bin/gofmt
@@ -162,7 +167,7 @@ cover: ## test coverage summary per package into dist/
 sbom: ## generate CycloneDX SBOM of all dependencies into dist/
 	@$(CHECK_VERSION)
 	mkdir -p $(DIST)
-	$(GO) run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0 \
+	$(GO) run $(SBOM_TOOL) \
 		mod -licenses -std -json -output $(DIST)/toktop-sbom-$(VERSION).cdx.json .
 
 .PHONY: vet
@@ -192,6 +197,10 @@ vet-cross: ## vet + staticcheck every release platform from PLATFORMS
 lint: ## run staticcheck (both halves of the sqlite tag gate)
 	$(STATICCHECK) ./...
 	$(STATICCHECK) -tags sqlite ./agentusage/...
+
+.PHONY: govulncheck
+govulncheck: ## run govulncheck at the GOVULNCHECK pin (same pin as CI)
+	$(GO) run $(GOVULNCHECK) ./...
 
 .PHONY: site-check
 site-check: ## bun test the Cloudflare Worker in site/ (CI parity)
@@ -244,7 +253,7 @@ check: ## verify go.mod, gofmt -s formatting, vet and staticcheck (CI parity)
 .PHONY: ci
 ci: ## Go merge gates: tidy-diff, fmt, lint, vet, govulncheck, race tests
 	@$(MAKE) check
-	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+	@$(MAKE) govulncheck
 	@$(MAKE) test
 
 .PHONY: pr

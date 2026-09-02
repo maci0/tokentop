@@ -116,6 +116,7 @@ byte ceilings, so a recapture that blows the budget fails there.
 | `make fmt` | rewrite files with gofmt -s |
 | `make fix` | apply `go fix` modernization autofixes, then gofmt |
 | `make lint` | staticcheck over both halves of the sqlite tag gate |
+| `make govulncheck` | `govulncheck` at the Makefile pin (same pin as CI) |
 | `make scripts-check` | black, ruff and mypy over `scripts/` (same pins as CI) |
 | `make site-check` | `bun test site/` |
 | `make vet-cross` | vet + staticcheck on every release platform (the pre-ship gate release.yml runs) |

@@ -3,7 +3,7 @@
 One Worker, one page, no build step.
 
 ```sh
-bunx wrangler deploy          # from this directory
+bunx wrangler@4.126.0 deploy  # from this directory; pin, not whatever npm returns today
 ```
 
 `worker.js` holds the HTML: it is a template literal, so there is nothing to

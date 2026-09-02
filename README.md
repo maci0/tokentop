@@ -458,5 +458,5 @@ windows/arm64, plus a CycloneDX SBOM of every dependency (`make sbom`).
 Versions are 0.x: the CLI, the ingest `/v1/events` body, and the
 `agentusage` Go API may change without a major bump. Consumer-facing notes
 live in [CHANGELOG.md](CHANGELOG.md). CI
-runs `govulncheck` on every push; Dependabot keeps go modules and workflow
-actions current.
+runs `govulncheck` on every push; Dependabot keeps go modules, workflow
+actions, and `scripts/` pip pins current.
