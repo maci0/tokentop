@@ -791,6 +791,26 @@ var (
 
 func rootListKey(root, suffix string) string { return root + "\x00" + suffix }
 
+// pruneRootListsLocked drops listings no watcher has refreshed inside
+// recencyWindow. A clanker (or a {dir} spec) keys this map on the project
+// path; without a bound, every tree an agent ever visited during a long
+// --agents run stays pinned after the process is gone. Caller holds rootListMu.
+func pruneRootListsLocked(now time.Time) {
+	for k, c := range rootLists {
+		if now.Sub(c.at) >= recencyWindow {
+			delete(rootLists, k)
+		}
+	}
+}
+
+func storeRootListing(key string, files []string) {
+	rootListMu.Lock()
+	defer rootListMu.Unlock()
+	now := time.Now()
+	pruneRootListsLocked(now)
+	rootLists[key] = rootListing{files: files, at: now}
+}
+
 func (a adapter) fileSuffixes() []string {
 	if len(a.suffixes) > 0 {
 		return a.suffixes
@@ -805,8 +825,10 @@ func listTranscripts(root, suffix string, cutoff time.Time, force bool) []string
 	key := rootListKey(root, suffix)
 	if !force {
 		rootListMu.Lock()
+		now := time.Now()
+		pruneRootListsLocked(now)
 		c, ok := rootLists[key]
-		hit := ok && time.Since(c.at) < rescanEvery
+		hit := ok && now.Sub(c.at) < rescanEvery
 		var files []string
 		if hit {
 			files = c.files
@@ -819,9 +841,7 @@ func listTranscripts(root, suffix string, cutoff time.Time, force bool) []string
 	var out []string
 	r, err := os.OpenRoot(root)
 	if err != nil {
-		rootListMu.Lock()
-		rootLists[key] = rootListing{files: out, at: time.Now()}
-		rootListMu.Unlock()
+		storeRootListing(key, out)
 		return nil
 	}
 	defer r.Close()
@@ -839,9 +859,7 @@ func listTranscripts(root, suffix string, cutoff time.Time, force bool) []string
 		out = append(out, filepath.Join(root, filepath.FromSlash(rel)))
 		return nil
 	})
-	rootListMu.Lock()
-	rootLists[key] = rootListing{files: out, at: time.Now()}
-	rootListMu.Unlock()
+	storeRootListing(key, out)
 	return append([]string(nil), out...)
 }
 

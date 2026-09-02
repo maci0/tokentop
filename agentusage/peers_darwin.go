@@ -8,7 +8,6 @@ package agentusage
 import (
 	"context"
 	"net/netip"
-	"os/exec"
 	"strconv"
 	"time"
 )
@@ -24,8 +23,8 @@ import (
 func Peers(pid int) []netip.AddrPort {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "lsof", "-a", "-w", "-p", strconv.Itoa(pid),
-		"-i", "-FnP", "-n").Output()
+	out, err := commandOutput(ctx, "lsof", "-a", "-w", "-p", strconv.Itoa(pid),
+		"-i", "-FnP", "-n")
 	if err != nil {
 		return nil // exited, or another user's process
 	}

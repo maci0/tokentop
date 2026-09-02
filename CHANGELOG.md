@@ -64,6 +64,12 @@ support channel (see SECURITY.md).
   (some engines treat that as load-default).
 - LM Studio listings omit unloaded catalog entries, so a probe cannot
   JIT-load a cold model.
+- `--agents` on macOS no longer hangs for the rest of the run if `ps` or
+  `lsof` leaves a grandchild holding stdout past the kill deadline.
+- Closing the ingest endpoint releases its listen socket even if `Serve`
+  has not started, so a failed startup cannot leave the port bound.
+- SSH port forwards time out a hung remote Dial instead of pinning a
+  goroutine and the accepted connection until the ssh session itself dies.
 
 ## [0.7.0] - 2026-08-30
 

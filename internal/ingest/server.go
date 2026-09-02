@@ -330,7 +330,18 @@ func (s *Server) Serve() error {
 	return err
 }
 
-func (s *Server) Close() error { return s.srv.Close() }
+func (s *Server) Close() error {
+	err := s.srv.Close()
+	// Serve is the only path that tracks ln on the http.Server. Close
+	// before Serve (or racing it) would otherwise leave the listen fd
+	// bound until process exit.
+	if s.ln != nil {
+		if cerr := s.ln.Close(); cerr != nil && !errors.Is(cerr, net.ErrClosed) && err == nil {
+			err = cerr
+		}
+	}
+	return err
+}
 
 // maxEventBody caps one POST (single object or NDJSON stream). Legit events
 // are tiny; without a cap a client can stream unbounded bytes into the

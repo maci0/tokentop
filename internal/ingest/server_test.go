@@ -1471,3 +1471,22 @@ func TestIngestLogsBrowserOriginRefusal(t *testing.T) {
 		t.Errorf("403 not logged as warn: %s", got)
 	}
 }
+
+// Close must release the listen socket even when Serve has not tracked it
+// yet. New binds immediately so Addr can report the port; a Close that only
+// talks to http.Server would leave the fd bound until process exit.
+func TestCloseReleasesListenerWithoutServe(t *testing.T) {
+	s, err := New("127.0.0.1:0", &memRecorder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := s.Addr()
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("listener still bound after Close without Serve: %v", err)
+	}
+	ln.Close()
+}

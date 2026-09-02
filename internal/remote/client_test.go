@@ -700,6 +700,44 @@ func TestDropReclaimsForwardListeners(t *testing.T) {
 	}
 }
 
+// A peer that never accepts tunneled channels must fail the local connection
+// at forwardDialTimeout instead of pinning a goroutine and the accepted fd
+// until keepalive finally kills the ssh conn.
+func TestForwardDialTimesOutOnSilentPeer(t *testing.T) {
+	withKnownHosts(t)
+	old := forwardDialTimeout
+	forwardDialTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { forwardDialTimeout = old })
+
+	srv := newSilentSSHServer(t)
+	cli, err := Connect(t.Context(), testTarget(t, srv.Port()))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer cli.Close()
+
+	fwd, err := cli.Forward([]int{1})
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	laddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(fwd[1]))
+	start := time.Now()
+	c, err := net.Dial("tcp", laddr)
+	if err != nil {
+		t.Fatalf("local forward dial: %v", err)
+	}
+	defer c.Close()
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1)
+	_, err = c.Read(buf)
+	if err == nil {
+		t.Fatal("hung remote Dial left the local connection open")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("local connection closed after %s, want ~forwardDialTimeout", elapsed)
+	}
+}
+
 // connLost tags connection-death errors so callers can distinguish a dead
 // tunnel from a transient hiccup; the original cause must stay unwrappable.
 func TestConnLostClassification(t *testing.T) {

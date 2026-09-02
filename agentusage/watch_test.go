@@ -957,3 +957,41 @@ func TestForeignIdleTranscriptIsForgotten(t *testing.T) {
 		t.Fatalf("output tokens %d, want 10 after forgetting the foreign session", got)
 	}
 }
+
+// A shared transcript listing that no watcher has refreshed must leave the
+// process-wide cache. Clanker (and {dir} specs) key it on the project path,
+// so a dashboard that follows agents through many trees would otherwise pin
+// one slice per directory for the rest of the run.
+func TestStaleRootListingIsForgotten(t *testing.T) {
+	rootListMu.Lock()
+	saved := rootLists
+	rootLists = map[string]rootListing{}
+	rootListMu.Unlock()
+	t.Cleanup(func() {
+		rootListMu.Lock()
+		rootLists = saved
+		rootListMu.Unlock()
+	})
+
+	stale := t.TempDir()
+	cutoff := time.Now().Add(-time.Hour)
+	_ = listTranscripts(stale, ".jsonl", cutoff, true)
+	key := rootListKey(stale, ".jsonl")
+	rootListMu.Lock()
+	c, ok := rootLists[key]
+	if !ok {
+		rootListMu.Unlock()
+		t.Fatal("expected the listing to be cached after a walk")
+	}
+	c.at = time.Now().Add(-recencyWindow - time.Second)
+	rootLists[key] = c
+	rootListMu.Unlock()
+
+	_ = listTranscripts(t.TempDir(), ".jsonl", cutoff, true)
+	rootListMu.Lock()
+	_, still := rootLists[key]
+	rootListMu.Unlock()
+	if still {
+		t.Fatal("stale root listing still cached after another walk")
+	}
+}

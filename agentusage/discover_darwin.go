@@ -7,7 +7,6 @@ package agentusage
 
 import (
 	"context"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -67,7 +66,7 @@ func Discover() []Process {
 func psTable() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "ps", "-axo", "pid=,ucomm=,command=").Output()
+	out, err := commandOutput(ctx, "ps", "-axo", "pid=,ucomm=,command=")
 	if err != nil {
 		return "", err
 	}
@@ -80,8 +79,8 @@ func psTable() (string, error) {
 func cwdOf(pid int) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "lsof", "-a", "-w", "-p", strconv.Itoa(pid),
-		"-d", "cwd", "-Fn").Output()
+	out, err := commandOutput(ctx, "lsof", "-a", "-w", "-p", strconv.Itoa(pid),
+		"-d", "cwd", "-Fn")
 	if err != nil {
 		return ""
 	}

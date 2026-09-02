@@ -197,10 +197,14 @@ func authHint(err error) error {
 }
 
 // keepaliveEvery and keepaliveReplies pace the liveness probe; vars so
-// tests can shrink them.
+// tests can shrink them. forwardDialTimeout bounds opening a tunneled TCP
+// channel: Accept is unbounded (the listener lives as long as the client),
+// but a hung Dial would pin a goroutine and the accepted fd per incoming
+// connection until the ssh conn itself dies.
 var (
-	keepaliveEvery   = 15 * time.Second
-	keepaliveReplies = 5 * time.Second
+	keepaliveEvery     = 15 * time.Second
+	keepaliveReplies   = 5 * time.Second
+	forwardDialTimeout = 8 * time.Second
 )
 
 // keepalive turns silent network death into a closed connection within about
@@ -380,7 +384,9 @@ func (c *Client) relay(l net.Listener, rport int) {
 		}
 		go func(local net.Conn) {
 			defer local.Close()
-			remote, derr := c.conn.Dial("tcp", target)
+			ctx, cancel := context.WithTimeout(context.Background(), forwardDialTimeout)
+			defer cancel()
+			remote, derr := c.conn.DialContext(ctx, "tcp", target)
 			if derr != nil {
 				return
 			}
