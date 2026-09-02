@@ -178,6 +178,39 @@ func TestCodexCumulativeValuesAreRebased(t *testing.T) {
 	}
 }
 
+// A line past maxLineBytes must not abort the attach seed: bufio.Scanner
+// stops there and would keep a too-low baseline, so a later attach-time
+// total looks like this review's growth.
+func TestCumulativeBaselineSurvivesOversizedLine(t *testing.T) {
+	store := withStore(t, "codex")
+	work := t.TempDir()
+	path := filepath.Join(store, "rollout-1.jsonl")
+
+	append_(t, path, codexMeta(work), codexTokens(1000, 5000))
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(strings.Repeat("x", maxLineBytes+1) + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	append_(t, path, codexTokens(2000, 7000))
+
+	w := Watch("codex", work, time.Now())
+	w.poll(nil)
+	if got := w.Sample().Output; got != 0 {
+		t.Fatalf("baseline was counted as usage: %d", got)
+	}
+	append_(t, path, codexTokens(2100, 7200))
+	w.poll(nil)
+	if got := w.Sample().Output; got != 100 {
+		t.Fatalf("output tokens %d, want 100 (2100 minus the 2000 baseline)", got)
+	}
+}
+
 func TestCumulativeSessionStartedDuringTheReviewCountsInFull(t *testing.T) {
 	store := withStore(t, "codex")
 	work := t.TempDir()

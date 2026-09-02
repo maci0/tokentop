@@ -503,6 +503,30 @@ func stallingHost(t *testing.T, banner string) int {
 	return lis.Addr().(*net.TCPAddr).Port
 }
 
+// A host that never answers SYN must fail Connect at dialTimeout, not hang
+// until the caller cancels. ssh.ClientConfig.Timeout does not apply to the
+// DialContext+NewClientConn path; the Dialer has to carry the bound itself.
+func TestConnectFailsOnUnreachableHost(t *testing.T) {
+	withKnownHosts(t)
+	old := dialTimeout
+	dialTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { dialTimeout = old })
+
+	start := time.Now()
+	// TEST-NET-1 is reserved documentation space; a blackhole hangs until
+	// the dial deadline, an ICMP unreachable fails immediately. Either is
+	// a correct failure as long as it is not unbounded.
+	_, err := Connect(t.Context(), Target{
+		User: "tester", Host: "192.0.2.1", Port: 22, KeyFile: testKeyFile(t),
+	})
+	if err == nil {
+		t.Fatal("unreachable host must fail Connect")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("unreachable host took %v to fail, want ~dialTimeout", d)
+	}
+}
+
 // A host that completes TCP accept but never sends its ssh banner must fail
 // Connect promptly via the handshake deadline, not hang forever.
 func TestConnectFailsOnSilentHost(t *testing.T) {

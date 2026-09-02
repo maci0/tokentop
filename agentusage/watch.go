@@ -583,6 +583,12 @@ var errOutsideRoot = errors.New("path is outside the transcript root")
 const baselineTailBytes = 256 << 10
 
 // seedBaseline records what a pre-existing session had already spent.
+// consumeAppend is used rather than a Scanner: a line past maxLineBytes
+// aborts bufio.Scanner and would leave a stale (too-low) baseline from
+// earlier records, so later attach-time totals look like this review's
+// growth. consumeAppend skips the oversized line and keeps reading, and
+// a real I/O error leaves the baseline unset instead of committing a
+// partial one.
 func (w *Watcher) seedBaseline(path string) {
 	f, err := w.openTranscript(path)
 	if err != nil {
@@ -593,18 +599,18 @@ func (w *Watcher) seedBaseline(path string) {
 	if err != nil {
 		return
 	}
+	off := int64(0)
 	if fi.Size() > baselineTailBytes {
-		if _, err := f.Seek(fi.Size()-baselineTailBytes, 0); err != nil {
+		off = fi.Size() - baselineTailBytes
+		if _, err := f.Seek(off, 0); err != nil {
 			return
 		}
 	}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, appendReaderBytes), maxLineBytes)
-	for sc.Scan() {
-		v, _, ok := w.ad.parse(sc.Bytes())
-		if !ok {
-			continue
-		}
+	recs, _, ok := w.consumeAppend(f, off)
+	if !ok {
+		return
+	}
+	for _, v := range recs {
 		w.base[path] = max(w.base[path], v.output)
 		w.baseThink[path] = max(w.baseThink[path], v.thinking)
 		w.baseInput[path] = max(w.baseInput[path], v.input)

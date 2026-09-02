@@ -189,7 +189,7 @@ func Check(ctx context.Context, repo string) (*Release, error) {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", latest, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -336,13 +336,22 @@ func fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s returned %s", url, resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, limit))
+	// Read one past the cap so a truncated body cannot be parsed as a
+	// complete archive: LimitReader alone would silently clip it.
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", url, err)
+	}
+	if int64(len(b)) > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", url, limit)
+	}
+	return b, nil
 }
 
 // fileChecksum is the hex SHA-256 of path, capped the same way a download is
@@ -371,7 +380,7 @@ func download(ctx context.Context, url string, w io.Writer) (string, error) {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		return "", err
+		return "", fmt.Errorf("%s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -380,7 +389,7 @@ func download(ctx context.Context, url string, w io.Writer) (string, error) {
 	h := sha256.New()
 	n, err := io.Copy(io.MultiWriter(w, h), io.LimitReader(resp.Body, maxAssetBytes+1))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s: %w", url, err)
 	}
 	if n > maxAssetBytes {
 		return "", fmt.Errorf("asset exceeds %d bytes", int64(maxAssetBytes))

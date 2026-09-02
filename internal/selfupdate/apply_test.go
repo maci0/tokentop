@@ -101,6 +101,42 @@ func TestApplyRejectsChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsOversizedChecksums(t *testing.T) {
+	allowTestAssetURLs(t)
+	name := AssetName("9.9.9")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/asset", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("x")) })
+	mux.HandleFunc("/checksums", func(w http.ResponseWriter, r *http.Request) {
+		w.Write(bytes.Repeat([]byte("x"), 1<<20+1))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	rel := &Release{TagName: "v9.9.9"}
+	body := `{"tag_name":"v9.9.9","assets":[
+		{"name":"` + name + `","browser_download_url":"` + srv.URL + `/asset"},
+		{"name":"` + checksumsName("9.9.9") + `","browser_download_url":"` + srv.URL + `/checksums"}]}`
+	if err := json.Unmarshal([]byte(body), rel); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(t.TempDir(), "toktop")
+	if err := os.WriteFile(target, []byte("old binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := applyTo(context.Background(), rel, target)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized checksums must be refused, got %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old binary" {
+		t.Fatal("a failed fetch must leave the existing binary untouched")
+	}
+}
+
 func TestApplyRefusesReleaseWithoutChecksums(t *testing.T) {
 	rel := &Release{TagName: "v9.9.9"}
 	rel.Assets = append(rel.Assets, struct {
