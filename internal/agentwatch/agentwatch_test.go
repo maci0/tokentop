@@ -557,6 +557,24 @@ func TestReportsPromptAndThinking(t *testing.T) {
 	}
 }
 
+// Event stamps follow an injected clock so demo mode's simulated instant
+// is what lands in the feed, not the transcript watcher's wall-clock read.
+func TestReportStampsWithInjectedClock(t *testing.T) {
+	work, transcript := claudeHome(t)
+	w, rec, _ := followClaude(t, work)
+	frozen := time.Unix(1_700_000_000, 0).UTC()
+	w.SetNow(func() time.Time { return frozen })
+	appendLine(t, filepath.Join(transcript, "s.jsonl"), usageLine(work, 120))
+	w.read()
+	evs := rec.all()
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1: %+v", len(evs), evs)
+	}
+	if !evs[0].At.Equal(frozen) {
+		t.Fatalf("At = %v, want injected %v", evs[0].At, frozen)
+	}
+}
+
 // Equal-timestamp reports must follow PID order, not map iteration, so a
 // replay of the same process set emits events in the same sequence.
 func TestTrackedListOrdersByPID(t *testing.T) {

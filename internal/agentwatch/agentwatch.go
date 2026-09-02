@@ -64,6 +64,7 @@ type Watcher struct {
 	readEvery     time.Duration
 	// listAgents lists running agent processes. Nil means agentusage.Discover.
 	listAgents func() []agentusage.Process
+	now        func() time.Time // event stamps; nil means time.Now
 
 	mu      sync.Mutex
 	tracked map[int]*tracked
@@ -89,8 +90,27 @@ func New(rec Recorder, engines Engines) *Watcher {
 	return &Watcher{
 		rec: rec, engines: engines,
 		discoverEvery: defaultDiscoverEvery, readEvery: defaultReadEvery,
+		now:     time.Now,
 		tracked: map[int]*tracked{},
 	}
+}
+
+// SetNow overrides the clock used to stamp recorded events. Call before Run.
+// Demo mode passes the simulated clock so transcript-derived events stay on
+// the seeded timeline. Attach "since" for database-backed agents stays wall
+// time: session stores record real timestamps, not the simulated ones.
+func (w *Watcher) SetNow(fn func() time.Time) {
+	if fn == nil {
+		fn = time.Now
+	}
+	w.now = fn
+}
+
+func (w *Watcher) instant() time.Time {
+	if w.now != nil {
+		return w.now()
+	}
+	return time.Now()
 }
 
 // Run follows agents until the context is canceled. Agent definitions
@@ -194,6 +214,10 @@ func (w *Watcher) discover(ctx context.Context) {
 		// already halfway through a task contributes from here on rather than
 		// retroactively. That keeps the rate honest at the cost of the first
 		// part of a session toktop was not running for.
+		//
+		// since is wall time even when SetNow injects a simulated clock:
+		// session stores record real timestamps, and comparing them to a
+		// demo origin would count the whole history as this run.
 		watch := agentusage.Watch(p.Tool, p.Dir, time.Now())
 		if watch == nil {
 			continue // this agent keeps nothing readable
@@ -379,7 +403,7 @@ func (w *Watcher) report(t *tracked, cur agentusage.Sample) {
 		return
 	}
 	rec.RecordAgent(core.AgentEvent{
-		At:             cur.At,
+		At:             w.instant(),
 		Agent:          proc.Tool,
 		Kind:           "turn",
 		PromptTokens:   int64(max(prompt, 0)),

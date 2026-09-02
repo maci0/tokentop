@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestExtractPort(t *testing.T) {
@@ -118,6 +119,45 @@ func TestSnapshotDropsUnrelatedProcesses(t *testing.T) {
 	}
 	if len(list) != 2 {
 		t.Fatalf("snapshot = %+v, want ollama and the --port process", list)
+	}
+}
+
+// SnapshotAt uses the caller's clock for the refresh window and CPU dt, so
+// a collector that injects time does not pick up a wall-clock read here.
+func TestSnapshotAtUsesGivenTime(t *testing.T) {
+	orig := platformList
+	t.Cleanup(func() { platformList = orig })
+
+	var calls int
+	var ticks uint64 = 100
+	platformList = func() ([]raw, error) {
+		calls++
+		return []raw{{pid: 1, name: "ollama", args: []string{"ollama", "serve"}, ticks: ticks}}, nil
+	}
+	s := NewSampler()
+	s.minRefresh = time.Second
+	t0 := time.Unix(1_000, 0)
+
+	first := s.SnapshotAt(t0)
+	if len(first) != 1 || first[0].Name != "ollama" {
+		t.Fatalf("first snapshot = %+v", first)
+	}
+	_ = s.SnapshotAt(t0.Add(100 * time.Millisecond))
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 inside minRefresh", calls)
+	}
+
+	ticks = 200
+	second := s.SnapshotAt(t0.Add(2 * time.Second))
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2 after the window", calls)
+	}
+	if len(second) != 1 {
+		t.Fatalf("second snapshot = %+v", second)
+	}
+	// 100 ticks over 2s at USER_HZ 100: 100/100/2*100 = 50% of one core.
+	if second[0].CPUPct != 50 {
+		t.Fatalf("CPUPct = %v, want 50 from injected dt", second[0].CPUPct)
 	}
 }
 

@@ -240,10 +240,12 @@ func (s *Source) addAgent(ev core.AgentEvent) {
 	s.agents = append(s.agents, ev)
 	// Consumers assume newest-last ordering (core.Snapshot); keep the ring
 	// sorted by time the way addProbe does, so a harness POST with an older
-	// stamp cannot land last and eviction cannot drop the wrong end.
+	// stamp cannot land last and eviction cannot drop the wrong end. Equal
+	// timestamps then order by agent/id/note so concurrent ingest cannot
+	// shuffle a replay.
 	i := len(s.agents) - 1
 	last := s.agents[i]
-	dst := sort.Search(i, func(j int) bool { return s.agents[j].At.After(last.At) })
+	dst := sort.Search(i, func(j int) bool { return agentAfter(s.agents[j], last) })
 	copy(s.agents[dst+1:], s.agents[dst:])
 	s.agents[dst] = last
 	if len(s.agents) > core.AgentHistoryLen {
@@ -267,14 +269,39 @@ func (s *Source) RecordAgent(ev core.AgentEvent) {
 func (s *Source) addProbe(p core.ProbeSample) {
 	s.probes = append(s.probes, p)
 	// Consumers assume newest-last ordering; keep the ring sorted by time.
+	// Equal timestamps then order by addr/model so two sources with the
+	// same seed cannot disagree about probe order.
 	i := len(s.probes) - 1
 	last := s.probes[i]
-	dst := sort.Search(i, func(j int) bool { return s.probes[j].At.After(last.At) })
+	dst := sort.Search(i, func(j int) bool { return probeAfter(s.probes[j], last) })
 	copy(s.probes[dst+1:], s.probes[dst:])
 	s.probes[dst] = last
 	if len(s.probes) > core.ProbeHistoryLen {
 		s.probes = s.probes[len(s.probes)-core.ProbeHistoryLen:]
 	}
+}
+
+func agentAfter(a, b core.AgentEvent) bool {
+	if c := a.At.Compare(b.At); c != 0 {
+		return c > 0
+	}
+	if a.Agent != b.Agent {
+		return a.Agent > b.Agent
+	}
+	if a.ID != b.ID {
+		return a.ID > b.ID
+	}
+	return a.Note > b.Note
+}
+
+func probeAfter(a, b core.ProbeSample) bool {
+	if c := a.At.Compare(b.At); c != 0 {
+		return c > 0
+	}
+	if a.Addr != b.Addr {
+		return a.Addr > b.Addr
+	}
+	return a.Model > b.Model
 }
 
 // ProbeAll satisfies the UI prober interface by synthesizing samples now.

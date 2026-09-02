@@ -313,7 +313,11 @@ func main() {
 	}
 	if *agents && recorder != nil {
 		// engineAddrs is nil in demo mode, where nothing real is measured.
-		go agentwatch.New(recorder, engineAddrs).Run(ctx)
+		aw := agentwatch.New(recorder, engineAddrs)
+		if demoSrc != nil {
+			aw.SetNow(demoSrc.Now)
+		}
+		go aw.Run(ctx)
 	}
 
 	if !*noIngest && recorder != nil {

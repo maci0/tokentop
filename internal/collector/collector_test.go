@@ -486,6 +486,46 @@ func TestRecordProbeKeepsChronologicalOrder(t *testing.T) {
 	}
 }
 
+// Equal timestamps must not fall back to arrival order: concurrent probe
+// completions would then shuffle the ring across replays of the same clock.
+func TestRecordProbeEqualTimestampOrdersByAddr(t *testing.T) {
+	c := New(nil, time.Second)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	c.RecordProbe(core.ProbeSample{At: at, Addr: "http://127.0.0.1:8000", Model: "b"})
+	c.RecordProbe(core.ProbeSample{At: at, Addr: "http://127.0.0.1:11434", Model: "a"})
+	c.RecordProbe(core.ProbeSample{At: at, Addr: "http://127.0.0.1:8000", Model: "a"})
+	want := [][2]string{
+		{"http://127.0.0.1:11434", "a"},
+		{"http://127.0.0.1:8000", "a"},
+		{"http://127.0.0.1:8000", "b"},
+	}
+	if len(c.probes) != len(want) {
+		t.Fatalf("probes = %d, want %d", len(c.probes), len(want))
+	}
+	for i, p := range c.probes {
+		if p.Addr != want[i][0] || p.Model != want[i][1] {
+			t.Fatalf("probe %d = %s %s, want %s %s", i, p.Addr, p.Model, want[i][0], want[i][1])
+		}
+	}
+}
+
+func TestRecordAgentEqualTimestampOrdersByAgent(t *testing.T) {
+	c := New(nil, time.Second)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	c.RecordAgent(core.AgentEvent{At: at, Agent: "codex", ID: "2"})
+	c.RecordAgent(core.AgentEvent{At: at, Agent: "claude", ID: "1"})
+	c.RecordAgent(core.AgentEvent{At: at, Agent: "claude", ID: "0"})
+	want := [][2]string{{"claude", "0"}, {"claude", "1"}, {"codex", "2"}}
+	if len(c.agents) != len(want) {
+		t.Fatalf("agents = %d, want %d", len(c.agents), len(want))
+	}
+	for i, ev := range c.agents {
+		if ev.Agent != want[i][0] || ev.ID != want[i][1] {
+			t.Fatalf("agent %d = %s %s, want %s %s", i, ev.Agent, ev.ID, want[i][0], want[i][1])
+		}
+	}
+}
+
 // Agent events arrive over the ingest endpoint from senders whose clocks
 // disagree, so arrival order is not time order; the retained slice must
 // still be chronological or the agent feed renders a stale event last and
@@ -1068,4 +1108,43 @@ func TestProbeAllSkipsBlankModelName(t *testing.T) {
 	c.ProbeAll()
 	waitStay(t, 50*time.Millisecond, func() bool { return hits.Load() == 0 },
 		"probe ran with a blank model id")
+}
+
+// Probe samples ride the collector clock, not probe.Run's wall-clock start,
+// so a frozen now produces the same At on every backend in the wave.
+func TestProbeAllStampsWithInjectedClock(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "{\"response\":\"one\",\"done\":true,\"eval_count\":1,\"eval_duration\":1000000}\n")
+	})
+	srvA := httptest.NewServer(handler)
+	defer srvA.Close()
+	srvB := httptest.NewServer(handler)
+	defer srvB.Close()
+
+	frozen := time.Unix(1_700_000_000, 0).UTC()
+	c := frozenCollector(t, frozen, []provider.Provider{
+		&fakeProvider{label: "b", addr: srvB.URL},
+		&fakeProvider{label: "a", addr: srvA.URL},
+	})
+	c.lastModel[srvA.URL] = "ma"
+	c.lastModel[srvB.URL] = "mb"
+	c.ProbeAll()
+	waitFor(t, func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.probes) == 2
+	}, "probes never recorded")
+
+	c.mu.Lock()
+	probes := append([]core.ProbeSample(nil), c.probes...)
+	c.mu.Unlock()
+	for _, p := range probes {
+		if !p.At.Equal(frozen) {
+			t.Fatalf("At = %v, want injected %v (%+v)", p.At, frozen, p)
+		}
+	}
+	if probes[0].Addr > probes[1].Addr {
+		t.Fatalf("equal-timestamp probes not ordered by addr: %q then %q",
+			probes[0].Addr, probes[1].Addr)
+	}
 }

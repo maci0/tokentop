@@ -314,6 +314,26 @@ func TestRecordAgentKeepsChronologicalOrder(t *testing.T) {
 	}
 }
 
+func TestRecordAgentEqualTimestampOrdersByAgent(t *testing.T) {
+	s := NewSource(time.Second, 1)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	s.RecordAgent(core.AgentEvent{At: at, Agent: "codex", ID: "2"})
+	s.RecordAgent(core.AgentEvent{At: at, Agent: "claude", ID: "1"})
+	s.RecordAgent(core.AgentEvent{At: at, Agent: "claude", ID: "0"})
+	s.mu.Lock()
+	agents := append([]core.AgentEvent(nil), s.agents...)
+	s.mu.Unlock()
+	want := [][2]string{{"claude", "0"}, {"claude", "1"}, {"codex", "2"}}
+	if len(agents) != len(want) {
+		t.Fatalf("agents = %d, want %d", len(agents), len(want))
+	}
+	for i, ev := range agents {
+		if ev.Agent != want[i][0] || ev.ID != want[i][1] {
+			t.Fatalf("agent %d = %s %s, want %s %s", i, ev.Agent, ev.ID, want[i][0], want[i][1])
+		}
+	}
+}
+
 // Demo mode shares the ingest recorder: a retried POST with the same id
 // must not grow the feed, matching the live collector.
 func TestRecordAgentSameIDKeptOnce(t *testing.T) {

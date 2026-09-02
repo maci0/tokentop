@@ -71,13 +71,19 @@ func Snapshot() []Info {
 // Snapshot lists processes, best effort. Returns nil on unsupported/erroring
 // platforms so callers can degrade silently.
 func (s *Sampler) Snapshot() []Info {
+	return s.SnapshotAt(time.Now())
+}
+
+// SnapshotAt is Snapshot with the caller's clock. CPU tick deltas and the
+// minRefresh window use now, so a collector that injects time does not pick
+// up a second wall-clock read inside the sampler.
+func (s *Sampler) SnapshotAt(now time.Time) []Info {
 	if platformList == nil {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now()
 	if s.minRefresh > 0 && !s.last.IsZero() && now.Sub(s.last) < s.minRefresh {
 		return s.cached
 	}

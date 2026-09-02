@@ -64,11 +64,10 @@ type Collector struct {
 // New polls providers every interval. Host vitals come from sysmon; call
 // SetSysFn before Run when merging remote readings onto the local sample.
 func New(providers []provider.Provider, interval time.Duration) *Collector {
-	return &Collector{
+	c := &Collector{
 		providers:     providers,
 		interval:      interval,
 		sysFn:         sysmon.Sample,
-		procFn:        procs.Snapshot,
 		histOut:       map[string]*timedRing{},
 		histIn:        map[string]*timedRing{},
 		prev:          map[string]prevSample{},
@@ -78,6 +77,11 @@ func New(providers []provider.Provider, interval time.Duration) *Collector {
 		now:           time.Now,
 		started:       time.Now(),
 	}
+	// CPU tick deltas use this clock, not a second wall-clock read inside
+	// the sampler: a frozen or stepped now must move dt the same way emit's
+	// snapshot stamp does.
+	c.procFn = func() []procs.Info { return procSampler.SnapshotAt(c.instant()) }
+	return c
 }
 
 // SetNow overrides the clock used to stamp snapshots, probe-wave gating,
@@ -96,6 +100,10 @@ func (c *Collector) instant() time.Time {
 	}
 	return time.Now()
 }
+
+// procSampler is the shared engine-process sampler; nil-safe when the
+// platform has no process table access.
+var procSampler = procs.NewSampler()
 
 // SetSysFn overrides the host-vitals sampler (used for ssh targets whose
 // stats merge local + remote readings). Call before Run.
@@ -426,7 +434,7 @@ func (c *Collector) RecordAgent(ev core.AgentEvent) {
 	if core.HasAgentID(c.agents, ev.ID) {
 		return
 	}
-	c.agents = insertSorted(append(c.agents, ev), agentAt)
+	c.agents = insertSorted(append(c.agents, ev), agentCmp)
 	if len(c.agents) > core.AgentHistoryLen {
 		c.agents = c.agents[len(c.agents)-core.AgentHistoryLen:]
 	}
@@ -438,24 +446,46 @@ func (c *Collector) RecordAgent(ev core.AgentEvent) {
 func (c *Collector) RecordProbe(s core.ProbeSample) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.probes = insertSorted(append(c.probes, s), probeAt)
+	c.probes = insertSorted(append(c.probes, s), probeCmp)
 	if len(c.probes) > core.ProbeHistoryLen {
 		c.probes = c.probes[len(c.probes)-core.ProbeHistoryLen:]
 	}
 }
 
-func agentAt(ev core.AgentEvent) time.Time { return ev.At }
-func probeAt(s core.ProbeSample) time.Time { return s.At }
+func agentCmp(a, b core.AgentEvent) int {
+	if c := a.At.Compare(b.At); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.Agent, b.Agent); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.ID, b.ID); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Note, b.Note)
+}
+
+func probeCmp(a, b core.ProbeSample) int {
+	if c := a.At.Compare(b.At); c != 0 {
+		return c
+	}
+	if c := strings.Compare(a.Addr, b.Addr); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Model, b.Model)
+}
 
 // insertSorted places the element just appended to s (sorted before the
-// append) at its stable position: after every element whose timestamp is
-// less than or equal to its own. One binary search plus one shift replaces
-// the previous full re-sort per event; the ingest path holds c.mu across
-// this, so every comparison saved unblocks emit and ProbeAll sooner.
-func insertSorted[T any](s []T, at func(T) time.Time) []T {
+// append) at its stable position: after every element cmp reports as less
+// than or equal to it. Time is the primary key; equal timestamps then order
+// by identity so concurrent RecordProbe/RecordAgent completions cannot
+// shuffle a replay. One binary search plus one shift replaces a full
+// re-sort per event; the ingest path holds c.mu across this, so every
+// comparison saved unblocks emit and ProbeAll sooner.
+func insertSorted[T any](s []T, cmp func(a, b T) int) []T {
 	i := len(s) - 1
 	ev := s[i]
-	dst := sort.Search(i, func(j int) bool { return at(s[j]).After(at(ev)) })
+	dst := sort.Search(i, func(j int) bool { return cmp(s[j], ev) > 0 })
 	copy(s[dst+1:], s[dst:])
 	s[dst] = ev
 	return s
@@ -535,6 +565,9 @@ func (c *Collector) ProbeAll() {
 	}
 	c.probeMu.Unlock()
 
+	// One stamp for the whole wave: probe.Run measures TTFT against the
+	// wall clock (real I/O), but the sample's At must follow the collector
+	// clock or a frozen/seeded replay would carry a second timeline.
 	for _, t := range live {
 		go func(t probe.Request) {
 			defer func() {
@@ -542,7 +575,9 @@ func (c *Collector) ProbeAll() {
 				delete(c.probeInflight, t.Base+"|"+t.Model)
 				c.probeMu.Unlock()
 			}()
-			c.RecordProbe(probe.Run(ctx, t))
+			s := probe.Run(ctx, t)
+			s.At = now
+			c.RecordProbe(s)
 		}(t)
 	}
 }
