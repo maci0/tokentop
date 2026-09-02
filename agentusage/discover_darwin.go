@@ -17,9 +17,11 @@ import (
 //
 // An empty result means "cannot tell" rather than "nothing is running", which
 // callers should surface as no local agents rather than an error. On macOS this
-// asks ps(1) for the process table and lsof(8) for each match's working
-// directory; macOS exposes no /proc-style cwd symlink. Only processes that
-// name a known agent pay for the second call.
+// asks ps(1) for the process table (there is no pure-Go BSD process list
+// without cgo) and lsof(8) for each match's working directory; macOS exposes
+// no /proc-style cwd symlink to readlink. Only processes that name a known
+// agent pay for the second call. Nil if ps fails; an empty slice if nothing
+// matched.
 func Discover() []Process {
 	out, err := psTable()
 	if err != nil {

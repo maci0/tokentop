@@ -16,7 +16,8 @@ import (
 	"github.com/maci0/toktop/internal/core"
 )
 
-// Prober fires synthetic generation probes on demand.
+// Prober fires generation probes on demand. Live backends run a real
+// streaming generation; demo mode synthesizes the sample.
 type Prober interface {
 	ProbeAll()
 }

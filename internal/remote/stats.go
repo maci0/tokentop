@@ -11,8 +11,10 @@ import (
 	"github.com/maci0/toktop/internal/sysmon"
 )
 
-// Stats samples host vitals from the remote /proc tree every few seconds and
-// merges them into snapshots, tagged with the host so the UI can show origin.
+// Stats samples host vitals from a remote every few seconds and merges them
+// into snapshots, tagged with the host so the UI can show origin. Load and
+// memory come from /proc and stay empty on non-Linux remotes; CPU model, OS
+// name, kernel and uptime have Darwin fallbacks.
 type Stats struct {
 	Client *Client
 

@@ -75,10 +75,11 @@ it opens the operator's database. Asking for it in a build without the driver
 says so on stderr rather than reporting a silent zero.
 
 crush keeps its database inside the project it is working on
-(`.crush/crush.db`, at the project root it resolves), with the counts in
-`sessions.completion_tokens`. The store is already scoped to that project,
-so there is no second gate: with the tag, it is read. The only JSONL crush
-writes is its log, which carries no counters.
+(`.crush/crush.db`, at the project root it resolves), with
+`sessions.completion_tokens` as output and `sessions.prompt_tokens` as
+prompt. The store is already scoped to that project, so there is no second
+gate: with the tag, it is read. The only JSONL crush writes is its log,
+which carries no counters.
 
 Reading is done by this repo's own `agentusage` package, which gauntlet also
 imports, so both tools report the same numbers. Agents defined in
@@ -184,7 +185,7 @@ Event fields are all optional; anything omitted gets the default:
 | field | type | default | notes |
 |---|---|---|---|
 | `id` | string | - | caller-chosen key, capped at 128 runes; a repeat of a key still in the retained feed (last 64 events) is ignored. When omitted, a request `Idempotency-Key` header is used (`key:1`, `key:2`, and so on per line in the POST) |
-| `ts` | RFC 3339 string | arrival instant | offset-less stamps decode as UTC; a space instead of `T` is accepted |
+| `ts` | RFC 3339 string | arrival instant | offset-less stamps decode as UTC; a space instead of `T` is accepted, as is a colon-less numeric offset (`-0700`); stamps more than two minutes ahead of arrival are clamped to the arrival instant |
 | `agent` | string | `anonymous` | capped at 64 runes |
 | `model` | string | - | capped at 128 runes |
 | `kind` | string | `turn` | known kinds: `turn`, `tool`, `error`, `note`; custom kinds pass through lowercased, capped at 24 runes |
@@ -215,7 +216,7 @@ omit `id`). Without either, replaying the kept lines would duplicate them.
 
 ## Zero vendor libraries
 
-Everything comes from procfs/sysfs/sysctl, vendor CLIs it shells out to
+Host vitals and engine stats come from procfs/sysfs/sysctl, vendor CLIs it shells out to
 (`nvidia-smi`, `rocm-smi`, `xpu-smi`, `system_profiler`, `ioreg` - each the
 vendor's documented interface with no in-process alternative) or plain HTTP
 from the engines themselves. SSH transport is an embedded pure-Go client, so
@@ -268,10 +269,10 @@ loudly.
 |---|---|
 | `q` / `ctrl+c` | quit |
 | `esc` | close help / quit |
-| `space` | pause streaming |
+| `space` | pause / resume streaming |
 | `p` | probe every engine with a real generation |
 | `t` | toggle compressed timescale + grid |
-| `?` / `h` | help |
+| `?` / `h` | toggle help |
 
 ## Accessibility
 

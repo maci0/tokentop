@@ -24,8 +24,8 @@ import (
 	"github.com/maci0/toktop/internal/core"
 )
 
-// Server accepts POST /v1/events (single object or newline-delimited stream)
-// and GET /v1/events for debugging.
+// Server accepts POST /v1/events (single object or newline-delimited stream),
+// GET /v1/events as a schema hint, and GET /healthz.
 type Server struct {
 	rec  Recorder
 	now  func() time.Time // event stamps; nil means time.Now. I/O deadlines stay wall-clock.

@@ -123,7 +123,7 @@ func HasAgentID(events []AgentEvent, id string) bool {
 	return false
 }
 
-// ProbeSample is one synthetic generation probe result.
+// ProbeSample is one generation-probe result (TTFT and decode rate).
 type ProbeSample struct {
 	At     time.Time
 	Addr   string

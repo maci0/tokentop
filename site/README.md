@@ -6,10 +6,11 @@ One Worker, one page, no build step.
 bunx wrangler deploy          # from this directory
 ```
 
-`worker.js` holds the whole site: the HTML is a template literal, so there is
-nothing to bundle and nothing to keep in sync with a static host. The Worker
-answers every path with the page (a one-page site should not 404 on a typo)
-except `/health`, which returns `ok` for uptime checks.
+`worker.js` holds the HTML: it is a template literal, so there is nothing to
+bundle. The Worker answers `/health` with `ok` for uptime checks, serves the
+dashboard capture from `public/` at `/dashboard.png` and `/dashboard.webp`,
+and answers every other path with the page (a one-page site should not 404
+on a typo).
 
 The page carries an ETag derived from its own bytes: reloads and visits
 past the five-minute freshness window answer with an empty 304 instead of
