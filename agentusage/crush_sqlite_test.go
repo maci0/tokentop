@@ -7,8 +7,10 @@ package agentusage
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -300,5 +302,60 @@ func TestCrushWatchCountsPromptOnlyGrowth(t *testing.T) {
 	}
 	if got.Empty() {
 		t.Fatal("prompt-only growth must not look like an empty sample")
+	}
+}
+
+// The since predicate must not wrap updated_at: a function around the
+// column would make an index on it unusable.
+func TestCrushSinceQueryDoesNotWrapUpdatedAt(t *testing.T) {
+	if strings.Contains(crushSessionsSinceQuery, "CASE") || strings.Contains(crushSessionsSinceQuery, "* 1000") {
+		t.Fatal("since predicate wraps updated_at; an index on it cannot be used")
+	}
+}
+
+// A seconds-timestamped row at the Unix second that contains since must not
+// count: it is strictly before ceil(since_ms/1000), the same as the old
+// (updated_at * 1000 >= since_ms) rule.
+func TestCrushSourceSinceBoundaryInSeconds(t *testing.T) {
+	dir := t.TempDir()
+	since := time.Unix(1_700_000_000, 500*int64(time.Millisecond))
+	crushDB(t, dir, map[string][3]int64{
+		"same-second": {10, 0, 1_700_000_000},
+		"next-second": {20, 0, 1_700_000_001},
+		"millis":      {40, 0, since.UnixMilli()},
+	})
+	out, _, ok := crushSessionSum([]string{dir}, since)
+	if !ok || out != 60 {
+		t.Fatalf("output %d (ok=%v), want 60 (next-second + millis, not same-second)", out, ok)
+	}
+}
+
+func TestCrushSinceQueryCanUseUpdatedAtIndex(t *testing.T) {
+	dir := t.TempDir()
+	sessions := make(map[string][3]int64, 2000)
+	base := time.Unix(1_700_000_000, 0)
+	for i := range 2000 {
+		sessions[fmt.Sprintf("s-%04d", i)] = [3]int64{
+			1, 0, base.Add(time.Duration(i) * time.Second).UnixMilli(),
+		}
+	}
+	crushDB(t, dir, sessions)
+	path := filepath.Join(dir, ".crush", "crush.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE INDEX idx_sessions_updated_at ON sessions(updated_at)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("ANALYZE"); err != nil {
+		t.Fatal(err)
+	}
+	since := base.Add(1500 * time.Second)
+	ms := since.UnixMilli()
+	plan := explainQueryPlan(t, db, crushSessionsSinceQuery, ms, crushMillisCutoff, (ms+999)/1000)
+	if !strings.Contains(plan, "idx_sessions_updated_at") {
+		t.Fatalf("sargable predicate did not use updated_at index:\n%s", plan)
 	}
 }

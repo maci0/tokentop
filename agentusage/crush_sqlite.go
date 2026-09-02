@@ -24,9 +24,9 @@ import (
 // That last column carries two units. The schema comments call it
 // milliseconds, and crush writes milliseconds from Go, but the table's own
 // update trigger writes `strftime('%s','now')`, which is seconds: a row can
-// hold either depending on who touched it last. The query normalizes per row
-// rather than trusting the comment, because a mismatch here does not read
-// slightly wrong, it reads zero.
+// hold either depending on who touched it last. The since predicate compares
+// the column as stored (milliseconds against Unix ms, seconds against Unix
+// seconds) rather than wrapping it, so an index on updated_at can be used.
 //
 // The only JSONL crush writes is `.crush/logs/crush.log`, and it carries no
 // counters, so there is nothing for the file adapters to tail.
@@ -89,12 +89,24 @@ func crushDBPath(dir string) string {
 	return ""
 }
 
+const (
+	// crushMillisCutoff is the smallest Unix-ms value that cannot be a Unix
+	// second. Seconds of 1e11 are year 5138; milliseconds of 1e11 are 1973.
+	// Crush's schema comment says milliseconds, but its update trigger writes
+	// strftime('%s','now') (seconds), and Go writers use milliseconds.
+	crushMillisCutoff int64 = 100_000_000_000
+)
+
 const crushSessionsQuery = `
 	SELECT id, completion_tokens, prompt_tokens
 	FROM sessions`
 
+// crushSessionsSinceQuery keeps updated_at bare so an index on that column
+// can be used. Millisecond rows are >= since in ms. Second rows sit at or
+// below crushMillisCutoff and are compared in seconds, ceiled so a fractional
+// millisecond still matches (updated_at * 1000 >= since_ms).
 const crushSessionsSinceQuery = crushSessionsQuery + `
-	WHERE (CASE WHEN updated_at > 100000000000 THEN updated_at ELSE updated_at * 1000 END) >= ?`
+	WHERE updated_at >= ? OR (updated_at <= ? AND updated_at >= ?)`
 
 // sessions returns each database's current per-session completion and prompt
 // tokens. Watch snapshots this at attach so a continued session contributes
@@ -130,7 +142,8 @@ func readCrushSessions(path string, since time.Time) (map[string]sessionCounts, 
 	var args []any
 	if !since.IsZero() {
 		query = crushSessionsSinceQuery
-		args = append(args, since.UnixMilli())
+		ms := since.UnixMilli()
+		args = append(args, ms, crushMillisCutoff, (ms+999)/1000)
 	}
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {

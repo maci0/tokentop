@@ -26,9 +26,8 @@ import (
 //
 // The database is opened read-only for each reading and closed again, so a
 // long-lived dashboard never holds a handle on a database the agent is
-// writing. A query costs single-digit milliseconds even on a store tens of
-// gigabytes large, because it is answered through the (session_id,
-// time_created) index rather than a scan.
+// writing. Sessions for this directory are few; their messages are found
+// through the session_id index rather than a scan of the message table.
 type openCodeDBSource struct{ path string }
 
 func setOpenCodeDB(on bool) bool {
@@ -58,15 +57,21 @@ func openCodeDBPath() string {
 // prompt. tokens.input, when present, is billed prompt and is summed.
 // Only assistant messages carry tokens; other roles are prompts. The directory
 // list is spliced in by usageQueryFor, since SQL has no placeholder for a set.
+//
+// Sessions are the outer loop, then messages via message_session_idx
+// (session_id). CROSS JOIN stops SQLite from reversing that into a scan of
+// message: opencode indexes session_id, not (session_id, time_created) and
+// not directory.
 const usageQuery = `
 	SELECT
 		COALESCE(SUM(json_extract(m.data, '$.tokens.output')), 0),
 		COALESCE(SUM(json_extract(m.data, '$.tokens.reasoning')), 0),
 		COALESCE(MAX(json_extract(m.data, '$.tokens.total')), 0),
 		COALESCE(SUM(json_extract(m.data, '$.tokens.input')), 0)
-	FROM message m
-	JOIN session s ON s.id = m.session_id
-	WHERE %s AND m.time_created > ?
+	FROM session
+	CROSS JOIN message m
+	WHERE m.session_id = session.id
+	  AND %s AND m.time_created > ?
 	  AND json_extract(m.data, '$.role') = 'assistant'`
 
 // foldSessionDirectory compares session.directory case-insensitively and with
@@ -83,12 +88,12 @@ func usageQueryFor(n int) string {
 
 func directoryPred(n int) string {
 	ph := strings.TrimSuffix(strings.Repeat("?,", n), ",")
-	pred := "s.directory IN (" + ph + ")"
+	pred := "session.directory IN (" + ph + ")"
 	if foldSessionDirectory {
 		// lower() is ASCII-only, which is enough for drive letters and the
 		// rest of a Windows path; char(92) is backslash so the source file
 		// stays portable when edited on Unix.
-		pred = "(" + pred + " OR lower(replace(s.directory, char(92), '/')) IN (" + ph + "))"
+		pred = "(" + pred + " OR lower(replace(session.directory, char(92), '/')) IN (" + ph + "))"
 	}
 	return pred
 }

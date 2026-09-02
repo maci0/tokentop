@@ -26,16 +26,25 @@ func opencodeDB(t *testing.T) string {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	createOpenCodeSchema(t, db)
+	return path
+}
+
+// createOpenCodeSchema matches opencode's session/message tables and the
+// session_id index the usage query is written against.
+func createOpenCodeSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
 	for _, stmt := range []string{
 		`CREATE TABLE session (id text PRIMARY KEY, directory text NOT NULL)`,
 		`CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL,
-			time_created integer NOT NULL, data text NOT NULL)`,
+			time_created integer NOT NULL, data text NOT NULL,
+			FOREIGN KEY (session_id) REFERENCES session(id))`,
+		`CREATE INDEX message_session_idx ON message (session_id)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return path
 }
 
 func addSession(t *testing.T, path, id, dir string) {
@@ -283,15 +292,24 @@ func TestOpenReadOnlyRejectsWrites(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO session (id, directory) VALUES ('x', '/tmp')`); err == nil {
 		t.Fatal("query_only allowed a write")
 	}
+	var busy int
+	if err := db.QueryRow("PRAGMA busy_timeout").Scan(&busy); err != nil || busy != int(dbBusyTimeout.Milliseconds()) {
+		t.Fatalf("PRAGMA busy_timeout = %d (%v), want %d", busy, err, dbBusyTimeout.Milliseconds())
+	}
 }
 
 // A home directory may contain characters that carry URI syntax in a SQLite
 // file: DSN; those paths must still open and read as themselves.
 func TestOpenCodeDBReadsPathWithURISyntaxCharacters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "50%.db")
-	execSQL(t, path, `CREATE TABLE session (id text PRIMARY KEY, directory text NOT NULL)`)
-	execSQL(t, path, `CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL,
-		time_created integer NOT NULL, data text NOT NULL)`)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createOpenCodeSchema(t, db)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	dir := t.TempDir()
 	addSession(t, path, "s", dir)
@@ -405,5 +423,55 @@ func TestOpenCodeDBMatchesUnresolvedDirectories(t *testing.T) {
 	w.poll(nil)
 	if got := w.Sample().Output; got != 42 {
 		t.Fatalf("output tokens %d, want 42: the unresolved spelling was missed", got)
+	}
+}
+
+func explainQueryPlan(t *testing.T, db *sql.DB, query string, args ...any) string {
+	t.Helper()
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+// The usage query must walk session first. Starting at message would scan
+// the whole table; opencode indexes session_id, not time_created.
+func TestUsageQueryStartsAtSession(t *testing.T) {
+	path := opencodeDB(t)
+	addSession(t, path, "s-mine", "/work")
+	start := time.Unix(1_700_000_000, 0)
+	addMessage(t, path, "m-mine", "s-mine", start.Add(time.Second),
+		`{"role":"assistant","tokens":{"output":1}}`)
+
+	orig := foldSessionDirectory
+	foldSessionDirectory = false
+	t.Cleanup(func() { foldSessionDirectory = orig })
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	plan := explainQueryPlan(t, db, usageQueryFor(1), "/work", start.UnixMilli())
+	first, _, _ := strings.Cut(plan, "\n")
+	if !strings.Contains(strings.ToLower(first), "session") {
+		t.Fatalf("outer loop is not session:\n%s", plan)
 	}
 }
