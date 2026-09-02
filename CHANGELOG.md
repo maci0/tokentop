@@ -12,6 +12,8 @@ support channel (see SECURITY.md).
 
 ### Added
 
+- Startup prints one stderr line of the knobs that apply (`interval`,
+  `ingest`, mode flags). Bearer tokens appear only as `bearer=set`.
 - `$TOKTOP_LOG_LEVEL` sets the ingest audit log floor (`debug`, `info`,
   `warn`, `error`; default `info`). A set-but-invalid value aborts at
   startup.
@@ -57,6 +59,10 @@ support channel (see SECURITY.md).
   neither `/metrics` nor `/v1/models` is reported as down, not as an idle
   success. Lemonade and LM Studio still stay up when their native health or
   v0 feed answers.
+- `--interval` below 50ms or above 1h is rejected at startup. A bare
+  `--interval 1` is 1 nanosecond in Go and would have hammered engines.
+- `TOKTOP_COLUMNS` / `TOKTOP_LINES` reject values outside 41-1024 / 21-512
+  so a typo cannot size a `--once` frame large enough to OOM.
 - The compact dashboard clips long engine rows to the pane width and keeps
   the key hint on the last line, so a crowded or narrow strip no longer
   wraps or hides `q` / space / `?`.

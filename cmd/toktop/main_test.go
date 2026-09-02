@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,11 @@ func TestValidateFlags(t *testing.T) {
 		{name: "probe off is zero, not negative", interval: time.Second, probeSecs: 0},
 		{name: "negative interval rejected", interval: -time.Second, wantErr: "--interval"},
 		{name: "zero interval rejected", interval: 0, wantErr: "--interval"},
+		{name: "bare-number nanoseconds rejected", interval: time.Nanosecond, wantErr: "nanoseconds"},
+		{name: "below floor rejected", interval: minInterval - time.Millisecond, wantErr: "--interval"},
+		{name: "floor accepted", interval: minInterval},
+		{name: "cap accepted", interval: maxInterval},
+		{name: "above cap rejected", interval: maxInterval + time.Second, wantErr: "--interval"},
 		{name: "negative probe rejected", interval: time.Second, probeSecs: -5, wantErr: "--probe"},
 		{name: "probe at cap accepted", interval: time.Second, probeSecs: maxProbeSecs},
 		{name: "probe above cap rejected", interval: time.Second, probeSecs: maxProbeSecs + 1, wantErr: "--probe"},
@@ -149,6 +155,23 @@ func TestWarnUnknownEnv(t *testing.T) {
 	})
 }
 
+func TestFrameEnv(t *testing.T) {
+	t.Run("trimmed value is used", func(t *testing.T) {
+		t.Setenv("TOKTOP_COLUMNS", " 120 ")
+		n, set, err := frameEnv("TOKTOP_COLUMNS", minFrameColumns, maxFrameColumns)
+		if err != nil || !set || n != 120 {
+			t.Fatalf("frameEnv() = %d, %v, %v, want 120, true, nil", n, set, err)
+		}
+	})
+	t.Run("unset is not set", func(t *testing.T) {
+		t.Setenv("TOKTOP_COLUMNS", "")
+		n, set, err := frameEnv("TOKTOP_COLUMNS", minFrameColumns, maxFrameColumns)
+		if err != nil || set || n != 0 {
+			t.Fatalf("frameEnv() = %d, %v, %v, want 0, false, nil", n, set, err)
+		}
+	})
+}
+
 func TestValidateOnceEnv(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -158,9 +181,14 @@ func TestValidateOnceEnv(t *testing.T) {
 	}{
 		{name: "unset passes"},
 		{name: "empty means unset", columns: "", lines: ""},
+		{name: "whitespace only means unset", columns: "  ", lines: "\t"},
 		{name: "typical values pass", columns: "120", lines: "38"},
 		{name: "floors accepted", columns: "41", lines: "21"},
+		{name: "caps accepted", columns: strconv.Itoa(maxFrameColumns), lines: strconv.Itoa(maxFrameLines)},
+		{name: "whitespace trimmed", columns: " 120 ", lines: " 38 "},
 		{name: "below floor rejected", columns: "40", wantErr: "TOKTOP_COLUMNS"},
+		{name: "above cap rejected", columns: strconv.Itoa(maxFrameColumns + 1), wantErr: "TOKTOP_COLUMNS"},
+		{name: "lines above cap rejected", lines: strconv.Itoa(maxFrameLines + 1), wantErr: "TOKTOP_LINES"},
 		{name: "not a number rejected", lines: "full-hd", wantErr: "TOKTOP_LINES"},
 		{name: "negative rejected", columns: "-1", wantErr: "TOKTOP_COLUMNS"},
 	}
@@ -242,6 +270,7 @@ func TestUsage(t *testing.T) {
 		"-interval",             // PrintDefaults, not just the examples
 		"-add",                  // repeatable backend flag
 		"1s or 500ms",           // --interval names the duration format
+		"min 50ms",              // --interval floor (bare numbers are nanoseconds)
 		"OMNIROUTE_API_KEY",     // env fallbacks named
 		"--add",                 // http(s) leftovers hint at --add
 		"userinfo",              // --add must not embed credentials
@@ -421,6 +450,7 @@ func TestWarnIgnoredFrameEnv(t *testing.T) {
 		wantSub string // empty means silence expected
 	}{
 		{name: "unset is silent"},
+		{name: "whitespace only is silent", columns: "  ", lines: "\t"},
 		{name: "columns outside once warns", columns: "120", wantSub: "TOKTOP_COLUMNS"},
 		{name: "lines outside once warns", lines: "38", wantSub: "TOKTOP_LINES"},
 		{name: "both set warn twice", columns: "120", lines: "38", wantSub: "TOKTOP_COLUMNS"},
@@ -804,6 +834,51 @@ func TestValidateIngestAddr(t *testing.T) {
 			t.Errorf("validateIngestAddr(%q) = %v, want error mentioning %q", tt.addr, err, tt.wantErr)
 		}
 	}
+}
+
+func TestLogActiveConfig(t *testing.T) {
+	isolateToktopEnv(t)
+	t.Setenv("OMNIROUTE_API_KEY", "")
+	t.Setenv("TOKTOP_BEARER", "")
+
+	t.Run("defaults name interval and ingest", func(t *testing.T) {
+		f := &cliFlags{interval: time.Second, ingest: "127.0.0.1:8420"}
+		var buf strings.Builder
+		logActiveConfig(&buf, f, map[string]bool{}, 0, 0)
+		got := buf.String()
+		if !strings.Contains(got, "interval=1s") || !strings.Contains(got, "ingest=127.0.0.1:8420") {
+			t.Fatalf("logActiveConfig() = %q, want interval and ingest", got)
+		}
+	})
+	t.Run("no-ingest is named off", func(t *testing.T) {
+		f := &cliFlags{interval: time.Second, noIngest: true}
+		var buf strings.Builder
+		logActiveConfig(&buf, f, map[string]bool{}, 0, 0)
+		if !strings.Contains(buf.String(), "ingest=off") {
+			t.Fatalf("logActiveConfig() = %q, want ingest=off", buf.String())
+		}
+	})
+	t.Run("bearer value is never printed", func(t *testing.T) {
+		f := &cliFlags{interval: time.Second, ingest: "127.0.0.1:8420", bearer: "sk-secret"}
+		var buf strings.Builder
+		logActiveConfig(&buf, f, map[string]bool{"bearer": true}, 1, 0)
+		got := buf.String()
+		if strings.Contains(got, "sk-secret") {
+			t.Fatalf("logActiveConfig() leaked bearer: %q", got)
+		}
+		if !strings.Contains(got, "bearer=set") {
+			t.Fatalf("logActiveConfig() = %q, want bearer=set", got)
+		}
+	})
+	t.Run("unused bearer is omitted", func(t *testing.T) {
+		f := &cliFlags{interval: time.Second, ingest: "127.0.0.1:8420", bearer: "sk-secret"}
+		var buf strings.Builder
+		logActiveConfig(&buf, f, map[string]bool{"bearer": true}, 0, 0)
+		got := buf.String()
+		if strings.Contains(got, "bearer") || strings.Contains(got, "sk-secret") {
+			t.Fatalf("logActiveConfig() = %q, want no bearer without --add", got)
+		}
+	})
 }
 
 func TestResolveBearer(t *testing.T) {

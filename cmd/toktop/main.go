@@ -101,7 +101,7 @@ func registerFlags() *cliFlags {
 	flagsOnce.Do(func() {
 		flag.BoolVar(&cli.demo, "demo", false, "run against a simulated fleet instead of real backends")
 		flag.IntVar(&cli.probeSecs, "probe", 0, fmt.Sprintf("auto-probe every N seconds (0=off, max %d)", maxProbeSecs))
-		flag.DurationVar(&cli.interval, "interval", time.Second, "poll interval as a Go duration such as 1s or 500ms")
+		flag.DurationVar(&cli.interval, "interval", time.Second, "poll interval as a Go duration such as 1s or 500ms (min 50ms, max 1h)")
 		flag.StringVar(&cli.ingest, "ingest", "127.0.0.1:8420", "agent event ingest listen address")
 		flag.BoolVar(&cli.noIngest, "no-ingest", false, "disable the agent event HTTP endpoint")
 		flag.BoolVar(&cli.agents, "agents", false, "watch AI coding agents on this machine by reading their session transcripts")
@@ -204,6 +204,8 @@ func main() {
 		}
 		f.sshKey = resolved
 	}
+
+	logActiveConfig(os.Stderr, f, explicit, len(f.adds), len(remoteTargets))
 
 	if !f.once && !term.IsTerminal(int(os.Stdout.Fd())) {
 		// The live dashboard paints with alt-screen sequences; piped or
@@ -509,13 +511,13 @@ func waitForFrames(ctx context.Context, ch <-chan core.Snapshot, n int, wait tim
 // silence) through a screen reader.
 func runOnce(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, n int, plain bool) {
 	w, h := 120, 38
-	if tw, th, err := term.GetSize(int(os.Stdout.Fd())); err == nil && tw > 40 && th > 20 {
-		w, h = tw, th
+	if tw, th, err := term.GetSize(int(os.Stdout.Fd())); err == nil && tw >= minFrameColumns && th >= minFrameLines {
+		w, h = min(tw, maxFrameColumns), min(th, maxFrameLines)
 	}
-	if v, err := strconv.Atoi(os.Getenv("TOKTOP_COLUMNS")); err == nil && v >= minFrameColumns {
+	if v, set, err := frameEnv("TOKTOP_COLUMNS", minFrameColumns, maxFrameColumns); err == nil && set {
 		w = v
 	}
-	if v, err := strconv.Atoi(os.Getenv("TOKTOP_LINES")); err == nil && v >= minFrameLines {
+	if v, set, err := frameEnv("TOKTOP_LINES", minFrameLines, maxFrameLines); err == nil && set {
 		h = v
 	}
 	// Snapshots land one poll interval apart, so a slow-polling host needs a
@@ -743,7 +745,7 @@ func warnIgnoredFrameEnv(once bool) {
 		return
 	}
 	for _, name := range [...]string{"TOKTOP_COLUMNS", "TOKTOP_LINES"} {
-		if os.Getenv(name) != "" {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
 			fmt.Fprintf(os.Stderr, "toktop: $%s has no effect without --once\n", name)
 		}
 	}
@@ -781,11 +783,29 @@ func warnUnusedEnv(bearerFlag, demo, noIngest bool, nAdd, nRemote int) {
 // on 64-bit ints (NewTicker then panics) and are not a useful auto-probe.
 const maxProbeSecs = 24 * 60 * 60
 
+// Poll interval bounds. flag.Duration treats a bare number as nanoseconds, so
+// `--interval 1` would otherwise hammer engines at 1ns. 50ms is already
+// faster than a metrics scrape (PollTimeout is 1.5s); 1h is slower than any
+// live dashboard should sit, and would make --once wait hours per frame.
+const (
+	minInterval = 50 * time.Millisecond
+	maxInterval = time.Hour
+)
+
 // validateFlags rejects out-of-range values at startup: a running dashboard
 // that ignores what it was asked to do is a misconfiguration nobody can see.
 func validateFlags(once bool, interval time.Duration, probeSecs, frames int) error {
 	if interval <= 0 {
 		return fmt.Errorf("--interval must be positive, got %s", interval)
+	}
+	if interval < minInterval {
+		if interval < time.Millisecond {
+			return fmt.Errorf("--interval must be >= %s, got %s (bare numbers are nanoseconds; use 1s or 500ms)", minInterval, interval)
+		}
+		return fmt.Errorf("--interval must be >= %s, got %s", minInterval, interval)
+	}
+	if interval > maxInterval {
+		return fmt.Errorf("--interval must be <= 1h, got %s", interval)
 	}
 	if probeSecs < 0 {
 		return fmt.Errorf("--probe must be >= 0 (0 disables auto-probe), got %d", probeSecs)
@@ -858,12 +878,31 @@ func warnBearerFlag(flagSet bool, flagVal string) {
 	}
 }
 
-// Frame floors: below these the static frame cannot lay out legibly. The
-// README documents the overrides as "> 40" / "> 20".
+// Frame floors and caps for TOKTOP_COLUMNS / TOKTOP_LINES. Below the floors
+// the static frame cannot lay out legibly. Above the caps, composeFrame would
+// allocate a pane of newlines/cells big enough to OOM a capture from a typo
+// (TOKTOP_LINES=1000000000). 1024x512 is larger than any real terminal.
 const (
 	minFrameColumns = 41
 	minFrameLines   = 21
+	maxFrameColumns = 1024
+	maxFrameLines   = 512
 )
+
+// frameEnv reads one TOKTOP_COLUMNS / TOKTOP_LINES override. Unset or empty
+// means default (set is false). Surrounding whitespace is ignored so a value
+// copied with a trailing newline still parses, matching TOKTOP_LOG_LEVEL.
+func frameEnv(name string, least, most int) (n int, set bool, err error) {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return 0, false, nil
+	}
+	n, convErr := strconv.Atoi(v)
+	if convErr != nil || n < least || n > most {
+		return 0, false, fmt.Errorf("$%s must be an integer %d-%d, got %q", name, least, most, v)
+	}
+	return n, true, nil
+}
 
 // validateOnceEnv rejects a set-but-unusable frame override before --once
 // renders: a capture sized by a typo'd variable must fail loudly rather than
@@ -871,22 +910,59 @@ const (
 // means default, matching how every other optional setting reads here.
 func validateOnceEnv() error {
 	for _, e := range [...]struct {
-		name  string
-		least int
+		name        string
+		least, most int
 	}{
-		{"TOKTOP_COLUMNS", minFrameColumns},
-		{"TOKTOP_LINES", minFrameLines},
+		{"TOKTOP_COLUMNS", minFrameColumns, maxFrameColumns},
+		{"TOKTOP_LINES", minFrameLines, maxFrameLines},
 	} {
-		v := os.Getenv(e.name)
-		if v == "" {
-			continue
-		}
-		n, err := strconv.Atoi(v)
-		if err != nil || n < e.least {
-			return fmt.Errorf("$%s must be an integer >= %d, got %q", e.name, e.least, v)
+		if _, _, err := frameEnv(e.name, e.least, e.most); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// logActiveConfig writes one startup line of the knobs that will actually
+// apply. Secrets are named as set/unset, never printed. The live dashboard
+// hides stderr under the alt screen; --once and a journal after quit keep it.
+func logActiveConfig(w io.Writer, f *cliFlags, explicit map[string]bool, nAdd, nRemote int) {
+	var b strings.Builder
+	b.WriteString("toktop: interval=")
+	b.WriteString(f.interval.String())
+	if f.noIngest {
+		b.WriteString(" ingest=off")
+	} else {
+		b.WriteString(" ingest=")
+		b.WriteString(f.ingest)
+	}
+	if f.demo {
+		b.WriteString(" demo")
+	}
+	if f.agents {
+		b.WriteString(" agents")
+		if f.opencode {
+			b.WriteString(" opencode-db")
+		}
+	}
+	if f.once {
+		b.WriteString(" once")
+		if f.plain {
+			b.WriteString(" plain")
+		}
+	}
+	if f.probeSecs > 0 {
+		fmt.Fprintf(&b, " probe=%ds", f.probeSecs)
+	}
+	if nRemote > 0 && !f.demo {
+		fmt.Fprintf(&b, " ssh=%d", nRemote)
+	}
+	if nAdd > 0 && !f.demo {
+		if tok := resolveBearer(f.bearer, explicit["bearer"]); tok != "" {
+			b.WriteString(" bearer=set")
+		}
+	}
+	fmt.Fprintln(w, b.String())
 }
 
 // toktopEnvVars are the TOKTOP_* names this process recognizes. Most are

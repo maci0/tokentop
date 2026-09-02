@@ -280,8 +280,10 @@ keys, ssh-agent, and finally a password prompt when stdin is a terminal
 (or set `TOKTOP_SSH_PASSWORD` for headless runs). `ssh://user:pass@host`
 is rejected: the password would sit in argv, and is not how auth is
 configured. A path, query, or fragment on the URL is rejected rather than
-ignored. Host keys use trust-on-first-use, stored under your config dir;
-a changed key is refused loudly.
+ignored. Host keys use trust-on-first-use, stored at
+`$XDG_CONFIG_HOME/toktop/known_hosts` (default `~/.config/toktop/known_hosts`);
+a changed key is refused loudly. `SSH_AUTH_SOCK` selects the agent; on Windows
+the OpenSSH named pipe is used when that variable is unset.
 
 ## Keys
 
@@ -364,7 +366,8 @@ ssh://user@host   positional; monitor remote hosts (repeatable;
 --opencode-db     with --agents: also read opencode's SQLite session
                   database (needs a build with the sqlite tag)
 --probe N         auto-probe every N seconds (0=off, max 86400)
---interval D      poll interval (Go duration such as 1s or 500ms; default 1s)
+--interval D      poll interval (Go duration such as 1s or 500ms; default 1s;
+                  min 50ms, max 1h; a bare number is nanoseconds and is rejected)
 --ingest ADDR     agent event listen address, host:port
                   (default 127.0.0.1:8420; empty is rejected)
 --no-ingest       disable the event endpoint (`--ingest` is then ignored)
@@ -388,12 +391,14 @@ Password auth for ssh targets: interactive prompt, or `TOKTOP_SSH_PASSWORD`.
 | `OMNIROUTE_API_KEY` | bearer token fallback for `--bearer` (checked first unless `--bearer` is passed) |
 | `TOKTOP_BEARER` | bearer token fallback for `--bearer` (checked after `OMNIROUTE_API_KEY`) |
 | `TOKTOP_SSH_PASSWORD` | ssh password for headless runs; otherwise an interactive prompt |
-| `TOKTOP_COLUMNS` / `TOKTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be > 40 / > 20, and a set-but-invalid value aborts with exit code 2 |
+| `TOKTOP_COLUMNS` / `TOKTOP_LINES` | fixed frame size for `--once` output (screenshots, capture); must be 41-1024 / 21-512, and a set-but-invalid value aborts with exit code 2 |
 | `TOKTOP_LOG_LEVEL` | ingest audit log floor: `debug`, `info` (default), `warn`, or `error`; a set-but-invalid value aborts with exit code 2 |
 | `TOKTOP_SCREENSHOT_FONT` | used only by `scripts/screenshot.py` (path to a regular-weight `.ttf`); the `toktop` binary ignores it |
 | `GITHUB_TOKEN` | optional; authenticates `toktop update`'s GitHub API calls past the anonymous rate limit |
 | `GAUNTLET_HOME` | directory holding `agents.json` (default `~/.gauntlet`) |
 | `XDG_DATA_HOME` | with `--opencode-db`: directory under which `opencode/opencode.db` is read (default `~/.local/share`) |
+| `XDG_CONFIG_HOME` | directory for the ssh trust-on-first-use host-key store (`toktop/known_hosts`; default `~/.config`) |
+| `SSH_AUTH_SOCK` | ssh-agent socket for `ssh://` targets; on Windows the OpenSSH named pipe is used when unset |
 | `NO_COLOR` | strips terminal styling when set to any value (honored by the renderer) |
 
 An explicit `--bearer`, even empty, wins over its env fallbacks; otherwise
@@ -412,12 +417,15 @@ nothing (`TOKTOP_SCREENSHOT_FONT` is recognized so a developer export is
 not reported as a typo). `$TOKTOP_BEARER` / `$OMNIROUTE_API_KEY` without
 `--add`, `$TOKTOP_SSH_PASSWORD` without an `ssh://` target, and
 `$TOKTOP_LOG_LEVEL` with `--no-ingest` are named as unused, matching the
-flag warnings. Out-of-range flag values (`--interval 0`, negative `--probe`,
-`--probe` above 86400, `--frames < 1` or above 180 with `--once`, a
-malformed `--add` or `--ingest`, an `ssh://` URL with a password, path,
-query, or fragment) abort with exit code 2 instead of being silently
-adjusted; so do out-of-range `TOKTOP_COLUMNS` / `TOKTOP_LINES` when
-`--once` renders, and a set-but-invalid `TOKTOP_LOG_LEVEL`.
+flag warnings. Out-of-range flag values (`--interval 0`, `--interval` below
+50ms or above 1h, negative `--probe`, `--probe` above 86400, `--frames < 1`
+or above 180 with `--once`, a malformed `--add` or `--ingest`, an `ssh://`
+URL with a password, path, query, or fragment) abort with exit code 2
+instead of being silently adjusted; so do out-of-range `TOKTOP_COLUMNS` /
+`TOKTOP_LINES` when `--once` renders, and a set-but-invalid
+`TOKTOP_LOG_LEVEL`. A bare `--interval 1` is 1 nanosecond in Go and is
+rejected. Startup prints one line of the knobs that apply (`interval`,
+`ingest`, mode flags); bearer tokens appear only as `bearer=set`.
 
 ## Build & test
 
