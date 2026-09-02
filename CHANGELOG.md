@@ -33,6 +33,9 @@ support channel (see SECURITY.md).
 
 ### Changed
 
+- Ingest `GET /v1/events` names NDJSON in the schema hint, matching what
+  `POST /v1/events` accepts. Unknown paths answer 404 naming the three
+  endpoints instead of Go's generic 404 page.
 - The agent event ring keeps 512 events so several agents over the 30s rate
   window are not evicted by a shared 64-slot cap. Duplicate `id` values are
   ignored only while that event is still in the ring.

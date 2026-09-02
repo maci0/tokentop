@@ -133,6 +133,8 @@ test("non-GET methods and /health keep their contract", async () => {
   const denied = await call({}, { method: "POST" });
   expect(denied.status).toBe(405);
   expect(denied.headers.get("allow")).toBe("GET, HEAD");
+  expect(denied.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+  expect(denied.headers.get("cache-control")).toBe("no-store");
   const health = await call({}, { path: "/health" });
   expect(health.status).toBe(200);
   expect(health.headers.get("cache-control")).toBe("no-store");
@@ -330,9 +332,22 @@ test("image paths 404 without ASSETS instead of falling through to the page", as
   const res = await imageCall("/dashboard.avif");
   expect(res.status).toBe(404);
   expect(await res.text()).not.toBe(identityBody);
+  expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+  expect(res.headers.get("cache-control")).toBe("no-store");
   for (const name of SECURITY_HEADER_NAMES) {
     expect(res.headers.get(name)).not.toBeNull();
   }
+});
+
+test("image 404s from ASSETS are not cached as successes", async () => {
+  const env = {
+    ASSETS: {
+      fetch: () => new Response("missing", { status: 404 }),
+    },
+  };
+  const res = await imageCall("/dashboard.png", {}, { env });
+  expect(res.status).toBe(404);
+  expect(res.headers.get("cache-control")).toBe("no-store");
 });
 
 test("image paths are served from ASSETS with cache and security headers", async () => {
@@ -389,6 +404,7 @@ test("image revalidation forwards If-None-Match without Accept-Encoding", async 
   );
   expect(res.status).toBe(304);
   expect(res.headers.get("etag")).toBe('"abc"');
+  expect(res.headers.get("cache-control")).toBe(IMAGE_CACHE);
   expect(await res.text()).toBe("");
 });
 
@@ -402,4 +418,6 @@ test("image HEAD matches GET headers with no body, POST is 405", async () => {
   const posted = await imageCall("/dashboard.webp", {}, { method: "POST", env });
   expect(posted.status).toBe(405);
   expect(posted.headers.get("allow")).toBe("GET, HEAD");
+  expect(posted.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+  expect(posted.headers.get("cache-control")).toBe("no-store");
 });

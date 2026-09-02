@@ -190,7 +190,7 @@ move it, `--no-ingest` to turn it off) and speaks plain HTTP/JSON:
 | endpoint | purpose |
 |---|---|
 | `POST /v1/events` | record events; body is one JSON object or an NDJSON stream |
-| `GET /v1/events` | schema hint for humans |
+| `GET /v1/events` | schema hint for humans (POST one object or NDJSON) |
 | `GET /healthz` | liveness probe, answers `ok` |
 
 Event fields are all optional; anything omitted gets the default:
@@ -212,10 +212,12 @@ stalls mid-body, and `413` past the 1 MiB body cap. A POST carrying an
 `Origin` header (browser-driven; scripts and agents never send one) is
 refused with `403`, so a web page cannot forge rows into a running
 dashboard. Wrong methods on these paths answer `405` with `Allow`.
-Error bodies are short
-plain-text reasons that name the field or expected shape; unknown fields are
-ignored, so harnesses can include their own. The request `Content-Type` header is not checked: the body is
-always read as JSON/NDJSON, so plain `curl -d` works unmodified.
+Unknown paths answer `404` naming the three endpoints, so a POST to `/events`
+is not a generic not-found page. Error bodies are short plain-text reasons
+that name the field or expected shape; unknown fields are ignored, so
+harnesses can include their own. The request `Content-Type` header is not
+checked: the body is always read as JSON/NDJSON, so plain `curl -d` works
+unmodified.
 Every POST is logged to stderr as one structured line (`req`, `method`,
 `path`, `status`, `accepted`, `duration`, `remote`; failures add `error`).
 Wrong-method and unknown-path requests log the same way, so a harness

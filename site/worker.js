@@ -319,6 +319,19 @@ const SECURITY_HEADERS = {
     "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
 
+const ERROR_HEADERS = {
+  "content-type": "text/plain; charset=utf-8",
+  "cache-control": "no-store",
+  ...SECURITY_HEADERS,
+};
+
+function errorResponse(status, body, extraHeaders = {}) {
+  return new Response(body, {
+    status,
+    headers: { ...ERROR_HEADERS, ...extraHeaders },
+  });
+}
+
 // Every page answer (200 any encoding, 304) carries these; the security
 // headers ride along because a fresh load is exactly where they must apply.
 const PAGE_HEADERS = {
@@ -345,16 +358,10 @@ export default {
     const url = new URL(request.url);
     if (IMAGE_PATHS.has(url.pathname)) {
       if (request.method !== "GET" && request.method !== "HEAD") {
-        return new Response("method not allowed", {
-          status: 405,
-          headers: { allow: "GET, HEAD", ...SECURITY_HEADERS },
-        });
+        return errorResponse(405, "method not allowed", { allow: "GET, HEAD" });
       }
       if (!env?.ASSETS) {
-        return new Response("not found", {
-          status: 404,
-          headers: SECURITY_HEADERS,
-        });
+        return errorResponse(404, "not found");
       }
       // Images are already compressed. Clone-with-headers keeps
       // Accept-Encoding (a forbidden header), so this is a new request
@@ -374,17 +381,20 @@ export default {
       for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
         headers.set(name, value);
       }
-      headers.set("cache-control", IMAGE_CACHE);
+      // Success and revalidation can be stored; a missing or failed asset
+      // must not inherit the day-long image policy or a 404 sticks.
+      if (asset.status === 200 || asset.status === 304) {
+        headers.set("cache-control", IMAGE_CACHE);
+      } else {
+        headers.set("cache-control", "no-store");
+      }
       if (request.method === "HEAD") {
         return new Response(null, { status: asset.status, headers });
       }
       return new Response(asset.body, { status: asset.status, headers });
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
-      return new Response("method not allowed", {
-        status: 405,
-        headers: { allow: "GET, HEAD", ...SECURITY_HEADERS },
-      });
+      return errorResponse(405, "method not allowed", { allow: "GET, HEAD" });
     }
     if (url.pathname === "/health") {
       // Uptime probes hit this continuously; caching it would only blur

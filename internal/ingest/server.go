@@ -71,7 +71,7 @@ func newServer(addr string, rec Recorder, lg *slog.Logger) (*Server, error) {
 		fmt.Fprint(w, "ok")
 	})
 	s.srv = http.Server{
-		Handler:           withSecurityHeaders(withRequestID(withRecover(s, withUnhandledLog(s, mux)))),
+		Handler:           withSecurityHeaders(withRequestID(withRecover(s, withUnhandledLog(s, withKnownPaths(mux))))),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       idleTimeout,
 		MaxHeaderBytes:    16 << 10, // default 1 MiB; this endpoint has no large headers
@@ -306,6 +306,27 @@ func withUnhandledLog(s *Server, next http.Handler) http.Handler {
 		}
 		s.logRequest(r, requestID(r), status, 0, time.Since(start), msg)
 	})
+}
+
+// withKnownPaths answers unknown URLs with the real surface instead of
+// Go's generic 404 page. It must not wrap registered paths: a catch-all
+// "/" would match PUT /v1/events and turn a 405 into a 404.
+func withKnownPaths(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL != nil && knownIngestPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "not found; endpoints: POST /v1/events, GET /v1/events, GET /healthz", http.StatusNotFound)
+	})
+}
+
+func knownIngestPath(path string) bool {
+	switch path {
+	case "/v1/events", "/healthz":
+		return true
+	}
+	return false
 }
 
 func skipUnhandledLog(r *http.Request) bool {
@@ -772,7 +793,7 @@ func jsonRootKind(raw json.RawMessage) string {
 
 func (s *Server) handleGet(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintln(w, `{"hint":"POST /v1/events with {id,ts,agent,kind,model,prompt_tokens,output_tokens,thinking_tokens,via_engine,note}"}`)
+	fmt.Fprintln(w, `{"hint":"POST /v1/events with one JSON object or NDJSON stream of {id,ts,agent,kind,model,prompt_tokens,output_tokens,thinking_tokens,via_engine,note}"}`)
 }
 
 // maxEventTokens bounds a token count on one event. Real usage never

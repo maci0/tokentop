@@ -418,23 +418,33 @@ func TestIngestAcceptsWholeJSONNumberTokenCounts(t *testing.T) {
 func TestIngestMethodNotAllowedSetsAllow(t *testing.T) {
 	s := startIngest(t, &memRecorder{})
 
-	req, err := http.NewRequest(http.MethodPut, "http://"+s.Addr()+"/v1/events", nil)
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		method, path string
+		want         []string
+	}{
+		{http.MethodPut, "/v1/events", []string{http.MethodGet, http.MethodHead, http.MethodPost}},
+		{http.MethodPost, "/healthz", []string{http.MethodGet, http.MethodHead}},
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405", resp.StatusCode)
-	}
-	allow := resp.Header.Get("Allow")
-	for _, m := range []string{http.MethodGet, http.MethodHead, http.MethodPost} {
-		if !strings.Contains(allow, m) {
-			t.Errorf("Allow = %q, missing %s", allow, m)
+	for _, tc := range cases {
+		req, err := http.NewRequest(tc.method, "http://"+s.Addr()+tc.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s status = %d, want 405", tc.method, tc.path, resp.StatusCode)
+			continue
+		}
+		allow := resp.Header.Get("Allow")
+		for _, m := range tc.want {
+			if !strings.Contains(allow, m) {
+				t.Errorf("%s %s Allow = %q, missing %s", tc.method, tc.path, allow, m)
+			}
 		}
 	}
 }
@@ -704,7 +714,8 @@ func TestIngestAckContentType(t *testing.T) {
 }
 
 // The GET hint is the schema documentation senders see first; it must list
-// every accepted field, including ts.
+// every accepted field, including ts, and name NDJSON so a harness does not
+// have to fail a JSON array POST to learn the stream shape.
 func TestIngestHintListsAllFields(t *testing.T) {
 	s := startIngest(t, &memRecorder{})
 
@@ -717,9 +728,16 @@ func TestIngestHintListsAllFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got := resp.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("hint content-type = %q, want application/json", got)
+	}
+	got := string(body)
+	if !strings.Contains(got, "NDJSON") {
+		t.Errorf("hint omits NDJSON stream shape: %s", got)
+	}
 	for _, field := range []string{"id", "ts", "agent", "kind", "model", "prompt_tokens", "output_tokens", "thinking_tokens", "via_engine", "note"} {
-		if !strings.Contains(string(body), field) {
-			t.Errorf("hint omits accepted field %s: %s", field, body)
+		if !strings.Contains(got, field) {
+			t.Errorf("hint omits accepted field %s: %s", field, got)
 		}
 	}
 }
@@ -1364,6 +1382,30 @@ func TestIngestGetHintIsNotLogged(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("schema hint must not log, got %q", buf.String())
+	}
+}
+
+func TestIngestUnknownPathNamesEndpoints(t *testing.T) {
+	s := startIngest(t, &memRecorder{})
+
+	resp, err := http.Post("http://"+s.Addr()+"/events", "application/json",
+		strings.NewReader(`{"agent":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	got := string(body)
+	for _, want := range []string{"/v1/events", "/healthz", "POST"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("404 body %q missing %q", got, want)
+		}
 	}
 }
 

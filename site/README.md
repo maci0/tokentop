@@ -10,7 +10,10 @@ bunx wrangler deploy          # from this directory
 bundle. The Worker answers `/health` with `ok` for uptime checks, serves the
 dashboard capture from `public/` at `/dashboard.png` and `/dashboard.webp`,
 and answers every other path with the page (a one-page site should not 404
-on a typo).
+on a typo). Wrong methods are `405` with `Allow: GET, HEAD`. Image paths
+without an asset binding, and 404/5xx from the asset store, are `no-store`
+so a missing file is not cached as a day-long success. Error bodies are
+`text/plain`, matching `/health`.
 
 The page carries an ETag derived from its own bytes: reloads and visits
 past the five-minute freshness window answer with an empty 304 instead of
