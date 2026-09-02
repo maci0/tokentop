@@ -48,6 +48,10 @@ SHELL := /bin/bash
 # the driver out entirely.
 TAGS    ?= sqlite
 GOTAGS  := $(if $(TAGS),-tags $(TAGS),)
+# Race detector is on by default so the loop matches `make test` / CI.
+# RACE=0 skips it (and the C compiler) for a faster edit cycle.
+RACE    ?= 1
+race_flag = $(if $(filter 0,$(RACE)),,-race )
 
 # Pin locale and timezone for every recipe: glob expansion order and formatted
 # dates must not follow the invoking shell's environment into artifacts
@@ -126,16 +130,26 @@ test: ## run all tests with the race detector, shuffled order (both halves of th
 	CGO_ENABLED=1 $(GO) test -mod=readonly -tags sqlite -race -shuffle=on ./agentusage/...
 
 # Same flags and toolchain as `make test`. PKG is required; RUN and TESTTAGS
-# are optional (TESTTAGS=sqlite is the other half of the agentusage gate).
+# are optional. Unset TESTTAGS on ./agentusage runs both halves of the sqlite
+# tag gate (matching `make test`); TESTTAGS=sqlite (or another tag) runs one.
+# RACE=0 drops -race for a faster edit loop; default matches CI.
 .PHONY: test-pkg
-test-pkg: ## one package/test: PKG=./internal/ui [RUN=TestName] [TESTTAGS=sqlite]
+test-pkg: ## one package/test: PKG=./internal/ui [RUN=TestName] [TESTTAGS=sqlite] [RACE=0]
 	@if [ -z "$(PKG)" ]; then \
 		echo "make test-pkg: set PKG (e.g. PKG=./internal/ui)" >&2; \
-		echo "  optional: RUN=TestName  TESTTAGS=sqlite" >&2; \
+		echo "  optional: RUN=TestName  TESTTAGS=sqlite  RACE=0" >&2; \
 		exit 1; \
 	fi
-	@$(NEED_CC)
-	CGO_ENABLED=1 $(GO) test -mod=readonly $(if $(TESTTAGS),-tags $(TESTTAGS) )-race -shuffle=on $(if $(RUN),-run "$(RUN)" )"$(PKG)"
+	@if [ "$(RACE)" != "0" ]; then $(NEED_CC); fi
+	CGO_ENABLED=$(if $(filter 0,$(RACE)),0,1) $(GO) test -mod=readonly $(if $(TESTTAGS),-tags $(TESTTAGS) )$(race_flag)-shuffle=on $(if $(RUN),-run "$(RUN)" )"$(PKG)"
+	@if [ -z "$(TESTTAGS)" ]; then \
+		case "$(PKG)" in \
+		./agentusage|./agentusage/|agentusage|github.com/maci0/toktop/agentusage|github.com/maci0/toktop/agentusage/) \
+			echo "make test-pkg: also running -tags sqlite (set TESTTAGS to run one half)"; \
+			CGO_ENABLED=$(if $(filter 0,$(RACE)),0,1) $(GO) test -mod=readonly -tags sqlite $(race_flag)-shuffle=on $(if $(RUN),-run "$(RUN)" )"$(PKG)" || exit 1; \
+			;; \
+		esac; \
+	fi
 
 .PHONY: cover
 cover: ## test coverage summary per package into dist/
@@ -187,7 +201,7 @@ site-check: ## bun test the Cloudflare Worker in site/ (CI parity)
 	}
 	@want=$$(tr -d ' \t\r\n' < .bun-version); have=$$(bun --version); \
 		if [ "$$have" != "$$want" ]; then \
-			echo "make site-check: bun $$have on PATH, .bun-version pins $$want"; \
+			echo "make site-check: bun $$have on PATH, .bun-version pins $$want" >&2; \
 			exit 1; \
 		fi
 	bun test site/

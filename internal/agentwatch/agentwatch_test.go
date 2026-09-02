@@ -649,8 +649,9 @@ func TestSampleIDDistinguishesProcessAndInstant(t *testing.T) {
 	if sampleID(a, at) == sampleID(a, at.Add(time.Nanosecond)) {
 		t.Fatal("different instants produced the same id")
 	}
-	if sampleID(a, at) != sampleID(a, at) {
-		t.Fatal("same process and instant must be stable")
+	got := sampleID(a, at)
+	if again := sampleID(a, at); got != again {
+		t.Fatalf("same process and instant must be stable: %q vs %q", got, again)
 	}
 }
 
