@@ -102,11 +102,11 @@ func registerFlags() *cliFlags {
 		flag.BoolVar(&cli.demo, "demo", false, "run against a simulated fleet instead of real backends")
 		flag.IntVar(&cli.probeSecs, "probe", 0, fmt.Sprintf("auto-probe every N seconds (0=off, max %d)", maxProbeSecs))
 		flag.DurationVar(&cli.interval, "interval", time.Second, "poll interval as a Go duration such as 1s or 500ms (min 50ms, max 1h)")
-		flag.StringVar(&cli.ingest, "ingest", "127.0.0.1:8420", "agent event ingest listen address")
+		flag.StringVar(&cli.ingest, "ingest", "127.0.0.1:8420", "agent event ingest listen address (host:port)")
 		flag.BoolVar(&cli.noIngest, "no-ingest", false, "disable the agent event HTTP endpoint")
 		flag.BoolVar(&cli.agents, "agents", false, "watch AI coding agents on this machine by reading their session transcripts")
 		flag.BoolVar(&cli.opencode, "opencode-db", false, "with --agents: also read opencode's SQLite session database (needs a build with -tags sqlite)")
-		flag.BoolVar(&cli.once, "once", false, "render one frame and exit (non-interactive)")
+		flag.BoolVar(&cli.once, "once", false, "render one frame and exit (non-interactive; use when piping)")
 		flag.BoolVar(&cli.plain, "plain", false, "with --once: render a linear text report instead of the dashboard frame (screen-reader friendly)")
 		flag.IntVar(&cli.frames, "frames", 2, fmt.Sprintf("with --once: snapshots to accumulate before rendering (max %d)", core.HistoryLen))
 		flag.BoolVar(&cli.noReload, "no-hot-reload", false, "disable restart-on-rebuild (dev convenience)")
@@ -615,6 +615,7 @@ must not embed userinfo. ssh:// targets must be ssh://[user@]host[:port]
 and must not embed a password (use $TOKTOP_SSH_PASSWORD or --ssh-key).
 Bearer tokens fall back to $OMNIROUTE_API_KEY then $TOKTOP_BEARER (an
 explicit --bearer, even empty, wins) and are sent only to --add endpoints.
+The live dashboard needs a terminal; use --once when piping or redirecting.
 See README.md for all environment variables.
 `)
 }
@@ -628,8 +629,16 @@ func runHelp(out io.Writer, args []string) int {
 	}
 	switch args[0] {
 	case "update":
+		if len(args) > 1 {
+			fmt.Fprintf(os.Stderr, "toktop help: unexpected argument %q (see 'toktop --help')\n", args[1])
+			return 2
+		}
 		return runUpdate(context.Background(), out, []string{"--help"})
 	case "version":
+		if len(args) > 1 {
+			fmt.Fprintf(os.Stderr, "toktop help: unexpected argument %q (see 'toktop --help')\n", args[1])
+			return 2
+		}
 		usage(out)
 		return 0
 	}

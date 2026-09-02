@@ -35,6 +35,8 @@ support channel (see SECURITY.md).
 
 ### Changed
 
+- `--once` help names piping, `--ingest` help names `host:port`, and the
+  usage footer says the live dashboard needs a terminal.
 - Ingest `GET /v1/events` names NDJSON in the schema hint, matching what
   `POST /v1/events` accepts. Unknown paths answer 404 naming the three
   endpoints instead of Go's generic 404 page.
@@ -63,6 +65,13 @@ support channel (see SECURITY.md).
   `--interval 1` is 1 nanosecond in Go and would have hammered engines.
 - `TOKTOP_COLUMNS` / `TOKTOP_LINES` reject values outside 41-1024 / 21-512
   so a typo cannot size a `--once` frame large enough to OOM.
+- `toktop update --repo ''` (or `--repo=`) is a usage error instead of
+  installing from the default repository.
+- `toktop help update extra` and `toktop help version extra` are usage
+  errors, matching `toktop version extra`.
+- `scripts/screenshot.py` rejects extra arguments and unknown options
+  (exit 2) instead of treating them as file names; error lines start with
+  `screenshot.py:`.
 - The compact dashboard clips long engine rows to the pane width and keeps
   the key hint on the last line, so a crowded or narrow strip no longer
   wraps or hides `q` / space / `?`.

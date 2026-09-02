@@ -371,7 +371,7 @@ ssh://user@host   positional; monitor remote hosts (repeatable;
 --ingest ADDR     agent event listen address, host:port
                   (default 127.0.0.1:8420; empty is rejected)
 --no-ingest       disable the event endpoint (`--ingest` is then ignored)
---once            render one frame and exit
+--once            render one frame and exit (use when piping or redirecting)
 --plain           with --once: linear text report instead of the dashboard
                   frame (screen-reader friendly)
 --frames N        with --once: snapshots to accumulate before rendering
@@ -419,13 +419,14 @@ not reported as a typo). `$TOKTOP_BEARER` / `$OMNIROUTE_API_KEY` without
 `$TOKTOP_LOG_LEVEL` with `--no-ingest` are named as unused, matching the
 flag warnings. Out-of-range flag values (`--interval 0`, `--interval` below
 50ms or above 1h, negative `--probe`, `--probe` above 86400, `--frames < 1`
-or above 180 with `--once`, a malformed `--add` or `--ingest`, an `ssh://`
-URL with a password, path, query, or fragment) abort with exit code 2
-instead of being silently adjusted; so do out-of-range `TOKTOP_COLUMNS` /
-`TOKTOP_LINES` when `--once` renders, and a set-but-invalid
-`TOKTOP_LOG_LEVEL`. A bare `--interval 1` is 1 nanosecond in Go and is
-rejected. Startup prints one line of the knobs that apply (`interval`,
-`ingest`, mode flags); bearer tokens appear only as `bearer=set`.
+or above 180 with `--once`, an empty `--repo`, a malformed `--add` or
+`--ingest`, an `ssh://` URL with a password, path, query, or fragment)
+abort with exit code 2 instead of being silently adjusted; so do
+out-of-range `TOKTOP_COLUMNS` / `TOKTOP_LINES` when `--once` renders, and
+a set-but-invalid `TOKTOP_LOG_LEVEL`. A bare `--interval 1` is 1
+nanosecond in Go and is rejected. Startup prints one line of the knobs
+that apply (`interval`, `ingest`, mode flags); bearer tokens appear only
+as `bearer=set`.
 
 ## Build & test
 

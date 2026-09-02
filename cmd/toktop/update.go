@@ -49,7 +49,7 @@ func runUpdate(ctx context.Context, out io.Writer, args []string) int {
 	fs := flag.NewFlagSet("toktop update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	check := fs.Bool("check", false, "report the latest release without installing it")
-	repo := fs.String("repo", selfupdate.DefaultRepo, "GitHub repository to fetch releases from")
+	repo := fs.String("repo", selfupdate.DefaultRepo, "GitHub repository to fetch releases from (owner/name)")
 	var showHelp, showVer bool
 	fs.BoolVar(&showHelp, "help", false, "show help and exit")
 	fs.BoolVar(&showHelp, "h", false, "show help and exit")
@@ -74,16 +74,12 @@ func runUpdate(ctx context.Context, out io.Writer, args []string) int {
 		return 2
 	}
 
-	repoName := *repo
-	if repoName == "" {
-		repoName = selfupdate.DefaultRepo
-	}
-	if err := selfupdate.ValidateRepo(repoName); err != nil {
+	if err := selfupdate.ValidateRepo(*repo); err != nil {
 		fmt.Fprintf(os.Stderr, "toktop update: %v\n", err)
 		return 2
 	}
 
-	rel, err := selfupdate.Check(ctx, repoName)
+	rel, err := selfupdate.Check(ctx, *repo)
 	if err != nil {
 		return updateErr("cannot check for updates", err)
 	}

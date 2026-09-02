@@ -83,16 +83,22 @@ def resolve_fonts() -> tuple[str, str]:
     """
     if override := os.environ.get("TOKTOP_SCREENSHOT_FONT"):
         if not os.path.isfile(override):
-            sys.exit(f"TOKTOP_SCREENSHOT_FONT: no such file: {override}")
+            print(
+                f"screenshot.py: TOKTOP_SCREENSHOT_FONT: no such file: {override}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
         sibling = override.replace("Regular", "Bold")
         bold_path = sibling if os.path.isfile(sibling) else override
         return override, bold_path
     regular = _search("Meslo*Nerd*[Rr]egular*.ttf") or _search("Meslo*.ttf")
     if not regular:
-        sys.exit(
-            "no Meslo Nerd Font found; install one or set "
-            "TOKTOP_SCREENSHOT_FONT to a regular-weight .ttf"
+        print(
+            "screenshot.py: no Meslo Nerd Font found; install one or set "
+            "TOKTOP_SCREENSHOT_FONT to a regular-weight .ttf",
+            file=sys.stderr,
         )
+        raise SystemExit(1)
     bold = _search("Meslo*Nerd*[Bb]old*.ttf") or regular
     return regular[0], bold[0]
 
@@ -110,18 +116,42 @@ def parse_int(name: str, raw: str) -> int:
 
 
 def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] in {"-h", "--help"}:
+    args = sys.argv[1:]
+    if "-h" in args or "--help" in args:
         usage(sys.stdout)
         raise SystemExit(0)
-    if len(sys.argv) < 3:
+    if len(args) < 2:
         usage(sys.stderr)
         raise SystemExit(2)
-    src, out = sys.argv[1], sys.argv[2]
-    scale = parse_int("scale", sys.argv[3]) if len(sys.argv) > 3 else 2
+    for a in args:
+        if a.startswith("-"):
+            print(
+                f"screenshot.py: unknown option {a!r} (see 'screenshot.py --help')",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+    if len(args) > 5:
+        print(
+            f"screenshot.py: unexpected argument {args[5]!r} "
+            "(see 'screenshot.py --help')",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    src, out = args[0], args[1]
+    scale = parse_int("scale", args[2]) if len(args) > 2 else 2
     # Exact pane geometry keeps pyte from wrapping or scrolling; pass the
     # values of #{pane_width} #{pane_height} from the capturing tmux session.
-    cols = parse_int("cols", sys.argv[4]) if len(sys.argv) > 4 else 0
-    rows = parse_int("rows", sys.argv[5]) if len(sys.argv) > 5 else 0
+    cols = parse_int("cols", args[3]) if len(args) > 3 else 0
+    rows = parse_int("rows", args[4]) if len(args) > 4 else 0
+    if scale < 1:
+        print(f"screenshot.py: scale must be >= 1, got {scale}", file=sys.stderr)
+        raise SystemExit(2)
+    if cols < 0:
+        print(f"screenshot.py: cols must be >= 0, got {cols}", file=sys.stderr)
+        raise SystemExit(2)
+    if rows < 0:
+        print(f"screenshot.py: rows must be >= 0, got {rows}", file=sys.stderr)
+        raise SystemExit(2)
     render(src, out, scale, cols, rows)
 
 

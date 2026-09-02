@@ -276,6 +276,9 @@ func TestUsage(t *testing.T) {
 		"userinfo",              // --add must not embed credentials
 		"TOKTOP_SSH_PASSWORD",   // ssh URL must not embed a password
 		"ssh://[user@]host",     // ssh target shape
+		"host:port",             // --ingest listen address shape
+		"piping",                // --once is the non-TTY path
+		"needs a terminal",      // live dashboard vs --once
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("usage() missing %q", want)
@@ -302,7 +305,7 @@ func TestRunUpdateHelp(t *testing.T) {
 			if got != "" {
 				t.Fatalf("runUpdate(%q) leaked %q to stderr", arg, got)
 			}
-			for _, want := range []string{"Usage:", "--check", "--repo", "--version", "GITHUB_TOKEN"} {
+			for _, want := range []string{"Usage:", "--check", "--repo", "owner/name", "--version", "GITHUB_TOKEN"} {
 				if !strings.Contains(out.String(), want) {
 					t.Errorf("update help missing %q", want)
 				}
@@ -322,6 +325,7 @@ func TestRunUpdateUsageErrors(t *testing.T) {
 		{name: "unexpected argument points at help", args: []string{"extra"}, wantSub: "toktop update --help"},
 		{name: "repo path traversal", args: []string{"--repo", "maci0/toktop/../../../users/octocat"}, wantSub: "owner/name"},
 		{name: "repo query string", args: []string{"--repo", "maci0/toktop?evil=1"}, wantSub: "owner/name"},
+		{name: "empty repo", args: []string{"--repo", ""}, wantSub: "owner/name"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -655,6 +659,34 @@ func TestRunHelp(t *testing.T) {
 		}
 		if strings.Contains(got, "no help topic") {
 			t.Fatalf("stderr = %q, a dashed arg is an option not a topic", got)
+		}
+	})
+	t.Run("extra after update topic is a usage error", func(t *testing.T) {
+		var out bytes.Buffer
+		var code int
+		got := captureStderr(t, func() { code = runHelp(&out, []string{"update", "extra"}) })
+		if code != 2 {
+			t.Fatalf("runHelp(update extra) = %d, want 2", code)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("runHelp(update extra) wrote %q to stdout", out.String())
+		}
+		if !strings.Contains(got, "extra") || !strings.Contains(got, "toktop --help") {
+			t.Fatalf("stderr = %q, want extra and --help", got)
+		}
+	})
+	t.Run("extra after version topic is a usage error", func(t *testing.T) {
+		var out bytes.Buffer
+		var code int
+		got := captureStderr(t, func() { code = runHelp(&out, []string{"version", "extra"}) })
+		if code != 2 {
+			t.Fatalf("runHelp(version extra) = %d, want 2", code)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("runHelp(version extra) wrote %q to stdout", out.String())
+		}
+		if !strings.Contains(got, "extra") || !strings.Contains(got, "toktop --help") {
+			t.Fatalf("stderr = %q, want extra and --help", got)
 		}
 	})
 }
