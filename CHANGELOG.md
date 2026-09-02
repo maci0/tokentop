@@ -22,6 +22,10 @@ support channel (see SECURITY.md).
 - Ingest logs 404/405 and handler panics on the same structured stderr line
   as POST `/v1/events` (including `method` and `path`). A 202 whose body
   cannot be written is a warning, not a success.
+- OpenCode session directories on macOS match case-insensitively, the same
+  way transcript adapters already do on default APFS.
+- `toktop ssh://host` on Windows uses the OpenSSH named pipe agent when
+  `$SSH_AUTH_SOCK` is unset, matching ssh.exe.
 
 ### Changed
 

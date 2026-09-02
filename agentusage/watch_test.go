@@ -567,6 +567,9 @@ func TestExpandHomeAcceptsBothSeparators(t *testing.T) {
 	if got != want {
 		t.Errorf(`expandHome(~\rel) = %q, want %q`, got, want)
 	}
+	if got := expandHome("~"); got != home {
+		t.Errorf("expandHome(~) = %q, want %q", got, home)
+	}
 	if got := expandHome("rel"); got != "rel" {
 		t.Errorf("expandHome(rel) = %q, want unchanged", got)
 	}

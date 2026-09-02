@@ -6,11 +6,50 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// disableAgent keeps the auth chain from picking up a running ssh-agent
+// (SSH_AUTH_SOCK, or the Windows OpenSSH named pipe).
+func disableAgent(t *testing.T) {
+	t.Helper()
+	t.Setenv("SSH_AUTH_SOCK", "")
+	orig := platformAgentSock
+	platformAgentSock = func() string { return "" }
+	t.Cleanup(func() { platformAgentSock = orig })
+}
+
+func TestAgentSockPrefersSSHAuthSock(t *testing.T) {
+	orig := platformAgentSock
+	platformAgentSock = func() string { return "platform-default" }
+	t.Cleanup(func() { platformAgentSock = orig })
+
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+	if got := agentSock(); got != "/tmp/agent.sock" {
+		t.Fatalf("agentSock = %q, want SSH_AUTH_SOCK", got)
+	}
+	t.Setenv("SSH_AUTH_SOCK", "")
+	if got := agentSock(); got != "platform-default" {
+		t.Fatalf("agentSock = %q, want the platform default when SSH_AUTH_SOCK is unset", got)
+	}
+}
+
+func TestDefaultAgentSock(t *testing.T) {
+	got := defaultAgentSock()
+	if runtime.GOOS == "windows" {
+		if got != `\\.\pipe\openssh-ssh-agent` {
+			t.Fatalf("windows defaultAgentSock = %q, want the OpenSSH named pipe", got)
+		}
+		return
+	}
+	if got != "" {
+		t.Fatalf("defaultAgentSock = %q, want empty on %s", got, runtime.GOOS)
+	}
+}
 
 func TestParseTarget(t *testing.T) {
 	cases := []struct {
@@ -273,7 +312,7 @@ func TestTOFUConcurrentHostsPersist(t *testing.T) {
 // The default-key leg of the auth chain must pick up a passphrase-less key
 // from ~/.ssh and silently skip unreadable or encrypted files.
 func TestDefaultKeyPathsAndAuthChain(t *testing.T) {
-	t.Setenv("SSH_AUTH_SOCK", "") // no agent interference
+	disableAgent(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home) // os.UserHomeDir on windows
@@ -370,7 +409,7 @@ func TestPasswordSourceHeadlessFailureCached(t *testing.T) {
 }
 
 func TestExplicitKeyFileFailureAborts(t *testing.T) {
-	t.Setenv("SSH_AUTH_SOCK", "")
+	disableAgent(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)

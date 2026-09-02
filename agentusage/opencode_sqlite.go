@@ -70,9 +70,10 @@ const usageQuery = `
 	  AND json_extract(m.data, '$.role') = 'assistant'`
 
 // foldSessionDirectory compares session.directory case-insensitively and with
-// either path separator. Windows filesystems do that; an agent records
-// whichever spelling its runtime produced. Tests may flip it.
-var foldSessionDirectory = runtime.GOOS == "windows"
+// either path separator. NTFS and the default APFS configuration look names
+// up that way; an agent records whichever spelling its runtime produced.
+// Linux compares bytes. Tests may flip it.
+var foldSessionDirectory = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 
 // usageQueryFor builds the query for n directory spellings. Only the number of
 // placeholders varies: every value still travels as a bound parameter.

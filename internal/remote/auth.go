@@ -3,7 +3,6 @@ package remote
 import (
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -133,9 +132,21 @@ func (p *passwordSource) authCallbacks(t Target) []ssh.AuthMethod {
 	return []ssh.AuthMethod{pw, ki}
 }
 
+// platformAgentSock is the platform's default agent endpoint when
+// SSH_AUTH_SOCK is unset. Unix has none; Windows OpenSSH uses a named pipe
+// and does not set the env var. Tests may replace it.
+var platformAgentSock = defaultAgentSock
+
+func agentSock() string {
+	if s := os.Getenv("SSH_AUTH_SOCK"); s != "" {
+		return s
+	}
+	return platformAgentSock()
+}
+
 // dialAgent is swappable in tests.
 var dialAgent = func(sock string) (agent.Agent, func(), error) {
-	c, err := net.Dial("unix", sock)
+	c, err := dialAgentConn(sock)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -143,7 +154,7 @@ var dialAgent = func(sock string) (agent.Agent, func(), error) {
 }
 
 // authMethods assembles the credential chain in preference order: explicit
-// key file, config/default keys, then the agent if SSH_AUTH_SOCK is set. A
+// key file, config/default keys, then the agent if one is reachable. A
 // load failure of the explicitly configured key aborts the chain: dialing
 // without it could only end in a misleading credentials-rejected error.
 func (t Target) authMethods() ([]ssh.AuthMethod, func(), error) {
@@ -159,7 +170,7 @@ func (t Target) authMethods() ([]ssh.AuthMethod, func(), error) {
 			methods = append(methods, m)
 		}
 	}
-	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
+	if sock := agentSock(); sock != "" {
 		if ag, ac, err := dialAgent(sock); err == nil {
 			methods = append(methods, ssh.PublicKeysCallback(ag.Signers))
 			old := cleanup

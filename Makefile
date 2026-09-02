@@ -67,8 +67,8 @@ help: ## show available targets
 	else \
 		color=; \
 	fi; \
-	grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk -v color="$$color" 'BEGIN {FS = ":.*?## "} { if (color) printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2; else printf "  %-14s %s\n", $$1, $$2 }'
+	grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
+		awk -v color="$$color" 'BEGIN {FS = ":.*## "} { if (color) printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2; else printf "  %-14s %s\n", $$1, $$2 }'
 
 # CGO stays off so the host build matches the released artifacts exactly;
 # with cgo available the net package links host-specific resolver code and
@@ -251,7 +251,11 @@ test-dist: ## build every release platform without packaging
 			$(GO) build $(GOTAGS) $(GO_BUILDFLAGS) -ldflags "$(LDFLAGS)" -o $(DIST)/$$name $(CMD) || exit 1; \
 	done
 
+# XDG user bin on Linux; override on macOS so the binary lands on PATH
+# (PREFIX=/usr/local or PREFIX=$(brew --prefix)).
+PREFIX ?= $(HOME)/.local
+
 .PHONY: install
-install: build ## install into ~/.local/bin
-	mkdir -p ~/.local/bin
-	install -m 0755 $(BINARY) ~/.local/bin/$(BINARY)
+install: build ## install into PREFIX/bin (default ~/.local/bin)
+	mkdir -p "$(PREFIX)/bin"
+	install -m 0755 $(BINARY) "$(PREFIX)/bin/$(BINARY)"
