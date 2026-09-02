@@ -78,6 +78,16 @@ support channel (see SECURITY.md).
   characters (except ZWJ), so they cannot hide inside agent names.
 - `agentusage` composes agent names to NFC, so a definition of `"café"`
   spelled with a combining accent is the same agent as the precomposed form.
+- Ingest `ts` accepts a Unix epoch number (seconds, milliseconds,
+  microseconds, or nanoseconds by magnitude), so a Python `time.time()` or
+  JS `Date.now()` does not 400 the rest of an NDJSON stream. Small integers
+  such as `123` stay type errors.
+- Linux `--agents` process start time comes from `/proc/PID/stat` starttime
+  plus boot time, not the `/proc/PID` directory mtime, so an NTP step or a
+  recycled proc inode cannot look like PID reuse and drop the attach baseline.
+- The live dashboard scores agent rates against the snapshot stamp, matching
+  `--once` / `--plain`, so a demo or injected clock does not empty the 30s
+  window.
 - `agentusage` counts a thinking-only reading (opencode SQLite, and Claude /
   Qwen / Codex transcript lines that carry reasoning with no billed output)
   instead of reporting nothing until the first completion token.

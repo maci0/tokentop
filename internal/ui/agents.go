@@ -209,10 +209,11 @@ func agentMiniLine(r agentRate) string {
 // the whole picture.
 func (m Model) renderAgentsOnly() string {
 	w := m.w - 4
-	rates := agentRates(m.snap.Agents, m.clock)
+	now := m.snapNow()
+	rates := agentRates(m.snap.Agents, now)
 	_, midIn, feedIn := m.sectionHeights()
 
-	rows := agentRows(rates, m.clock)
+	rows := agentRows(rates, now)
 	if len(rows) == 0 {
 		rows = append(rows, dim("  waiting for an agent to report tokens…"))
 	}

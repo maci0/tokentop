@@ -341,6 +341,45 @@ func TestIngestAcceptsSpaceSeparatedTimestamps(t *testing.T) {
 	}
 }
 
+// Unix epoch numbers (Python time.time(), JS Date.now()) used to fail every
+// RFC 3339 layout and abort the NDJSON batch with 400. Magnitude selects
+// the unit; a small integer stays a type error so ts:123 is not 1970.
+func TestIngestAcceptsUnixEpochTimestamps(t *testing.T) {
+	rec := &memRecorder{}
+	s := startIngest(t, rec)
+
+	want := time.Unix(1_700_000_000, 0).UTC()
+	resp := post(t, "http://"+s.Addr()+"/v1/events",
+		`{"agent":"py","ts":1700000000}`+"\n"+
+			`{"agent":"py","ts":1700000000.5}`+"\n"+
+			`{"agent":"js","ts":1700000000000}`+"\n"+
+			`{"agent":"str","ts":"1700000000"}`+"\n"+
+			`{"agent":"us","ts":1700000000000000}`+"\n"+
+			`{"agent":"ns","ts":1700000000000000000}`)
+	if resp != http.StatusAccepted {
+		t.Fatalf("status = %d", resp)
+	}
+	awaitEvents(t, rec, 6)
+	if got := rec.evs[0].At; !got.Equal(want) {
+		t.Errorf("seconds stamp = %v, want %v", got, want)
+	}
+	if got := rec.evs[1].At; !got.Equal(want.Add(500 * time.Millisecond)) {
+		t.Errorf("fractional seconds = %v, want %v", got, want.Add(500*time.Millisecond))
+	}
+	if got := rec.evs[2].At; !got.Equal(want) {
+		t.Errorf("millis stamp = %v, want %v", got, want)
+	}
+	if got := rec.evs[3].At; !got.Equal(want) {
+		t.Errorf("numeric string = %v, want %v", got, want)
+	}
+	if got := rec.evs[4].At; !got.Equal(want) {
+		t.Errorf("micros stamp = %v, want %v", got, want)
+	}
+	if got := rec.evs[5].At; !got.Equal(want) {
+		t.Errorf("nanos stamp = %v, want %v", got, want)
+	}
+}
+
 // A ts that is neither RFC 3339 nor an offset-less variant stays a hard
 // error so sender bugs surface instead of silently becoming "now".
 func TestIngestRejectsGarbageTimestamp(t *testing.T) {

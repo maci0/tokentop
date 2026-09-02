@@ -142,7 +142,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapMsg:
 		if !m.paused {
 			in := core.Snapshot(msg)
-			agg := aggOutAt(in, m.clock)
+			agg := aggOutAt(in, frameNow(in, m.clock))
 			m.lastAgg = agg
 			if agg > m.maxAgg {
 				m.maxAgg = agg
@@ -241,7 +241,7 @@ func (m Model) renderHeader() string {
 	segs := []headerSeg{{text: logo}, {text: dim("v" + m.cfg.Version), shed: 40}}
 
 	up, tot := m.upCount()
-	rates := agentRates(m.snap.Agents, m.clock)
+	rates := agentRates(m.snap.Agents, m.snapNow())
 	if tot == 0 {
 		n := len(rates)
 		if n == 0 {
@@ -276,7 +276,7 @@ func (m Model) renderHeader() string {
 	}
 
 	outV := styleValue.Foreground(heatColor(norm(m.lastAgg, m.maxAgg))).Render("▲ " + fmtRate(m.lastAgg))
-	inV := styleInfo.Render("▼ " + fmtRate(aggInAt(m.snap, m.clock)))
+	inV := styleInfo.Render("▼ " + fmtRate(aggInAt(m.snap, m.snapNow())))
 	segs = append(segs,
 		headerSeg{text: outV + " " + dim("tok/s out"), shed: 10},
 		headerSeg{text: inV + " " + dim("in"), shed: 20},
@@ -405,7 +405,7 @@ func (m Model) renderCharts() string {
 		w, outH,
 	)
 	in := panel(
-		"PROMPT "+styleInfo.Render("▼ "+fmtRate(aggInAt(m.snap, m.clock))+" tok/s"),
+		"PROMPT "+styleInfo.Render("▼ "+fmtRate(aggInAt(m.snap, m.snapNow()))+" tok/s"),
 		BrailleChart(aggHist(m.snap, false, w, cad), w, 1,
 			ChartStyle{Heat: func(float64) lipgloss.Color { return cCyan }}),
 		w, 1,
@@ -924,8 +924,9 @@ func (m Model) probesBody(w, h int) string {
 func (m Model) renderFeed() string {
 	w := m.w - 4
 	_, _, feedIn := m.sectionHeights()
-	rates := agentRates(m.snap.Agents, m.clock)
-	rows := agentRows(rates, m.clock)
+	now := m.snapNow()
+	rates := agentRates(m.snap.Agents, now)
+	rows := agentRows(rates, now)
 	statsN := 0
 	if len(rows) > 0 && feedIn > 0 {
 		statsN = min(len(rows), max(feedIn/2, 1))
@@ -1171,7 +1172,7 @@ func (m Model) renderMinimal() string {
 		b.WriteString(styleWarn.Render("‖ PAUSED") + "\n")
 	}
 	if len(m.snap.Providers) == 0 {
-		rates := agentRates(m.snap.Agents, m.clock)
+		rates := agentRates(m.snap.Agents, m.snapNow())
 		if len(rates) == 0 {
 			b.WriteString(styleWarn.Render("no inference engines detected") + "\n")
 			if m.cfg.Agents {
@@ -1201,7 +1202,7 @@ func (m Model) renderMinimal() string {
 		b.WriteString(line + "\n")
 	}
 	if len(m.snap.Providers) > 0 {
-		for _, r := range agentRates(m.snap.Agents, m.clock) {
+		for _, r := range agentRates(m.snap.Agents, m.snapNow()) {
 			b.WriteString(clip(agentMiniLine(r), m.w) + "\n")
 		}
 	}
@@ -1259,6 +1260,14 @@ func kvHeat(v float64) lipgloss.Color {
 	default:
 		return cRed
 	}
+}
+
+// snapNow is the instant rate windows and idle spans use: the snapshot's
+// own stamp when the collector filled one in, otherwise the header clock.
+// The header clock itself stays on ticks so it still advances for the
+// operator while a slow scrape holds At still.
+func (m Model) snapNow() time.Time {
+	return frameNow(m.snap, m.clock)
 }
 
 // frameNow is the instant a snapshot treats as "now": its own stamp when

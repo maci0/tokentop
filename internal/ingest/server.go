@@ -671,10 +671,15 @@ type agentEventWire struct {
 // the same terms: the zone is honored when present, UTC is assumed when not.
 // Colon-less numeric offsets (`date '+%z'`, `-0700`) are ISO 8601 but not
 // RFC 3339; they are accepted as the same instant as the colon form so a
-// stream of them does not 400. Absent or null yields the zero Time, which
-// the caller replaces with the arrival instant. An empty or whitespace-only
-// string counts as absent, matching the empty-means-default behavior of
-// every other event field.
+// stream of them does not 400. A Unix epoch number (JSON number or numeric
+// string) is accepted too: Python time.time() and JS Date.now() otherwise
+// 400 and drop every event queued behind the first one. Magnitude picks
+// seconds / milliseconds / microseconds / nanoseconds; values that decode
+// before 2001-09-09 stay errors so a small integer in ts is still a type
+// mistake. Absent or null yields the zero Time, which the caller replaces
+// with the arrival instant. An empty or whitespace-only string counts as
+// absent, matching the empty-means-default behavior of every other event
+// field.
 func parseEventTime(raw json.RawMessage) (time.Time, error) {
 	s := strings.TrimSpace(string(raw))
 	if s == "" || s == "null" {
@@ -682,6 +687,9 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 	}
 	v, err := strconv.Unquote(s)
 	if err != nil {
+		if t, ok := unixEpochTime(s); ok {
+			return t, nil
+		}
 		return time.Time{}, errBadTS
 	}
 	if strings.TrimSpace(v) == "" {
@@ -707,7 +715,68 @@ func parseEventTime(raw json.RawMessage) (time.Time, error) {
 			return t, nil
 		}
 	}
+	if t, ok := unixEpochTime(v); ok {
+		return t, nil
+	}
 	return time.Time{}, errBadTS
+}
+
+// unixEpochMinSec is 2001-09-09. Smaller decoded instants are not accepted
+// as Unix timestamps: a JSON 123 in ts is a type error, not 1970-01-01.
+const unixEpochMinSec int64 = 1_000_000_000
+
+func unixEpochTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	var t time.Time
+	if strings.IndexByte(s, '.') < 0 && strings.IndexByte(s, 'e') < 0 && strings.IndexByte(s, 'E') < 0 {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || n <= 0 {
+			return time.Time{}, false
+		}
+		t = unixEpochInt(n)
+	} else {
+		n, err := strconv.ParseFloat(s, 64)
+		if err != nil || !(n > 0) || math.IsInf(n, 0) {
+			return time.Time{}, false
+		}
+		t = unixEpochFloat(n)
+	}
+	if t.Unix() < unixEpochMinSec {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+func unixEpochInt(n int64) time.Time {
+	switch {
+	case n < 100_000_000_000: // seconds (year 5138)
+		return time.Unix(n, 0).UTC()
+	case n < 100_000_000_000_000: // milliseconds
+		return time.Unix(n/1000, (n%1000)*int64(time.Millisecond)).UTC()
+	case n < 100_000_000_000_000_000: // microseconds
+		return time.Unix(n/1_000_000, (n%1_000_000)*int64(time.Microsecond)).UTC()
+	default: // nanoseconds
+		return time.Unix(0, n).UTC()
+	}
+}
+
+func unixEpochFloat(n float64) time.Time {
+	switch {
+	case n < 1e11:
+		sec := math.Trunc(n)
+		return time.Unix(int64(sec), int64((n-sec)*1e9)).UTC()
+	case n < 1e14:
+		ms := int64(n)
+		return time.Unix(ms/1000, (ms%1000)*int64(time.Millisecond)).UTC()
+	case n < 1e17:
+		us := int64(n)
+		return time.Unix(us/1_000_000, (us%1_000_000)*int64(time.Microsecond)).UTC()
+	default:
+		return time.Unix(0, int64(n)).UTC()
+	}
 }
 
 var errBadTS = errors.New("must be an RFC 3339 string")

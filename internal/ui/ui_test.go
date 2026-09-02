@@ -1138,6 +1138,18 @@ func TestStaticFrameUsesSnapshotTime(t *testing.T) {
 	if !strings.Contains(out, "1 agent") {
 		t.Fatalf("hour-old snapshot dropped in-window agents:\n%s", out)
 	}
+
+	// The live view used to score rates against the tick clock, so a
+	// snapshot whose At (demo, or a held --once-style frame) sat outside
+	// AgentRateWindow of wall time drew an empty agent list.
+	m := New(Config{Version: "t"}, nil)
+	m.w, m.h, m.ready = 110, 36, true
+	m.clock = time.Now()
+	m.snap = snap
+	live := strip(m.View())
+	if !strings.Contains(live, "1 agent") {
+		t.Fatalf("live view dropped in-window agents against a later clock:\n%s", live)
+	}
 }
 
 func TestFrameNowDoesNotReadWallClock(t *testing.T) {

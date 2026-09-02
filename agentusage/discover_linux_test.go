@@ -55,4 +55,51 @@ func TestDiscoverFindsProcessByArgvName(t *testing.T) {
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != found.Dir {
 		t.Errorf("Dir = %q, want %q", found.Dir, resolved)
 	}
+	if found.Started.IsZero() {
+		t.Fatal("Started is zero; PID reuse would fall back to tool+dir")
+	}
+	again := startedAt(cmd.Process.Pid)
+	if !again.Equal(found.Started) {
+		t.Errorf("Started moved from %v to %v; sameProcess would treat this as PID reuse", found.Started, again)
+	}
+	if skew := time.Since(found.Started); skew < 0 || skew > time.Minute {
+		t.Errorf("Started = %v, %v from now; want a recent process start", found.Started, skew)
+	}
+}
+
+func TestProcStartTicks(t *testing.T) {
+	// 18 zeros after state fill fields 4–21 so 12345 is field 22 (starttime).
+	const zeros = " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 "
+	cases := []struct {
+		stat string
+		want uint64
+		ok   bool
+	}{
+		{"1 (systemd) S" + zeros + "12345 0 0", 12345, true},
+		{"42 (foo bar) S" + zeros + "99 0", 99, true},
+		{"7 (x(y)) S" + zeros + "1 0", 1, true},
+		{"1 (x) S 0 0", 0, false},
+		{"no close paren", 0, false},
+		{"", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := procStartTicks(tc.stat)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("procStartTicks(%q) = %d, %v; want %d, %v", tc.stat, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestTicksSinceBootSaturates(t *testing.T) {
+	d, ok := ticksSinceBoot(0)
+	if !ok || d != 0 {
+		t.Errorf("0 ticks = %v, %v; want 0, true", d, ok)
+	}
+	d, ok = ticksSinceBoot(linuxClkTck)
+	if !ok || d != time.Second {
+		t.Errorf("1s of ticks = %v, %v; want 1s, true", d, ok)
+	}
+	if _, ok := ticksSinceBoot(^uint64(0)); ok {
+		t.Error("overflowing tick count must not convert")
+	}
 }
