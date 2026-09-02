@@ -790,6 +790,23 @@ func TestEmitSurvivesFirstPollError(t *testing.T) {
 	<-done
 }
 
+// Poll returning (nil, nil) used to dereference Metrics and panic, killing
+// the dashboard process. Treat it as a failed poll instead.
+func TestEmitSurvivesNilMetrics(t *testing.T) {
+	fp := &fakeProvider{label: "empty"}
+	ch := make(chan core.Snapshot, 1)
+	c := New([]provider.Provider{fp}, time.Hour)
+	c.emit(context.Background(), ch)
+	snap := <-ch
+	if len(snap.Providers) != 1 {
+		t.Fatalf("providers = %d, want 1", len(snap.Providers))
+	}
+	p := snap.Providers[0]
+	if p.OK || p.Err == "" {
+		t.Fatalf("nil metrics without error: ok=%v err=%q", p.OK, p.Err)
+	}
+}
+
 // emit's per-provider timeout must be a child of the Run context: a stalled
 // scrape must not hold shutdown for PollTimeout after cancel.
 func TestEmitCancelsPollsOnContext(t *testing.T) {

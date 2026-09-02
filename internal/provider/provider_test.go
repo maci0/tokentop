@@ -415,6 +415,49 @@ func TestPollLemonadeEnrichment(t *testing.T) {
 	}
 }
 
+// LiteLLM and other engines that do not need both /metrics and /v1/models
+// still have to fail when neither answers: an empty success rendered them
+// as idle on the dashboard while they were down.
+func TestPollFailsWhenNeitherEndpointAnswers(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+
+	for _, kind := range []string{
+		core.KindOpenAI, core.KindLiteLLM, core.KindGPUStack,
+		core.KindOmniRoute, core.KindTRTLLM, core.KindLMStudio, core.KindLemonade,
+	} {
+		p := NewOpenAICompat(srv.URL, kind, kind)
+		_, err := p.Poll(context.Background())
+		if err == nil {
+			t.Errorf("kind %s: poll succeeded against a server with no engine API", kind)
+		} else if !strings.Contains(err.Error(), "no known endpoints") {
+			t.Errorf("kind %s: err = %v, want it to name the missing endpoints", kind, err)
+		}
+	}
+}
+
+// One of the two OpenAI-shaped endpoints is enough: LiteLLM often has
+// /v1/models and no Prometheus /metrics.
+func TestPollSucceedsWithModelsOnly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.Write([]byte(`{"data":[{"id":"m"}]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	p := NewOpenAICompat(srv.URL, "litellm", core.KindLiteLLM)
+	m, err := p.Poll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Models) != 1 || m.Models[0].Name != "m" {
+		t.Fatalf("models = %+v, want [{m}]", m.Models)
+	}
+}
+
 // Version extraction feeds the UI header across wildly different engine
 // responses; pin every accepted shape and every rejection.
 func TestExtractVersionField(t *testing.T) {

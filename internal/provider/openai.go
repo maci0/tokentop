@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -25,16 +26,6 @@ func NewOpenAICompat(base, label, kind string) *OpenAICompat {
 func (o *OpenAICompat) Label() string { return o.label }
 func (o *OpenAICompat) Addr() string  { return o.base }
 func (o *OpenAICompat) Kind() string  { return o.kind }
-
-// tolerantKinds keep working even without both metrics and /v1/models.
-func tolerantKind(kind string) bool {
-	switch kind {
-	case core.KindLemonade, core.KindGPUStack, core.KindLiteLLM,
-		core.KindTRTLLM, core.KindLMStudio, core.KindOmniRoute:
-		return true
-	}
-	return false
-}
 
 func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 	m := &Metrics{}
@@ -79,15 +70,18 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 			}
 		}
 	}
-	if !haveModels && merr != nil && !tolerantKind(o.kind) {
-		return nil, endpointErr{o.base}
-	}
 
+	enriched := false
 	switch o.kind {
 	case core.KindLMStudio:
-		enrichLMStudio(ctx, o.base, m)
+		enriched = enrichLMStudio(ctx, o.base, m)
 	case core.KindLemonade:
-		enrichLemonade(ctx, o.base, m)
+		enriched = enrichLemonade(ctx, o.base, m)
+	}
+	// One of /metrics, /v1/models, or a native enrich endpoint is
+	// enough; none of them answering is a down engine, not an idle one.
+	if !haveModels && merr != nil && !enriched {
+		return nil, fmt.Errorf("no known endpoints on %s: %w", o.base, merr)
 	}
 	if m.Version == "" {
 		m.Version = o.version.fetch(ctx, o.base)
@@ -98,7 +92,7 @@ func (o *OpenAICompat) Poll(ctx context.Context) (*Metrics, error) {
 // enrichLMStudio pulls the native /api/v0/models feed: loaded LLMs and
 // context lengths that the thin OpenAI listing lacks. Unloaded catalog
 // entries are dropped so a probe cannot JIT-load a cold weight.
-func enrichLMStudio(ctx context.Context, base string, m *Metrics) {
+func enrichLMStudio(ctx context.Context, base string, m *Metrics) bool {
 	var v0 struct {
 		Data []struct {
 			ID         string `json:"id"`
@@ -108,7 +102,7 @@ func enrichLMStudio(ctx context.Context, base string, m *Metrics) {
 		} `json:"data"`
 	}
 	if getJSON(ctx, base+"/api/v0/models", &v0) != nil {
-		return
+		return false
 	}
 	m.Models = m.Models[:0]
 	for _, d := range v0.Data {
@@ -126,10 +120,11 @@ func enrichLMStudio(ctx context.Context, base string, m *Metrics) {
 		}
 		m.Models = append(m.Models, mi)
 	}
+	return true
 }
 
 // enrichLemonade reads /v1/health: version plus loaded-model inventory.
-func enrichLemonade(ctx context.Context, base string, m *Metrics) {
+func enrichLemonade(ctx context.Context, base string, m *Metrics) bool {
 	var h struct {
 		Version     string `json:"version"`
 		ModelLoaded string `json:"model_loaded"`
@@ -139,7 +134,7 @@ func enrichLemonade(ctx context.Context, base string, m *Metrics) {
 		} `json:"all_models_loaded"`
 	}
 	if getJSON(ctx, base+"/v1/health", &h) != nil {
-		return
+		return false
 	}
 	if h.Version != "" {
 		m.Version = h.Version
@@ -157,8 +152,5 @@ func enrichLemonade(ctx context.Context, base string, m *Metrics) {
 	case h.ModelLoaded != "":
 		m.Models = []core.ModelInfo{{Name: h.ModelLoaded}}
 	}
+	return true
 }
-
-type endpointErr struct{ base string }
-
-func (e endpointErr) Error() string { return "no known endpoints on " + e.base }

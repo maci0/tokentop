@@ -271,6 +271,8 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 		key := providerKey(p)
 		if r.err != nil {
 			ps.Err = r.err.Error()
+		} else if r.m == nil {
+			ps.Err = "empty poll result"
 		} else {
 			ps.OK = true
 			ps.Models = r.m.Models

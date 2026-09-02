@@ -53,6 +53,10 @@ support channel (see SECURITY.md).
 
 ### Fixed
 
+- A LiteLLM, GPUStack, TRT-LLM, OmniRoute or LM Studio backend that answers
+  neither `/metrics` nor `/v1/models` is reported as down, not as an idle
+  success. Lemonade and LM Studio still stay up when their native health or
+  v0 feed answers.
 - The compact dashboard clips long engine rows to the pane width and keeps
   the key hint on the last line, so a crowded or narrow strip no longer
   wraps or hides `q` / space / `?`.

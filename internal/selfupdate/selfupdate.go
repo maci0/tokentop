@@ -289,8 +289,11 @@ func applyTo(ctx context.Context, rel *Release, self string) (string, error) {
 	if sum != expect {
 		return "", fmt.Errorf("checksum mismatch for %s: got %s, want %s", want, sum, expect)
 	}
+	if err := tmp.Sync(); err != nil {
+		return "", fmt.Errorf("cannot flush %s: %w", tmpName, err)
+	}
 	if err := tmp.Close(); err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot close %s: %w", tmpName, err)
 	}
 	if err := os.Chmod(tmpName, 0o755); err != nil {
 		return "", err

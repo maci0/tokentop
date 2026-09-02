@@ -451,6 +451,10 @@ const maxEventSkew = 2 * time.Minute
 var (
 	maxEventLifetime = 10 * time.Minute
 	bodyIdleTimeout  = time.Minute
+	// responseWriteTimeout bounds writing the status line and tiny JSON
+	// body after the request has been read. Without it a peer that stops
+	// reading pins the handler goroutine until the OS TCP timeout.
+	responseWriteTimeout = 30 * time.Second
 )
 
 // progressBody arms the read deadline before every read: no progress within
@@ -488,13 +492,17 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 	// visits could fire a no-preflight POST here (the endpoint does not read
 	// Content-Type, so text/plain sails past CORS preflight) and forge rows
 	// into the live feed.
+	rc := http.NewResponseController(w)
+	armWrite := func() {
+		_ = rc.SetWriteDeadline(time.Now().Add(responseWriteTimeout))
+	}
 	if r.Header.Get("Origin") != "" {
 		msg := "browser-originated requests are not accepted; post from a script or agent without an Origin header"
+		armWrite()
 		http.Error(w, msg, http.StatusForbidden)
 		done(http.StatusForbidden, 0, msg)
 		return
 	}
-	rc := http.NewResponseController(w)
 	until := time.Now().Add(maxEventLifetime)
 	_ = rc.SetReadDeadline(until) // covers reads before the first progress extension
 	r.Body = http.MaxBytesReader(w, &progressBody{ReadCloser: r.Body, rc: rc, until: until}, maxEventBody)
@@ -514,6 +522,7 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 				msg += fmt.Sprintf("; %d earlier events in this stream were recorded", n)
 			}
 		}
+		armWrite()
 		http.Error(w, msg, status)
 		done(status, n, msg)
 	}
@@ -575,12 +584,14 @@ func (s *Server) handlePost(w http.ResponseWriter, r *http.Request) {
 		s.rec.RecordAgent(ev)
 		n++
 	}
+	armWrite()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	if _, err := fmt.Fprintf(w, `{"accepted":%d}`+"\n", n); err != nil {
 		done(http.StatusAccepted, n, "response write failed")
 		return
 	}
+	_ = rc.SetWriteDeadline(time.Time{}) // keep-alive must not inherit the write cap
 	done(http.StatusAccepted, n, "")
 }
 
