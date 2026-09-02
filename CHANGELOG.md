@@ -39,6 +39,11 @@ support channel (see SECURITY.md).
 
 ### Fixed
 
+- Ingest `ErrorLog` lines redact the peer address the same way the POST
+  audit line does: loopback keeps the port, any other IP is dropped.
+- `agentusage` does not walk `prompt`, `messages`, `choices`, `system`, or
+  `text` trees for counters or a working directory; those keys hold user
+  or model text, not usage.
 - `agentusage` counts a thinking-only reading (opencode SQLite, and Claude /
   Qwen / Codex transcript lines that carry reasoning with no billed output)
   instead of reporting nothing until the first completion token.

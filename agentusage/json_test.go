@@ -105,6 +105,37 @@ func TestWalkDoesNotInspectPayloads(t *testing.T) {
 	}
 }
 
+func TestWalkDoesNotInspectPromptTrees(t *testing.T) {
+	// prompt/messages/choices/system/text are user or model text. A cwd or
+	// counter planted there is not the session's. Top-level cwd and usage
+	// still count; a session header that names cwd under payload still does.
+	line := `{"prompt":{"cwd":"/home/alice/secret","usage":{"output_tokens":99999}},` +
+		`"messages":[{"cwd":"/Users/alice/mail","usage":{"output_tokens":888}}],` +
+		`"choices":[{"usage":{"output_tokens":777}}],` +
+		`"system":{"cwd":"/tmp/x","usage":{"output_tokens":666}},` +
+		`"text":{"cwd":"/etc","usage":{"output_tokens":555}},` +
+		`"cwd":"/tmp/proj","usage":{"output_tokens":7}}`
+	ev, ok := parseJSON([]byte(line))
+	if !ok {
+		t.Fatal("valid JSON was rejected")
+	}
+	if ev.Usage.Output != 7 {
+		t.Fatalf("prompt-tree usage leaked or outer usage lost: %+v", ev.Usage)
+	}
+	if ev.Cwd != "/tmp/proj" {
+		t.Fatalf("cwd = %q, want /tmp/proj (prompt-tree cwd must not win)", ev.Cwd)
+	}
+
+	header := `{"type":"session_meta","payload":{"id":"x","cwd":"/home/dev/project"}}`
+	ev, ok = parseJSON([]byte(header))
+	if !ok {
+		t.Fatal("session header was rejected")
+	}
+	if ev.Cwd != "/home/dev/project" {
+		t.Fatalf("payload cwd = %q, want /home/dev/project", ev.Cwd)
+	}
+}
+
 func TestSatAddSaturates(t *testing.T) {
 	if got := satAdd(3, 4); got != 7 {
 		t.Fatalf("satAdd(3, 4) = %d", got)

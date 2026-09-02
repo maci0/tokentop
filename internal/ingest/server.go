@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -75,7 +76,10 @@ func newServer(addr string, rec Recorder, lg *slog.Logger) (*Server, error) {
 		Handler:           withSecurityHeaders(withRequestID(withRecover(s, withUnhandledLog(s, mux)))),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       idleTimeout,
-		ErrorLog:          slog.NewLogLogger(lg.Handler(), slog.LevelError),
+		// net/http interpolates conn.RemoteAddr into panic and handshake
+		// lines. That is the same peer address logPost redacts: personal
+		// data when --ingest is bound off loopback.
+		ErrorLog: slog.NewLogLogger(addrRedactHandler{lg.Handler()}, slog.LevelError),
 	}
 	return s, nil
 }
@@ -180,6 +184,39 @@ func logRemote(addr string) string {
 		return net.JoinHostPort("loopback", port)
 	}
 	return "remote"
+}
+
+// remoteAddrPat matches the host:port form net.Addr.String uses for TCP:
+// dotted IPv4, or bracketed IPv6 (including zone ids).
+var remoteAddrPat = regexp.MustCompile(`(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9A-Fa-f:.%]+\]):\d{1,5}`)
+
+// redactLogAddrs rewrites host:port appearances with logRemote so a line
+// from net/http's ErrorLog cannot carry a peer IP.
+func redactLogAddrs(s string) string {
+	if !strings.ContainsAny(s, ".[") {
+		return s
+	}
+	return remoteAddrPat.ReplaceAllStringFunc(s, logRemote)
+}
+
+// addrRedactHandler rewrites slog messages the way logRemote rewrites the
+// audit line's remote attribute. http.Server.ErrorLog is a *log.Logger, so
+// the peer address arrives as text in the message, not as a structured attr.
+type addrRedactHandler struct {
+	slog.Handler
+}
+
+func (h addrRedactHandler) Handle(ctx context.Context, r slog.Record) error {
+	r.Message = redactLogAddrs(r.Message)
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h addrRedactHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return addrRedactHandler{h.Handler.WithAttrs(attrs)}
+}
+
+func (h addrRedactHandler) WithGroup(name string) slog.Handler {
+	return addrRedactHandler{h.Handler.WithGroup(name)}
 }
 
 func (s *Server) logRequest(r *http.Request, reqID string, status, accepted int, d time.Duration, errMsg string, extra ...any) {

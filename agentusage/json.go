@@ -63,13 +63,19 @@ var (
 		"workdir": true, "project_dir": true, "projectdir": true,
 	}
 	// Payload keys hold user, model, or tool text. Counters live beside
-	// these fields, not inside them; descending would inspect prompts.
+	// these fields, not inside them; descending would inspect prompts
+	// and could pick a cwd or a number out of user content.
 	payloadKeys = map[string]bool{
 		"content": true, "parts": true, "delta": true,
 		"tool_result": true, "toolresult": true,
 		"tool_use": true, "tooluse": true,
 		"tool_calls": true, "toolcalls": true,
 		"arguments": true,
+		"prompt":    true, "messages": true, "choices": true,
+		"system": true, "text": true, "query": true,
+		"input_text": true, "inputtext": true,
+		"output_text": true, "outputtext": true,
+		"system_instruction": true, "systeminstruction": true,
 	}
 )
 

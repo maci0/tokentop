@@ -1143,6 +1143,51 @@ func TestIngestLogsPostOutcome(t *testing.T) {
 	}
 }
 
+func TestRedactLogAddrs(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"http: panic serving 203.0.113.9:54321: boom", "http: panic serving remote: boom"},
+		{"http: panic serving 127.0.0.1:9999: boom", "http: panic serving loopback:9999: boom"},
+		{"http: panic serving [::1]:80: boom", "http: panic serving loopback:80: boom"},
+		{"http: TLS handshake error from [2001:db8::1]:443: EOF", "http: TLS handshake error from remote: EOF"},
+		{"no address here", "no address here"},
+	}
+	for _, tc := range cases {
+		if got := redactLogAddrs(tc.in); got != tc.want {
+			t.Errorf("redactLogAddrs(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestHTTPErrorLogRedactsPeerAddress(t *testing.T) {
+	lg, buf := captureLogger()
+	s, err := newServer("127.0.0.1:0", &memRecorder{}, lg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	s.srv.ErrorLog.Printf("http: panic serving %s: boom", "203.0.113.9:54321")
+	got := buf.String()
+	if strings.Contains(got, "203.0.113.9") {
+		t.Errorf("ErrorLog leaked peer IP: %s", got)
+	}
+	if !strings.Contains(got, "remote") {
+		t.Errorf("ErrorLog missing redacted remote: %s", got)
+	}
+
+	buf.Reset()
+	s.srv.ErrorLog.Printf("http: panic serving %s: boom", "127.0.0.1:9999")
+	got = buf.String()
+	if strings.Contains(got, "127.0.0.1") {
+		t.Errorf("ErrorLog leaked loopback IP: %s", got)
+	}
+	if !strings.Contains(got, "loopback:9999") {
+		t.Errorf("ErrorLog missing loopback port: %s", got)
+	}
+}
+
 func TestIngestLogRedactsPeerAddress(t *testing.T) {
 	lg, buf := captureLogger()
 	s := &Server{rec: &memRecorder{}, log: lg}
