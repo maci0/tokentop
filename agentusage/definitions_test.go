@@ -79,6 +79,9 @@ func TestLoadDefinitionsRejectsMalformedFile(t *testing.T) {
 	if _, ok := errors.AsType[*json.SyntaxError](err); !ok {
 		t.Fatalf("malformed file = %v, want wrapped json.SyntaxError", err)
 	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("malformed file = %v, want the path %q in the message", err, path)
+	}
 }
 
 // Only token-bearing definitions mean anything here: a launch-only entry says
@@ -123,6 +126,41 @@ func TestLoadDefinitionsRegistersOnlyTokenBearingSpecs(t *testing.T) {
 	if !slices.Equal(spec.Roots, want.Roots) || spec.Suffix != want.Suffix ||
 		spec.Cumulative != want.Cumulative || spec.HeaderCwd != want.HeaderCwd {
 		t.Errorf("spec = %+v, want %+v", spec, want)
+	}
+}
+
+// Names with surrounding whitespace are the same agent Discover reports, and
+// a spec whose roots are all blank is not readable: Supported must not say
+// yes for an agent Watch would reject.
+func TestLoadDefinitionsTrimsNamesAndSkipsBlankRoots(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agents.json")
+	body := `{
+		"  trimmed  ": {"usage": {"roots": ["~/.trimmed/sessions"]}},
+		"blankroots": {"usage": {"roots": ["", "  "]}}
+	}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := LoadDefinitions(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		defsMu.Lock()
+		delete(defs, "trimmed")
+		defsMu.Unlock()
+	})
+
+	if _, ok := definedSpec("trimmed"); !ok {
+		t.Fatal("whitespace name should be stored trimmed")
+	}
+	if _, ok := definedSpec("  trimmed  "); ok {
+		t.Fatal("untrimmed key should not be stored")
+	}
+	if _, ok := definedSpec("blankroots"); ok {
+		t.Fatal("blank-root spec should not be stored")
+	}
+	if Supported("blankroots") {
+		t.Fatal("Supported must not claim a spec Watch would reject")
 	}
 }
 

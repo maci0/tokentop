@@ -862,7 +862,7 @@ func loadAgentDefs() {
 		return // no home directory resolved; nothing to load
 	}
 	if err := agentusage.LoadDefinitions(path); err != nil {
-		fmt.Fprintf(os.Stderr, "toktop: %s: %v; watching only the built-in agents\n", path, err)
+		fmt.Fprintf(os.Stderr, "toktop: %v; watching only the built-in agents\n", err)
 	}
 }
 

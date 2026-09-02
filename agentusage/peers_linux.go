@@ -17,8 +17,12 @@ import (
 
 func init() { peersByPID = linuxPeersByPID }
 
-// Peers walks the process's open descriptors for socket inodes and looks each
-// up in the kernel's TCP tables, all through procfs.
+// Peers lists the TCP endpoints a process is connected to.
+//
+// An empty result means "cannot tell", which a caller should treat as
+// "assume it is not the same engine" rather than as a statement about the
+// process. On Linux this walks the process's open descriptors for socket
+// inodes and looks each up in the kernel's TCP tables, all through procfs.
 func Peers(pid int) []netip.AddrPort {
 	return linuxPeersByPID([]int{pid})[pid]
 }

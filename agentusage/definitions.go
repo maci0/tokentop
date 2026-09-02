@@ -64,6 +64,25 @@ type Spec struct {
 	HeaderCwd bool `json:"header_cwd,omitempty"`
 }
 
+// canonicalTool is the map key for an agent name. Surrounding whitespace is
+// not part of the name, and would otherwise make Watch miss a spec registered
+// as "claude " while Discover reports "claude".
+func canonicalTool(tool string) string {
+	return strings.TrimSpace(tool)
+}
+
+// specRoots is the usable transcript directories in spec. Blank entries are
+// not roots, matching RegisterSpec.
+func specRoots(spec Spec) []string {
+	out := make([]string, 0, len(spec.Roots))
+	for _, r := range spec.Roots {
+		if strings.TrimSpace(r) != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 var (
 	defsMu sync.RWMutex
 	// The pi family keeps ordinary JSONL transcripts, so they need locations
@@ -110,30 +129,37 @@ var ErrInvalidDefinitions = errors.New("malformed agent definitions")
 //	{"myagent": {"usage": {"roots": ["~/.myagent/sessions"]}}}
 //
 // A missing file is not an error, since most machines have none. A malformed
-// one is: running with a half-loaded agent set is worse than refusing.
+// or unreadable one is: running with a half-loaded agent set is worse than
+// refusing. The error names the file; errors.Is matches ErrInvalidDefinitions
+// when the contents are not valid JSON.
 func LoadDefinitions(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("agent definitions %s: %w", path, err)
 	}
 	var file definitionFile
 	if err := json.Unmarshal(data, &file); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidDefinitions, err)
+		return fmt.Errorf("%w: %s: %w", ErrInvalidDefinitions, path, err)
 	}
 	for name, def := range file {
-		if def.Usage == nil || len(def.Usage.Roots) == 0 || strings.TrimSpace(name) == "" {
+		name = canonicalTool(name)
+		if name == "" || def.Usage == nil {
 			continue // a launch-only definition says nothing about tokens
 		}
-		defsMu.Lock()
-		defs[name] = Spec{
+		spec := Spec{
 			Roots:      def.Usage.Roots,
 			Suffix:     def.Usage.Suffix,
 			Cumulative: def.Usage.Cumulative,
 			HeaderCwd:  def.Usage.HeaderCwd,
 		}
+		if len(specRoots(spec)) == 0 {
+			continue
+		}
+		defsMu.Lock()
+		defs[name] = spec
 		defsMu.Unlock()
 	}
 	return nil

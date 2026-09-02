@@ -218,7 +218,7 @@ func (w *Watcher) discover(ctx context.Context) {
 		// since is wall time even when SetNow injects a simulated clock:
 		// session stores record real timestamps, and comparing them to a
 		// demo origin would count the whole history as this run.
-		watch := agentusage.Watch(p.Tool, p.Dir, time.Now())
+		watch := p.Watch(time.Now())
 		if watch == nil {
 			continue // this agent keeps nothing readable
 		}

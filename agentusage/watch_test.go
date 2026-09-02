@@ -282,6 +282,14 @@ func TestRateNeedsPositiveSpanAndGrowth(t *testing.T) {
 				c.name, c.prev, c.cur, got, ok, c.want, c.wantOK)
 		}
 	}
+
+	in, inOK := InputRate(Sample{Input: 80, At: t0}, Sample{Input: 200, At: t0.Add(time.Second)})
+	if !inOK || in != 120 {
+		t.Errorf("InputRate = %v,%v want 120,true", in, inOK)
+	}
+	if r, ok := InputRate(Sample{Input: 80, At: t0}, Sample{Input: 80, At: t0.Add(time.Second)}); ok || r != 0 {
+		t.Errorf("InputRate with no growth = %v,%v want 0,false", r, ok)
+	}
 }
 
 // onChange may Poll for a final read. Holding pollMu across the callback
@@ -408,6 +416,51 @@ func TestParseClaudeThinkingOnly(t *testing.T) {
 	}
 	if cwd != "/tmp/p" {
 		t.Fatalf("cwd = %q", cwd)
+	}
+}
+
+func TestRegisterSpecTrimsToolName(t *testing.T) {
+	store := t.TempDir()
+	if err := RegisterSpec("  spaced  ", Spec{Roots: []string{store}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		adaptersMu.Lock()
+		delete(adapters, "spaced")
+		adaptersMu.Unlock()
+	})
+	if !Supported("spaced") || !Supported("  spaced") {
+		t.Fatal("trimmed name should be the lookup key")
+	}
+	if Watch("spaced", t.TempDir(), time.Now()) == nil {
+		t.Fatal("Watch should find the trimmed name")
+	}
+}
+
+func TestSupportedRejectsBlankRootSpecs(t *testing.T) {
+	addDef(t, "blanky", Spec{Roots: []string{"", "  "}})
+	if Supported("blanky") {
+		t.Fatal("Supported must match RegisterSpec: blank roots are not readable")
+	}
+	if Watch("blanky", t.TempDir(), time.Now()) != nil {
+		t.Fatal("Watch must not build a watcher RegisterSpec would reject")
+	}
+}
+
+func TestProcessWatchMatchesWatch(t *testing.T) {
+	p := Process{Tool: "claude", Dir: t.TempDir()}
+	since := time.Now()
+	w1 := Watch(p.Tool, p.Dir, since)
+	w2 := p.Watch(since)
+	if w1 == nil || w2 == nil {
+		t.Fatal("claude is a file adapter")
+	}
+	if w1.Tool() != w2.Tool() || w1.Dir() != w2.Dir() {
+		t.Fatalf("Watch and Process.Watch disagreed: %q %q vs %q %q",
+			w1.Tool(), w1.Dir(), w2.Tool(), w2.Dir())
+	}
+	if got := (Process{Tool: "gemini"}).Watch(since); got != nil {
+		t.Fatal("unsupported agent must still yield no watcher")
 	}
 }
 

@@ -102,13 +102,16 @@ import (
 )
 
 func main() {
-	if err := agentusage.LoadDefinitions(agentusage.DefinitionsPath()); err != nil {
-		fmt.Println(err) // malformed file; a missing one is not an error
+	path := agentusage.DefinitionsPath()
+	if err := agentusage.LoadDefinitions(path); err != nil {
+		fmt.Println(err) // malformed or unreadable; a missing file is not an error
 	}
-	agentusage.EnableOpenCodeDB(true) // no-op without -tags sqlite
+	if !agentusage.EnableOpenCodeDB(true) {
+		fmt.Println("opencode: build without -tags sqlite")
+	}
 
 	for _, p := range agentusage.Discover() {
-		w := agentusage.Watch(p.Tool, p.Dir, time.Now())
+		w := p.Watch(time.Now())
 		if w == nil {
 			continue // this agent keeps no readable transcript
 		}
@@ -123,7 +126,9 @@ func main() {
 
 `RegisterSpec` teaches the package about an agent it was not compiled to know.
 `errors.Is` matches `ErrEmptyTool` and `ErrNoRoots` on a rejected spec, and
-`ErrInvalidDefinitions` on a malformed definitions file.
+`ErrInvalidDefinitions` on a malformed definitions file. `Rate` is output
+tokens per second between two samples; `InputRate` is the same for billed
+prompt tokens.
 
 ## What it shows
 

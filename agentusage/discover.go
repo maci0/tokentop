@@ -11,6 +11,7 @@ import (
 
 // Process is one running agent CLI.
 type Process struct {
+	// PID is the OS process identifier.
 	PID int
 	// Tool is the agent name (claude, codex, pi, …).
 	Tool string
@@ -22,18 +23,11 @@ type Process struct {
 	Started time.Time
 }
 
-// Discover lists the agent CLIs running on this machine, so a monitor can show
-// what is generating right now without being told. It has one implementation
-// per platform: discover_linux.go walks /proc, discover_darwin.go asks ps(1)
-// and lsof(8), and platforms where a process's working directory cannot be
-// read without native calls report nothing at all.
-//
-// An empty result means "cannot tell" rather than "nothing is running", which
-// callers should surface as no local agents rather than an error.
-//
-// None of these implementations shell out to pgrep-style helpers to find the
-// processes themselves: spawning a process to count processes is how a monitor
-// ends up measuring itself.
+// Watch starts reading usage for this process, using its agent name and
+// working directory. Equivalent to [Watch](p.Tool, p.Dir, since).
+func (p Process) Watch(since time.Time) *Watcher {
+	return Watch(p.Tool, p.Dir, since)
+}
 
 // agentName names the known agent a process is running, or "" when it is not
 // one.

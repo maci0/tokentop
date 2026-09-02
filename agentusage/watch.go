@@ -4,8 +4,8 @@
 // Package agentusage reads live token counts out of the transcripts agent CLIs
 // already write to disk.
 //
-// Typical use: LoadDefinitions, Discover running agents, Watch each process's
-// working directory, then Poll or Run for Sample values. EnableOpenCodeDB
+// Typical use: LoadDefinitions, Discover running agents, Watch each process
+// (or Process.Watch), then Poll or Run for Sample values. EnableOpenCodeDB
 // opts into opencode's machine-wide SQLite store; crush is read whenever the
 // sqlite build tag is on.
 //
@@ -72,14 +72,24 @@ func (s Sample) Empty() bool {
 
 // Rate returns output tokens per second between two samples, and whether it
 // could be computed at all. It never extrapolates: without two readings and a
-// positive span there is no rate to report. Prompt growth is Sample.Input;
-// compare that field the same way a dashboard splits in and out.
+// positive span there is no rate to report. Prompt growth is InputRate.
 func Rate(prev, cur Sample) (float64, bool) {
-	span := cur.At.Sub(prev.At).Seconds()
-	if span <= 0 || cur.Output <= prev.Output {
+	return deltaRate(prev.At, cur.At, prev.Output, cur.Output)
+}
+
+// InputRate returns billed prompt tokens per second between two samples, and
+// whether it could be computed. Same rules as Rate: no positive span or no
+// growth means no rate, not a zero.
+func InputRate(prev, cur Sample) (float64, bool) {
+	return deltaRate(prev.At, cur.At, prev.Input, cur.Input)
+}
+
+func deltaRate(prevAt, curAt time.Time, prevN, curN int) (float64, bool) {
+	span := curAt.Sub(prevAt).Seconds()
+	if span <= 0 || curN <= prevN {
 		return 0, false
 	}
-	return float64(cur.Output-prev.Output) / span, true
+	return float64(curN-prevN) / span, true
 }
 
 // valueKind says how an adapter's numbers accumulate.
@@ -233,18 +243,14 @@ var (
 // RegisterSpec adds a transcript adapter for a defined agent. It returns
 // ErrEmptyTool or an error wrapping ErrNoRoots when the spec cannot be used.
 func RegisterSpec(tool string, spec Spec) error {
-	if strings.TrimSpace(tool) == "" {
+	tool = canonicalTool(tool)
+	if tool == "" {
 		return ErrEmptyTool
 	}
 	// {dir} lets a definition point at a store inside the reviewed project,
 	// the way clanker keeps its own. Blank roots are dropped rather than
 	// becoming empty WalkDir targets.
-	patterns := make([]string, 0, len(spec.Roots))
-	for _, r := range spec.Roots {
-		if strings.TrimSpace(r) != "" {
-			patterns = append(patterns, r)
-		}
-	}
+	patterns := specRoots(spec)
 	if len(patterns) == 0 {
 		return fmt.Errorf("usage spec for %q has no roots: %w", tool, ErrNoRoots)
 	}
@@ -325,6 +331,7 @@ func genericSessionCwd(line []byte) (string, bool) {
 
 // Supported reports whether live usage can be read for an agent.
 func Supported(tool string) bool {
+	tool = canonicalTool(tool)
 	if _, ok := sourceFor(tool); ok {
 		return true
 	}
@@ -336,9 +343,10 @@ func Supported(tool string) bool {
 	}
 	// A definition that names a transcript root is readable even before a
 	// watcher has been built for it, and callers ask this to decide whether a
-	// rate is possible at all.
+	// rate is possible at all. Blank-only roots match RegisterSpec: not
+	// readable, so this must not return true for an agent Watch would reject.
 	spec, defined := definedSpec(tool)
-	return defined && len(spec.Roots) > 0
+	return defined && len(specRoots(spec)) > 0
 }
 
 func home(parts ...string) string {
@@ -427,6 +435,7 @@ func (w *Watcher) Dir() string {
 // It returns nil when that agent keeps no readable transcript, which callers
 // should treat as "no rate available" rather than an error.
 func Watch(tool, dir string, since time.Time) *Watcher {
+	tool = canonicalTool(tool)
 	if source, ok := sourceFor(tool); ok {
 		w := &Watcher{source: source, tool: tool, dir: resolveDir(dir), dirs: dirSpellings(dir), since: since}
 		if ss, ok := source.(sessionSource); ok {

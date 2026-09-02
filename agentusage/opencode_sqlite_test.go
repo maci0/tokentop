@@ -273,6 +273,28 @@ func TestOpenCodeDBReadsPathWithURISyntaxCharacters(t *testing.T) {
 	}
 }
 
+// Reasoning without billed output is still a reading: Sample.Empty treats
+// thinking-only samples as present, and file adapters already count them.
+func TestOpenCodeDBCountsThinkingOnly(t *testing.T) {
+	path := opencodeDB(t)
+	dir := t.TempDir()
+	addSession(t, path, "s", dir)
+	start := time.Now()
+	addMessage(t, path, "m1", "s", start.Add(time.Second),
+		`{"role":"assistant","tokens":{"reasoning":12}}`)
+	withOpenCodeDB(t, path)
+
+	w := Watch("opencode", dir, start)
+	if w == nil {
+		t.Fatal("opencode should be readable once the database is enabled")
+	}
+	w.poll(nil)
+	s := w.Sample()
+	if s.Thinking != 12 || s.Empty() {
+		t.Fatalf("thinking-only sample dropped: %+v", s)
+	}
+}
+
 // Tokens live on assistant messages. A user prompt that carries the same
 // JSON shape must not be summed in, or a review invents output.
 func TestOpenCodeDBIgnoresNonAssistantTokens(t *testing.T) {

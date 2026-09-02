@@ -7,8 +7,11 @@ package agentusage
 
 import "net/netip"
 
-// Peers reports nothing where no documented interface lists a process's
-// connections (Windows would need GetExtendedTcpTable plus owner-PID rows,
-// which this package has no native binding for yet). Callers treat the empty
-// result as "cannot tell" and assume the agent is not engine-backed.
+// Peers lists the TCP endpoints a process is connected to.
+//
+// An empty result means "cannot tell", which a caller should treat as
+// "assume it is not the same engine" rather than as a statement about the
+// process. Platforms other than Linux and macOS report nothing: Windows
+// would need GetExtendedTcpTable plus owner-PID rows, which this package
+// has no native binding for yet.
 func Peers(int) []netip.AddrPort { return nil }

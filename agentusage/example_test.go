@@ -13,12 +13,14 @@ import (
 func Example() {
 	// Typical integration: load extra agent definitions, discover running
 	// agents, and tail the one that is working in this directory.
-	_ = agentusage.LoadDefinitions(agentusage.DefinitionsPath())
-	// EnableOpenCodeDB(true) opts into opencode's SQLite store when the
-	// binary was built with -tags sqlite; call it before Watch.
+	if err := agentusage.LoadDefinitions(agentusage.DefinitionsPath()); err != nil {
+		fmt.Println(err) // malformed or unreadable; a missing file is not an error
+	}
+	// EnableOpenCodeDB reports whether this build can read opencode's store.
+	// Call it before Watch; a false return is a build without -tags sqlite.
 
 	for _, p := range agentusage.Discover() {
-		w := agentusage.Watch(p.Tool, p.Dir, time.Now())
+		w := p.Watch(time.Now())
 		if w == nil {
 			continue // this agent keeps no readable transcript
 		}
@@ -37,6 +39,23 @@ func ExampleRate() {
 	r, ok := agentusage.Rate(prev, cur)
 	fmt.Println(int(r), ok)
 	// Output: 250 true
+}
+
+func ExampleInputRate() {
+	t0 := time.Unix(1_000_000, 0)
+	prev := agentusage.Sample{Input: 80, At: t0}
+	cur := agentusage.Sample{Input: 200, At: t0.Add(time.Second)}
+	r, ok := agentusage.InputRate(prev, cur)
+	fmt.Println(int(r), ok)
+	// Output: 120 true
+}
+
+func ExampleProcess_Watch() {
+	for _, p := range agentusage.Discover() {
+		if w := p.Watch(time.Now()); w != nil {
+			fmt.Println(w.Tool(), w.Poll().Output)
+		}
+	}
 }
 
 func ExampleLoadDefinitions() {

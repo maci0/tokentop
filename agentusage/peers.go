@@ -8,20 +8,6 @@ import (
 	"strings"
 )
 
-// Peers lists the TCP endpoints a process is connected to.
-//
-// It exists to answer one question a token monitor has to get right: is this
-// agent generating through an engine that is already being measured? An agent
-// pointed at a local llama.cpp or vLLM produces tokens the engine reports too,
-// so counting both doubles the number. The connection is the evidence, and it
-// needs no configuration or guesswork about model names.
-//
-// One implementation per platform: peers_linux.go reads the kernel's tables,
-// peers_darwin.go asks lsof(8), and platforms where neither interface exists
-// report nothing. Best effort throughout: an empty result means "cannot
-// tell", which a caller should treat as "assume it is not the same engine"
-// rather than as a statement about the process.
-
 // parseLsofPeers reads remote endpoints out of `lsof -FnP -n` output, one
 // field per line prefixed with its type letter. Connection lines carry both
 // ends as "n127.0.0.1:52154->127.0.0.1:11434"; listening sockets and UDP

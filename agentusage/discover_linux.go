@@ -13,8 +13,12 @@ import (
 	"time"
 )
 
-// Discover implements the /proc walk: three reads per process, no subprocess,
-// and every other user's processes simply fail the permission check.
+// Discover lists the agent CLIs running on this machine.
+//
+// An empty result means "cannot tell" rather than "nothing is running", which
+// callers should surface as no local agents rather than an error. On Linux this
+// is a /proc walk: three reads per process, no subprocess, and every other
+// user's processes simply fail the permission check.
 func Discover() []Process {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {

@@ -29,6 +29,7 @@ var publicFuncs = []string{
 	"DefinitionsPath",
 	"Discover",
 	"EnableOpenCodeDB",
+	"InputRate",
 	"LoadDefinitions",
 	"MatchingEndpoints",
 	"Peers",
@@ -39,6 +40,7 @@ var publicFuncs = []string{
 }
 
 var publicMethods = map[string][]string{
+	"Process": {"Watch"},
 	"Sample":  {"Empty"},
 	"Watcher": {"Dir", "Poll", "Run", "Sample", "Tool"},
 }

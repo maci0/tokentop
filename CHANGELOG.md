@@ -15,6 +15,10 @@ support channel (see SECURITY.md).
 - Ingest `POST /v1/events` honors `Idempotency-Key`: when an event omits
   `id`, the key plus the line's index is used, so a retried POST of the same
   stream is ignored instead of double-counted.
+- `agentusage.InputRate` reports billed prompt tokens per second between two
+  samples, matching `Rate` for output.
+- `agentusage.Process.Watch` starts a watcher from a discovered process so the
+  agent name and working directory cannot be swapped.
 
 ### Changed
 
@@ -32,6 +36,14 @@ support channel (see SECURITY.md).
   `--version` are a usage error, like `toktop version`.
 - `--agents` readings carry a stable event id, so a retried report of the
   same sample is not added twice.
+- `LoadDefinitions` skips specs with only blank roots, matching `RegisterSpec`,
+  so `Supported` is not true for an agent `Watch` would reject.
+- `LoadDefinitions` names the file in malformed-JSON and unreadable-file errors.
+- Agent names passed to `RegisterSpec`, `LoadDefinitions`, `Watch`, and
+  `Supported` are trimmed, so a definition of `"claude "` is the same agent
+  Discover reports.
+- `agentusage` compiles on GOOS values other than linux, darwin, and windows:
+  `Discover` reports nothing there, matching `Peers`.
 
 ## [0.7.0] - 2026-08-30
 
