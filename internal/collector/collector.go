@@ -4,8 +4,10 @@ package collector
 
 import (
 	"context"
+	"maps"
 	"net"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -192,11 +194,12 @@ func (c *Collector) startProcPoller(ctx context.Context) {
 	}()
 }
 
-// procSnapshot returns the latest cached engine processes.
+// procSnapshot returns the latest cached engine processes, detached from the
+// poller's buffer so a later refresh cannot mutate a snapshot already in emit.
 func (c *Collector) procSnapshot() []procs.Info {
 	c.procMu.Lock()
 	defer c.procMu.Unlock()
-	return c.procCache
+	return slices.Clone(c.procCache)
 }
 
 // Run polls until ctx is cancelled, emitting one Snapshot per interval.
@@ -254,7 +257,7 @@ func (c *Collector) emit(ctx context.Context, out chan<- core.Snapshot) {
 	c.mu.Lock()
 	snap.Agents = append([]core.AgentEvent(nil), c.agents...)
 	snap.Probes = append([]core.ProbeSample(nil), c.probes...)
-	snap.Sys = sys
+	snap.Sys = cloneSys(sys)
 	for i, r := range results {
 		p := c.providers[i]
 		ps := core.ProviderSnapshot{
@@ -578,11 +581,36 @@ func (c *Collector) ProbeAll() {
 				delete(c.probeInflight, t.Base+"|"+t.Model)
 				c.probeMu.Unlock()
 			}()
-			s := probe.Run(ctx, t)
+			// Re-read inside the goroutine: ProbeAll can race Run's first
+			// assignment of baseCtx, and a copied nil would bound the
+			// generation with Background (surviving shutdown).
+			c.mu.Lock()
+			pctx := c.baseCtx
+			c.mu.Unlock()
+			if pctx == nil {
+				pctx = ctx
+			}
+			s := probe.Run(pctx, t)
 			s.At = now
 			c.RecordProbe(s)
 		}(t)
 	}
+}
+
+// cloneSys copies a vitals sample so a snapshot handed to the UI does not
+// alias the poller's cache. Drivers/Temps/GPUs/NPUs are reference fields:
+// publishing the cache pointer would let a later sample (or an in-place
+// overlay) race a render of an earlier frame.
+func cloneSys(s *core.SysSample) *core.SysSample {
+	if s == nil {
+		return nil
+	}
+	out := *s
+	out.Drivers = maps.Clone(s.Drivers)
+	out.Temps = slices.Clone(s.Temps)
+	out.GPUs = slices.Clone(s.GPUs)
+	out.NPUs = slices.Clone(s.NPUs)
+	return &out
 }
 
 // urlPort extracts the TCP port from a backend URL. Non-http(s) addresses

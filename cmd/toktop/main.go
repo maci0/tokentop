@@ -430,6 +430,7 @@ func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotRelo
 		mu       sync.Mutex
 		current  *tea.Program
 		reloaded atomic.Bool
+		ready    chan struct{}
 	)
 	if hotReload {
 		if selfErr != nil {
@@ -438,8 +439,16 @@ func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotRelo
 		} else {
 			wctx, cancel := context.WithCancel(ctx)
 			defer cancel()
+			// Closed once the program exists so a rebuild during NewProgram
+			// still Quits instead of seeing current == nil and giving up.
+			ready = make(chan struct{})
 			go selfreload.Watch(wctx, self, 400*time.Millisecond, func() {
 				reloaded.Store(true)
+				select {
+				case <-ready:
+				case <-wctx.Done():
+					return
+				}
 				mu.Lock()
 				p := current
 				mu.Unlock()
@@ -454,6 +463,9 @@ func runTUI(ctx context.Context, cfg ui.Config, ch <-chan core.Snapshot, hotRelo
 	mu.Lock()
 	current = prog
 	mu.Unlock()
+	if ready != nil {
+		close(ready)
+	}
 
 	if _, err := prog.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "toktop:", err)

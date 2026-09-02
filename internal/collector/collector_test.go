@@ -723,6 +723,50 @@ func TestEmitAttachesProcessByListenPort(t *testing.T) {
 	}
 }
 
+// Snapshots must not alias the vitals cache: the UI goroutine reads Sys while
+// the poller replaces it, and Drivers/Temps/GPUs/NPUs are reference fields.
+func TestEmitSysSampleDetachedFromCache(t *testing.T) {
+	c := New(nil, time.Hour)
+	c.SetSysFn(func() core.SysSample {
+		return core.SysSample{
+			MemTotal: 10,
+			Drivers:  map[string]string{"nvidia": "1"},
+			Temps:    []core.TempReading{{Label: "cpu", MilliC: 40000}},
+			GPUs:     []core.GPUDevice{{Name: "a", UtilPct: 1}},
+			NPUs:     []string{"npu"},
+		}
+	})
+	c.sampleSys(true)
+	ch := make(chan core.Snapshot, 1)
+	c.emit(context.Background(), ch)
+	snap := <-ch
+	if snap.Sys == nil {
+		t.Fatal("missing sys sample")
+	}
+	c.sysMu.Lock()
+	c.sysCache.MemTotal = 99
+	c.sysCache.Drivers["nvidia"] = "mutated"
+	c.sysCache.Temps[0].MilliC = 1
+	c.sysCache.GPUs[0].UtilPct = 99
+	c.sysCache.NPUs[0] = "x"
+	c.sysMu.Unlock()
+	if snap.Sys.MemTotal != 10 || snap.Sys.Drivers["nvidia"] != "1" ||
+		snap.Sys.Temps[0].MilliC != 40000 || snap.Sys.GPUs[0].UtilPct != 1 ||
+		snap.Sys.NPUs[0] != "npu" {
+		t.Fatalf("published sys aliased the cache: %+v", snap.Sys)
+	}
+}
+
+func TestProcSnapshotDetachedFromCache(t *testing.T) {
+	c := New(nil, time.Hour)
+	c.procCache = []procs.Info{{PID: 1, RSS: 10}}
+	got := c.procSnapshot()
+	got[0].PID = 99
+	if c.procCache[0].PID != 1 {
+		t.Fatalf("procSnapshot aliased the cache: %+v", c.procCache)
+	}
+}
+
 // A provider failing its very first poll has no history rings yet; emit must
 // still include it (with the error surfaced) instead of dereferencing nil.
 func TestEmitSurvivesFirstPollError(t *testing.T) {
